@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Open Spot Forecast - Grundindstillinger",
+        "description": "Konfigurer dit område og prisindstillinger",
+        "data": {
+          "region": "Prisområde",
+          "currency": "Valuta",
+          "vat": "Moms (f.eks. 0.25 for 25%)",
+          "precision": "Decimal Præcision",
+          "price_type": "Prisenhed (kWh, MWh eller Wh)"
+        }
+      },
+      "sensors": {
+        "title": "Open Spot Forecast - Sensor Konfiguration",
+        "description": "Konfigurer datakilder (alle valgfri). Lad være tom for at bruge API fallback.\n\n**Priskilde** (prioritet: Stromligning > Nordpool > API)\n**Vejsensorer** (valgfri - forbedrer ML nøjagtighed)",
+        "data": {
+          "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
+          "nordpool_sensor": "Nordpool Sensor (spotpriser)",
+          "wind_speed_sensor": "Vindhastighed Sensor",
+          "wind_direction_sensor": "Vindretning Sensor",
+          "solar_power_sensor": "Solenergi Sensor",
+          "solar_forecast_sensor": "Solprognose Sensor",
+          "temperature_sensor": "Temperatur Sensor",
+          "dmi_api_key": "DMI API Nøgle (alternativ vejrdatakilde)",
+          "enable_ml_prediction": "Aktiver ML Forudsigelser"
+        }
+      }
+    },
+    "error": {
+      "invalid_region": "Ugyldigt område valgt"
+    },
+    "abort": {
+      "already_configured": "Dette område er allerede konfigureret"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Open Spot Forecast Indstillinger",
+        "description": "Konfigurer avancerede indstillinger for spotpris prognoser",
+        "data": {
+          "enable_ml_prediction": "Aktiver ML Prisforudsigelser",
+          "dmi_api_key": "DMI API Nøgle (til vejrdata)",
+          "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
+          "nordpool_sensor": "Nordpool Sensor (spotpriser)",
+          "wind_speed_sensor": "Vindhastighed Sensor",
+          "wind_direction_sensor": "Vindretning Sensor",
+          "solar_power_sensor": "Solenergi Sensor",
+          "solar_forecast_sensor": "Solprognose Sensor",
+          "temperature_sensor": "Temperatur Sensor",
+          "vat": "Moms",
+          "precision": "Decimal Præcision"
+        }
+      }
+    }
+  }
+}

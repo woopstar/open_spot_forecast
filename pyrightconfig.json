@@ -1,0 +1,30 @@
+{
+  "include": ["custom_components/hsem", "tests"],
+  "exclude": [
+    "**/__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    "build",
+    "dist",
+    "**/node_modules",
+    "**/.*"
+  ],
+  "pythonVersion": "3.14",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportOptionalMemberAccess": "warning",
+  "reportOptionalSubscript": "warning",
+  "reportOptionalCall": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportArgumentType": "warning",
+  "reportAssignmentType": "warning",
+  "reportReturnType": "warning",
+  "reportUnknownMemberType": "none",
+  "reportUnknownVariableType": "none",
+  "reportUnknownArgumentType": "none",
+  "reportOperatorIssue": "warning",
+  "reportTypedDictNotRequiredAccess": "none",
+  "reportCallIssue": "warning"
+}

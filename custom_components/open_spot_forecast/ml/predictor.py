@@ -1,0 +1,236 @@
+"""Machine learning predictor for spot prices."""
+
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Any
+from zoneinfo import ZoneInfo
+
+import numpy as np
+
+from .features import FeatureMixin
+from .learning import LearningMixin
+from .models import ModelMixin
+from .numpy_models import NumpyGradientBoosting, NumpyRandomForest
+from .storage import LearningStorage
+
+_LOGGER = logging.getLogger(__name__)
+
+
+class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
+    """ML-based spot price predictor using weather and historical price data."""
+
+    def __init__(self, hass, region: str, tz_name: str = "Europe/Copenhagen"):
+        """Initialize the predictor."""
+        self.hass = hass
+        self.region = region
+        try:
+            self.tz = ZoneInfo(tz_name)
+        except Exception:
+            self.tz = timezone.utc
+        self.predictions = []
+        self.confidence_scores = []
+
+        # ML models (pure numpy implementations)
+        self.wind_model = NumpyRandomForest(
+            n_estimators=100, max_depth=10, random_state=42
+        )
+        self.solar_model = NumpyRandomForest(
+            n_estimators=100, max_depth=10, random_state=42
+        )
+        self.price_model = NumpyGradientBoosting(
+            n_estimators=200, learning_rate=0.1, random_state=42
+        )
+
+        # Feature scalers (simple numpy-based scaling)
+        self.wind_scaler = {"mean": 0, "std": 1}
+        self.solar_scaler = {"mean": 0, "std": 1}
+        self.price_scaler = {"mean": 0, "std": 1}
+
+        # Solar scaling: learned ratio of actual_power / solcast_estimate
+        self.solar_scale = 1.0
+        self._solar_scale_samples = 0
+
+        # Training status
+        self.is_trained = False
+        self.training_samples = 0
+
+        # Self-learning: error tracking (predictions stored in SQLite)
+        self.error_metrics = {}  # Track prediction errors by hour
+        self.bias_correction = {}  # Hourly bias correction factors
+        self.volatility_mae: dict[int, float] = {}  # Per-slot volatility (EMA of MAE)
+        self.learning_rate = 0.1  # Adaptive learning rate
+        self.price_history = []  # Store historical prices for multi-day training
+        self.max_history_days = 30  # Keep 30 days of history
+
+        # Storage for persistence
+        self.storage = LearningStorage(hass, region)
+
+        # Note: Learning data is loaded asynchronously in __init__.py
+
+    def predict(
+        self,
+        weather_data: dict,
+        historical_prices: list[float],
+        forecast_days: int = 7,
+        interval_minutes: int = 15,
+        known_data_end_time: datetime | None = None,
+    ) -> None:
+        """Generate price predictions using ML models.
+
+        Args:
+            weather_data: Dictionary containing wind and solar forecasts
+            historical_prices: List of historical spot prices
+            forecast_days: Number of days to forecast (1-7)
+            interval_minutes: Prediction interval in minutes (default 15)
+            known_data_end_time: Timestamp after which to start predicting.
+                No predictions will be generated for times we already
+                have actual/committed prices for. If None, starts from
+                the next whole hour after now.
+        """
+        try:
+            _LOGGER.info(
+                "Starting ML prediction with %d historical prices, forecast_days=%d",
+                len(historical_prices),
+                forecast_days,
+            )
+
+            # Validate input data
+            if not historical_prices:
+                _LOGGER.warning(
+                    "No historical prices provided, cannot generate predictions"
+                )
+                self.predictions = []
+                self.confidence_scores = []
+                return
+
+            # Check for all-zero prices
+            if all(price == 0 for price in historical_prices):
+                _LOGGER.warning(
+                    "All historical prices are 0, predictions may be unreliable"
+                )
+
+            # Extract features from weather data
+            wind_features = self._extract_wind_features(weather_data)
+            solar_features = self._extract_solar_features(weather_data)
+
+            # Learn solar scaling factor: how does actual output compare to Solcast?
+            actual_solar = weather_data.get("solar_power")
+            solcast_estimate = solar_features.get("solar_power_estimate", 0)
+            if (
+                actual_solar
+                and solcast_estimate
+                and actual_solar > 0
+                and solcast_estimate > 0
+            ):
+                ratio = float(actual_solar) / float(solcast_estimate)
+                if 0.1 < ratio < 10.0:  # Sanity check
+                    self._solar_scale_samples += 1
+                    alpha = min(0.3, 1.0 / max(1, self._solar_scale_samples))
+                    self.solar_scale = (1 - alpha) * self.solar_scale + alpha * ratio
+                    _LOGGER.debug(
+                        "Solar scale updated: %.3f (actual=%.0f, estimate=%.0f, samples=%d)",
+                        self.solar_scale,
+                        actual_solar,
+                        solcast_estimate,
+                        self._solar_scale_samples,
+                    )
+                # Apply scaling to solar features
+                solar_features["solar_power_estimate"] = (
+                    solar_features["solar_power_estimate"] * self.solar_scale
+                )
+                solar_features["solar_radiation_mean"] = (
+                    solar_features.get("solar_radiation_mean", 0) * self.solar_scale
+                )
+
+            # Generate time-based features
+            time_features = self._generate_time_features(
+                forecast_days, interval_minutes, known_data_end_time
+            )
+
+            # Combine all features
+            all_features = self._combine_features(
+                wind_features,
+                solar_features,
+                time_features,
+                historical_prices,
+                weather_data,
+            )
+
+            _LOGGER.info(
+                "Generated %d feature sets, model trained: %s",
+                len(all_features),
+                self.is_trained,
+            )
+
+            # Train models if not already trained or if model has no trees
+            model_needs_training = (
+                not self.is_trained or len(self.price_model.trees) == 0
+            )
+
+            if model_needs_training and len(historical_prices) > 24:
+                _LOGGER.info("Training ML models...")
+                self._train_models(historical_prices, all_features)
+
+            # Generate predictions
+            if self.is_trained:
+                _LOGGER.info("Using trained ML model for predictions")
+                self._generate_predictions(
+                    all_features, forecast_days, interval_minutes
+                )
+            else:
+                # Fallback to simple heuristic if not enough training data
+                _LOGGER.info("Using heuristic fallback for predictions")
+                self._generate_heuristic_predictions(
+                    historical_prices,
+                    forecast_days,
+                    interval_minutes,
+                    known_data_end_time,
+                )
+
+            _LOGGER.info(
+                "Generated %d predictions for %d days",
+                len(self.predictions),
+                forecast_days,
+            )
+
+            # Log sample predictions
+            if self.predictions:
+                sample = self.predictions[0]
+                _LOGGER.info(
+                    "Sample prediction: start=%s, price=%.4f, confidence=%.2f",
+                    sample.get("start"),
+                    sample.get("price", 0),
+                    sample.get("confidence", 0),
+                )
+
+        except Exception as err:
+            _LOGGER.error("Error generating ML predictions: %s", err, exc_info=True)
+            self.predictions = []
+            self.confidence_scores = []
+
+    def get_predictions_for_day(self, day_offset: int = 0) -> list[dict]:
+        """Get predictions for a specific day."""
+        target_date = datetime.now() + timedelta(days=day_offset)
+        target_str = target_date.strftime("%Y-%m-%d")
+
+        return [
+            p for p in self.predictions if p.get("start", "").startswith(target_str)
+        ]
+
+    def get_prediction_stats(self) -> dict[str, Any]:
+        """Get statistics for predictions."""
+        if not self.predictions:
+            return {}
+
+        prices = [p["price"] for p in self.predictions]
+        confidences = [p["confidence"] for p in self.predictions]
+
+        return {
+            "min_price": min(prices),
+            "max_price": max(prices),
+            "mean_price": float(np.mean(prices)),
+            "mean_confidence": float(np.mean(confidences)),
+            "total_predictions": len(prices),
+            "is_ml_model": self.is_trained,
+            "training_samples": self.training_samples,
+        }

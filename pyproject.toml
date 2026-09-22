@@ -1,0 +1,177 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hsem"
+version = "1.0.0"
+description = "Home Solar Energy Manager - Energy optimization for home battery systems"
+readme = "README.md"
+license = {text = "AGPL-3.0"}
+requires-python = ">=3.14.2,<3.15"
+dependencies = [
+    "voluptuous==0.15.2",
+    "homeassistant==2026.9.3",
+    "scipy==1.18.1",
+    "numpy==2.5.3"
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "pytest-socket==0.8.1",
+    "pytest-timeout==2.4.0",
+    "pyright==1.1.414",
+    "vulture==2.16",
+    "ruff==0.16.8",
+    "skylos==4.37.0",
+]
+lint = [
+    "ruff==0.16.8",
+    "skylos==4.37.0",
+]
+typing = [
+    "mypy==2.3.1",
+]
+test = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "pytest-socket==0.8.1",
+    "pytest-timeout==2.4.0",
+    "pyright==1.1.414",
+    "vulture==2.16",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py314"
+include = ["custom_components/**/*.py", "tests/**/*.py", "scripts/**/*.py"]
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
+select = [
+    "B007",   # Loop control variable {name} not used within loop body
+    "B014",   # Exception handler with duplicate exception
+    "E",      # pycodestyle
+    "F",      # pyflakes/autoflake
+    "I",      # isort
+    "ICN001", # import conventions; {name} should be imported as {asname}
+    "PGH004", # Use specific rule codes when using noqa
+    "PLC0414", # Useless import alias. Import alias does not rename original package.
+    "SIM105", # Use contextlib.suppress({exception}) instead of try-except-pass
+    "SIM117", # Merge with-statements that use the same scope
+    "SIM118", # Use {key} in {dict} instead of {key} in {dict}.keys()
+    "SIM201", # Use {left} != {right} instead of not {left} == {right}
+    "SIM212", # Use {a} if {a} else {b} instead of {b} if not {a} else {a}
+    "SIM300", # Yoda conditions. Use 'age == 42' instead of '42 == age'.
+    "SIM401", # Use get from dict with default instead of an if block
+    "T20",    # flake8-print
+    "TRY004", # Prefer TypeError exception for invalid type
+    "RUF006", # Store a reference to the return value of asyncio.create_task
+    "UP",     # pyupgrade
+    "W",      # pycodestyle
+]
+
+ignore = [
+    "D202",  # No blank lines allowed after function docstring
+    "D203",  # 1 blank line required before class docstring
+    "D213",  # Multi-line docstring summary should start at the second line
+    "D404",  # First word of the docstring should not be This
+    "D406",  # Section name should end with a newline
+    "D407",  # Section name underlining
+    "D411",  # Missing blank line before section
+    "E501",  # line too long
+    "E731",  # do not assign a lambda expression, use a def
+]
+
+[tool.ruff.lint.flake8-pytest-style]
+fixture-parentheses = false
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.lint.isort]
+known-first-party = ["hsem", "custom_components"]
+combine-as-imports = true
+section-order = ["future", "standard-library", "third-party", "homeassistant", "first-party", "local-folder"]
+
+[tool.ruff.lint.isort.sections]
+homeassistant = ["homeassistant"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+# Standalone CLI helper scripts — console output via print() is their
+# intended interface (no HA logger available outside the integration).
+"scripts/*.py" = ["T201"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+skip-magic-trailing-comma = false
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers"
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+    "slow: Slow tests",
+]
+
+[tool.mypy]
+python_version = "3.14"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+disallow_incomplete_defs = true
+
+[tool.coverage.run]
+source = ["custom_components"]
+# Emit repo-relative paths (custom_components/hsem/x.py) rather than paths
+# relative to `source` (hsem/x.py).  Codecov matches report paths against the
+# repo tree, and the stripped form matches nothing.
+relative_files = true
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__init__.py",
+    "*/ml/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "if sys.version_info",
+]
+
+[tool.skylos]
+exclude = [
+    "tests",
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]

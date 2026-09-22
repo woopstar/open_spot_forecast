@@ -1,0 +1,103 @@
+# Label names used below must exist in .github/sync-labels.yml, the
+# canonical label manifest.
+name-template: "v$RESOLVED_VERSION"
+tag-template: "v$RESOLVED_VERSION"
+change-template: "- #$NUMBER $TITLE @$AUTHOR"
+sort-direction: ascending
+exclude-labels:
+  - "skip-changelog"
+categories:
+  - title: "⚒️ Breaking Changes"
+    labels:
+      - "breaking-change"
+
+  - title: "🚀 Features"
+    labels:
+      - "enhancement"
+
+  - title: "🐛 Bug Fixes"
+    labels:
+      - "bug"
+      - "bug-fix"
+
+  - title: "📖 Documentation"
+    labels:
+      - "documentation"
+
+  - title: "🔧 Configuration"
+    labels:
+      - "config"
+
+  - title: "🏗️ Build & CI"
+    labels:
+      - "build"
+
+  - title: "🧰 Maintenance"
+    labels:
+      - "chore"
+
+  - title: "📦 Dependencies"
+    labels:
+      - "dependencies"
+
+  - title: "⚡ Performance"
+    labels:
+      - "performance"
+
+  - title: "♻️ Refactoring"
+    labels:
+      - "area:refactor"
+
+  - title: "🧪 Tests"
+    labels:
+      - "area:tests"
+
+version-resolver:
+  major:
+    labels:
+      - "major"
+  minor:
+    labels:
+      - "minor"
+  patch:
+    labels:
+      - "patch"
+  default: patch
+template: |
+  ## Changes
+
+  $CHANGES
+
+autolabeler:
+  - label: "bug"
+    branch:
+      - '/fix\/.+/'
+  - label: "enhancement"
+    branch:
+      - '/feat\/.+/'
+      - '/feature\/.+/'
+  - label: "breaking-change"
+    branch:
+      - '/breaking\/.+/'
+  - label: "documentation"
+    branch:
+      - '/docs\/.+/'
+  - label: "chore"
+    branch:
+      - '/chore\/.+/'
+  - label: "build"
+    branch:
+      - '/build\/.+/'
+      - '/ci\/.+/'
+  - label: "dependencies"
+    branch:
+      - '/deps\/.+/'
+  - label: "performance"
+    branch:
+      - '/perf\/.+/'
+  - label: "area:refactor"
+    branch:
+      - '/refactor\/.+/'
+  - label: "area:tests"
+    branch:
+      - '/test\/.+/'

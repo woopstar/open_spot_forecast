@@ -1,0 +1,110 @@
+name: Lint and Test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions: {}
+
+jobs:
+  validate:
+    name: Validate configs and scripts
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Validate YAML
+        run: python3 scripts/validate-yaml.py
+
+      - name: Validate JSON/JSONC
+        run: python3 scripts/validate-json.py
+
+      - name: Validate translations
+        run: python3 scripts/validate_translations.py
+
+      - name: Lint shell scripts
+        uses: ludeeus/action-shellcheck@2.0.0
+        with:
+          scandir: "./scripts"
+
+      # format-check verifies ruff as well as prettier, so this job needs ruff.
+      # Pinned via requirements_lint.txt so CI and the devcontainer agree.
+      - name: Install lint tooling
+        run: python3 -m pip install --disable-pip-version-check -r requirements_lint.txt
+
+      - name: Check formatting and lint
+        # Goes through quality.sh so the versions and invocations live in one
+        # place; see PRETTIER_VERSION there and requirements_lint.txt for ruff.
+        run: ./scripts/quality.sh format-check
+
+  quality:
+    name: Quality gates (devcontainer)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Create mount stubs for CI
+        run: |
+          mkdir -p ~/.ssh ~/.gnupg
+          touch ~/.gitconfig
+
+      - name: Run all quality gates
+        uses: devcontainers/ci@v0.3
+        with:
+          runCmd: ./scripts/quality.sh all
+
+      - name: Verify tests passed
+        run: |
+          if [ ! -f coverage.xml ]; then
+            echo "Tests failed — no coverage report generated"
+            exit 1
+          fi
+          FAILURES=$(grep -oP 'failures="\K\d+' test-results.xml || echo "1")
+          ERRORS=$(grep -oP 'errors="\K\d+' test-results.xml || echo "1")
+          if [ "$FAILURES" != "0" ] || [ "$ERRORS" != "0" ]; then
+            echo "Tests had failures=$FAILURES errors=$ERRORS"
+            exit 1
+          fi
+          echo "All tests passed (failures=$FAILURES errors=$ERRORS)"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: ./coverage.xml
+          retention-days: 1
+
+  codecov:
+    name: Upload coverage to Codecov
+    runs-on: ubuntu-latest
+    needs: quality
+    steps:
+      # The uploader resolves report paths against the working tree, so the
+      # repo has to be present — without it Codecov cannot match any file in
+      # the report and rejects the whole thing.
+      - uses: actions/checkout@v7.0.1
+
+      - name: Download coverage artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella

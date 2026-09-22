@@ -1,0 +1,29 @@
+# artifacts
+__pycache__
+.pytest*
+*.egg-info
+*/build/*
+*/dist/*
+.mypy_cache
+.ruff_cache
+.skylos
+.cache
+
+# misc
+.coverage
+coverage.xml
+test-results.xml
+notes.txt
+.venv
+.DS_Store
+.tox
+logs
+
+# Home Assistant configuration
+config/*
+!config/configuration.yaml
+
+cycle.log
+core
+
+test-results.xml

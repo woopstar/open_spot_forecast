@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Open Spot Forecast - Basic Settings",
+        "description": "Configure your region and price settings",
+        "data": {
+          "region": "Price Region",
+          "currency": "Currency",
+          "vat": "VAT Rate (e.g., 0.25 for 25%)",
+          "precision": "Decimal Precision",
+          "price_type": "Price Unit (kWh, MWh, or Wh)"
+        }
+      },
+      "sensors": {
+        "title": "Open Spot Forecast - Sensor Configuration",
+        "description": "Configure data sources (all optional). Leave empty to use API fallback.\n\n**Price Source** (priority: Stromligning > Nordpool > API)\n**Weather Sensors** (optional - improves ML accuracy)",
+        "data": {
+          "stromligning_sensor": "Stromligning Sensor (real prices with tariffs/VAT)",
+          "nordpool_sensor": "Nordpool Sensor (spot prices)",
+          "wind_speed_sensor": "Wind Speed Sensor",
+          "wind_direction_sensor": "Wind Direction Sensor",
+          "solar_power_sensor": "Solar Power Sensor",
+          "solar_forecast_sensor": "Solar Forecast Sensor",
+          "temperature_sensor": "Temperature Sensor",
+          "dmi_api_key": "DMI API Key (alternative weather source)",
+          "enable_ml_prediction": "Enable ML Predictions"
+        }
+      }
+    },
+    "error": {
+      "invalid_region": "Invalid region selected"
+    },
+    "abort": {
+      "already_configured": "This region is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Open Spot Forecast Options",
+        "description": "Configure advanced options for spot price forecasting",
+        "data": {
+          "enable_ml_prediction": "Enable ML Price Predictions",
+          "dmi_api_key": "DMI API Key (for weather data)",
+          "stromligning_sensor": "Stromligning Sensor (real prices with tariffs/VAT)",
+          "nordpool_sensor": "Nordpool Sensor (spot prices)",
+          "wind_speed_sensor": "Wind Speed Sensor",
+          "wind_direction_sensor": "Wind Direction Sensor",
+          "solar_power_sensor": "Solar Power Sensor",
+          "solar_forecast_sensor": "Solar Forecast Sensor",
+          "temperature_sensor": "Temperature Sensor",
+          "vat": "VAT Rate",
+          "precision": "Decimal Precision"
+        }
+      }
+    }
+  }
+}
