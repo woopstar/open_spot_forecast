@@ -1,6 +1,6 @@
 """Tests for Open Spot Forecast integration."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from tempfile import mkdtemp
 from unittest.mock import Mock
@@ -12,7 +12,7 @@ from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 
 def _make_hass() -> Mock:
     """Return a mock Home Assistant with a real storage path."""
-    hass = _make_hass()
+    hass = Mock()
     hass.config.path.return_value = str(Path(mkdtemp()) / ".storage")
     return hass
 
@@ -184,10 +184,10 @@ class TestSpotPricePredictor:
 
         # Check prediction structure
         for pred in predictor.predictions:
-            assert "timestamp" in pred
-            assert "predicted_price" in pred
+            assert "start" in pred
+            assert "price" in pred
             assert "confidence" in pred
-            assert pred["predicted_price"] >= 0
+            assert pred["price"] >= 0
             assert 0.3 <= pred["confidence"] <= 1.0
 
     def test_predict_with_insufficient_data(self):
