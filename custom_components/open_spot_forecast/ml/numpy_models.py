@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -19,7 +18,7 @@ class DecisionStump:
         self.right_value = None
 
     def fit(
-        self, X: np.ndarray, y: np.ndarray, sample_weights: Optional[np.ndarray] = None
+        self, X: np.ndarray, y: np.ndarray, sample_weights: np.ndarray | None = None
     ):
         """Find the best split for the data."""
         if sample_weights is None:
@@ -390,10 +389,10 @@ class FeatureEngineer:
 
     def create_features(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
-    ) -> Tuple[np.ndarray, List[str]]:
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
+    ) -> tuple[np.ndarray, list[str]]:
         """Create feature matrix from prices and weather data."""
         if timestamps is None:
             timestamps = [
@@ -501,9 +500,9 @@ class ElectricityPricePredictor:
 
     def fit(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
     ):
         """Train the models."""
         # Create features
@@ -520,9 +519,9 @@ class ElectricityPricePredictor:
 
     def predict(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
     ) -> np.ndarray:
         """Make predictions using ensemble."""
         if not self.is_trained:

@@ -129,12 +129,12 @@ enter the price model.
 
 ### Module Responsibilities (Know Where Code Lives)
 
-| Layer      | Location                        | Key files                                                                   |
-| ---------- | ------------------------------- | --------------------------------------------------------------------------- |
-| Component  | `custom_components/open_spot_forecast/`        | `__init__.py`, `config_flow.py`, `sensor.py`, `binary_sensor.py`, `const.py` |
-| Sensor I/O | `custom_components/open_spot_forecast/`        | `sensor_reader.py`                                                          |
-| ML         | `custom_components/open_spot_forecast/ml/`     | `predictor.py`, `features.py`, `models.py`, `learning.py`, `numpy_models.py`, `storage.py` |
-| API        | `custom_components/open_spot_forecast/api/`    | `nordpool_data.py`                                                          |
+| Layer      | Location                                    | Key files                                                                                  |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Component  | `custom_components/open_spot_forecast/`     | `__init__.py`, `config_flow.py`, `sensor.py`, `binary_sensor.py`, `const.py`               |
+| Sensor I/O | `custom_components/open_spot_forecast/`     | `sensor_reader.py`                                                                         |
+| ML         | `custom_components/open_spot_forecast/ml/`  | `predictor.py`, `features.py`, `models.py`, `learning.py`, `numpy_models.py`, `storage.py` |
+| API        | `custom_components/open_spot_forecast/api/` | `nordpool_data.py`                                                                         |
 
 ### Utility Function Centralization
 

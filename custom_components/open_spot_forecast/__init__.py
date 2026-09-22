@@ -12,6 +12,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.loader import async_get_integration
 from homeassistant.util import slugify as util_slugify
 
+from .api import fetch_consumption_prognosis, fetch_production_prognosis
 from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
@@ -32,7 +33,6 @@ from .const import (
 )
 from .ml.predictor import SpotPricePredictor
 from .sensor_reader import SensorReader, async_read_weather_forecast
-from .api import fetch_consumption_prognosis, fetch_production_prognosis
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def _extract_latest_known_timestamp(
                 dt = dt.replace(tzinfo=None)
             if latest is None or dt > latest:
                 latest = dt
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             continue
 
     if latest is not None:

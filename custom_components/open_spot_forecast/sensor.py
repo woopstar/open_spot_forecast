@@ -545,7 +545,7 @@ class MLPredictionSensor(SensorEntity):
                             if pred_time > now:
                                 next_pred = pred
                                 break
-                        except (ValueError, TypeError):
+                        except ValueError, TypeError:
                             continue
 
                 # Fallback to first prediction if no future prediction found

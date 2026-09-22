@@ -11,17 +11,17 @@ Activate this skill **after making code changes** and **before opening a PR**. S
 
 When behaviour changes, check **every** file below. If it describes something you changed, update it:
 
-| File                              | When to check                                                                 |
-| --------------------------------- | ----------------------------------------------------------------------------- |
-| `docs/architecture.md`            | System overview, data sources, data flow, or component layout changed         |
-| `docs/ml_documentation.md`        | Model, feature vector, data sources, or confidence logic changed              |
-| `docs/self_learning.md`           | Self-learning loop, bias correction, or metrics changed                       |
-| `docs/persistence.md`             | SQLite schema, migrations, or storage behaviour changed                       |
-| `docs/stromligning_integration.md`| Price-source priority or Stromligning behaviour changed                       |
-| `docs/using_existing_sensors.md`  | Required/recommended entities or sensor wiring changed                        |
-| `.github/memories.md`             | Canonical patterns, module map, open issues, or architectural decisions changed |
-| `README.md`                       | User-facing features, descriptions, or links changed                          |
-| `translations/{en,da}.json`       | Any user-facing string added, changed, or removed — see `osf-translation-sync` |
+| File                               | When to check                                                                   |
+| ---------------------------------- | ------------------------------------------------------------------------------- |
+| `docs/architecture.md`             | System overview, data sources, data flow, or component layout changed           |
+| `docs/ml_documentation.md`         | Model, feature vector, data sources, or confidence logic changed                |
+| `docs/self_learning.md`            | Self-learning loop, bias correction, or metrics changed                         |
+| `docs/persistence.md`              | SQLite schema, migrations, or storage behaviour changed                         |
+| `docs/stromligning_integration.md` | Price-source priority or Stromligning behaviour changed                         |
+| `docs/using_existing_sensors.md`   | Required/recommended entities or sensor wiring changed                          |
+| `.github/memories.md`              | Canonical patterns, module map, open issues, or architectural decisions changed |
+| `README.md`                        | User-facing features, descriptions, or links changed                            |
+| `translations/{en,da}.json`        | Any user-facing string added, changed, or removed — see `osf-translation-sync`  |
 
 ## Documentation Rules
 

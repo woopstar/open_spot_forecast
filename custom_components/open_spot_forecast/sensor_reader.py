@@ -1,5 +1,6 @@
 """Sensor reader for Home Assistant integrations."""
 
+import contextlib
 import logging
 from datetime import datetime
 from typing import Any
@@ -39,7 +40,7 @@ class SensorReader:
 
         try:
             return float(state.state)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             _LOGGER.debug("Sensor %s state '%s' is not numeric", entity_id, state.state)
             return None
 
@@ -92,7 +93,7 @@ class SensorReader:
         # Current price
         try:
             result["current_price"] = float(state.state)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             _LOGGER.debug("Stromligning sensor state is not numeric")
 
         # Log all available attributes for debugging
@@ -336,10 +337,8 @@ class SensorReader:
             if temp_entity.startswith("weather."):
                 state = self.hass.states.get(temp_entity)
                 if state:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         weather_data["temperature"] = float(state.state)
-                    except (ValueError, TypeError):
-                        pass
             else:
                 weather_data["temperature"] = self.get_sensor_state(temp_entity)
 
@@ -403,10 +402,8 @@ class SensorReader:
             return result
 
         # Current power (state value)
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             result["current_power"] = float(state.state)
-        except (ValueError, TypeError):
-            pass
 
         # Today's estimates
         result["estimate_today"] = state.attributes.get("estimate")

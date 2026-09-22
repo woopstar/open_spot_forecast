@@ -194,7 +194,7 @@ The following checks run on every PR:
 | Doc format    | `prettier`                 | `./scripts/quality.sh lint`         | Markdown / YAML / JSON style   |
 | Linting       | `ruff check`               | `./scripts/quality.sh lint`         | Bugs, style issues, complexity |
 | Type Checking | `mypy`                     | `./scripts/quality.sh typing`       | Type errors and unsafe code    |
-| Translations  | `validate_translations.py` | `./scripts/quality.sh translations` | en/da keys stay in sync  |
+| Translations  | `validate_translations.py` | `./scripts/quality.sh translations` | en/da keys stay in sync        |
 | Tests         | `pytest`                   | `./scripts/quality.sh test`         | Verifies functionality         |
 | Coverage      | `coverage`                 | `--cov` flag                        | Ensures new code is tested     |
 

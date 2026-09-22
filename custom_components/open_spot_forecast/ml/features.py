@@ -324,7 +324,7 @@ class FeatureMixin:
             else:
                 try:
                     sanitized.append(float(val))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     sanitized.append(0.0)
         return sanitized
 

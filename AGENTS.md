@@ -74,15 +74,15 @@ The agent MUST:
 
 **Key entity mappings** (source → HA entity id pattern):
 
-| Source                          | Entity (example)                                  | Used for                          |
-| ------------------------------- | ------------------------------------------------- | --------------------------------- |
-| Stromligning (current price)    | `sensor.stromligning_current_price_vat`           | Confirmed consumer prices (96/day) |
-| Stromligning (tomorrow)         | `binary_sensor.stromligning_tomorrow_spotprice_vat` | Tomorrow's price availability    |
-| Met.no weather (state)          | `weather.forecast_*`                              | Current wind/temp/humidity/cloud  |
-| Met.no weather (forecast)       | `weather.get_forecasts` service                   | 48h hourly forecast               |
-| Solcast solar forecast          | `sensor.solcast_pv_forecast_forecast_today`       | Solar generation estimate         |
-| Inverter solar production       | `sensor.power_inverter_input_total`               | Actual solar (training/scale)     |
-| Outdoor temperature             | `sensor.metroair_330_outdoor_temperature`         | Actual temperature (training)     |
+| Source                       | Entity (example)                                    | Used for                           |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------- |
+| Stromligning (current price) | `sensor.stromligning_current_price_vat`             | Confirmed consumer prices (96/day) |
+| Stromligning (tomorrow)      | `binary_sensor.stromligning_tomorrow_spotprice_vat` | Tomorrow's price availability      |
+| Met.no weather (state)       | `weather.forecast_*`                                | Current wind/temp/humidity/cloud   |
+| Met.no weather (forecast)    | `weather.get_forecasts` service                     | 48h hourly forecast                |
+| Solcast solar forecast       | `sensor.solcast_pv_forecast_forecast_today`         | Solar generation estimate          |
+| Inverter solar production    | `sensor.power_inverter_input_total`                 | Actual solar (training/scale)      |
+| Outdoor temperature          | `sensor.metroair_330_outdoor_temperature`           | Actual temperature (training)      |
 
 **Always check `docs/using_existing_sensors.md` first** before searching an upstream repo or
 guessing an entity ID. If a new entity is confirmed to exist in HA, add it to

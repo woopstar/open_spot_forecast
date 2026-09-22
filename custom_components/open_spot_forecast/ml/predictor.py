@@ -1,7 +1,7 @@
 """Machine learning predictor for spot prices."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -26,7 +26,7 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
         try:
             self.tz = ZoneInfo(tz_name)
         except Exception:
-            self.tz = timezone.utc
+            self.tz = UTC
         self.predictions = []
         self.confidence_scores = []
 

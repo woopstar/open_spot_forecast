@@ -88,12 +88,12 @@ Branch naming: `<type>/<issue-number>-<slug>`
 
 ## Canonical Helpers — Never Re-Invent
 
-| Helper               | Location            | Use for                          |
-| -------------------- | ------------------- | -------------------------------- |
-| `DOMAIN`, `CONF_*`, `REGIONS`, `PRICE_IN` | `const.py` | Config keys, regions, price units |
-| `SensorReader`       | `sensor_reader.py`  | All external entity reads        |
-| `SpotPricePredictor` | `ml/predictor.py`   | ML prediction (features + model + learning) |
-| `LearningStorage`    | `ml/storage.py`     | SQLite persistence               |
+| Helper                                    | Location           | Use for                                     |
+| ----------------------------------------- | ------------------ | ------------------------------------------- |
+| `DOMAIN`, `CONF_*`, `REGIONS`, `PRICE_IN` | `const.py`         | Config keys, regions, price units           |
+| `SensorReader`                            | `sensor_reader.py` | All external entity reads                   |
+| `SpotPricePredictor`                      | `ml/predictor.py`  | ML prediction (features + model + learning) |
+| `LearningStorage`                         | `ml/storage.py`    | SQLite persistence                          |
 
 ---
 

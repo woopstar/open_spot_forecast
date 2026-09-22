@@ -710,7 +710,7 @@ class LearningMixin:
                         int(hpo_n),
                         float(hpo_lr),
                     )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             pred_count = data.get("prediction_count", 0)

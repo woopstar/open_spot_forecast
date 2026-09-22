@@ -1,7 +1,8 @@
 """Model training and prediction generation."""
 
+import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
@@ -27,9 +28,9 @@ class ModelMixin:
         try:
             dt = datetime.fromisoformat(iso_timestamp)
             if dt.tzinfo is not None:
-                dt = dt.astimezone(timezone.utc)
+                dt = dt.astimezone(UTC)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     def _train_models(
@@ -308,7 +309,7 @@ class ModelMixin:
         self.is_trained = False
 
         # Persist best params
-        try:
+        with contextlib.suppress(Exception):
             self.storage.save_meta_dict(
                 {
                     "hpo_n_estimators": str(best_params["n_estimators"]),
@@ -316,8 +317,6 @@ class ModelMixin:
                     "hpo_best_mae": str(best_score),
                 }
             )
-        except Exception:
-            pass
 
         return best_params
 
@@ -649,7 +648,7 @@ class ModelMixin:
                 dt = datetime.fromisoformat(start)
                 days_ahead = (dt - datetime.now()).days
                 confidence -= days_ahead * 0.05
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         return max(0.3, min(1.0, confidence))
