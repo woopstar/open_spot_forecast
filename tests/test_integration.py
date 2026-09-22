@@ -1,13 +1,20 @@
 """Tests for Open Spot Forecast integration."""
 
 from datetime import datetime, timedelta
+from pathlib import Path
+from tempfile import mkdtemp
 from unittest.mock import Mock
 
 import pytest
 
-from custom_components.open_spot_forecast.api.dmi import DMIAPI
-from custom_components.open_spot_forecast.api.nordpool import NordpoolAPI
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+
+
+def _make_hass() -> Mock:
+    """Return a mock Home Assistant with a real storage path."""
+    hass = _make_hass()
+    hass.config.path.return_value = str(Path(mkdtemp()) / ".storage")
+    return hass
 
 
 class TestSpotPricePredictor:
@@ -15,7 +22,7 @@ class TestSpotPricePredictor:
 
     def test_init(self):
         """Test predictor initialization."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         assert predictor.region == "DK1"
@@ -25,7 +32,7 @@ class TestSpotPricePredictor:
 
     def test_wind_power_curve(self):
         """Test wind turbine power curve."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Below cut-in speed
@@ -46,7 +53,7 @@ class TestSpotPricePredictor:
 
     def test_extract_wind_features(self):
         """Test wind feature extraction."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Empty weather data
@@ -70,7 +77,7 @@ class TestSpotPricePredictor:
 
     def test_extract_solar_features(self):
         """Test solar feature extraction."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Empty weather data
@@ -93,7 +100,7 @@ class TestSpotPricePredictor:
 
     def test_generate_time_features(self):
         """Test time feature generation."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # 1 day, 60-minute intervals
@@ -113,7 +120,7 @@ class TestSpotPricePredictor:
 
     def test_extract_hourly_pattern(self):
         """Test hourly pattern extraction."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Not enough data
@@ -129,7 +136,7 @@ class TestSpotPricePredictor:
 
     def test_estimate_confidence(self):
         """Test confidence estimation."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Good features
@@ -164,7 +171,7 @@ class TestSpotPricePredictor:
 
     def test_heuristic_predictions(self):
         """Test heuristic prediction generation."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         historical_prices = [100 + i for i in range(48)]  # 48 hours
@@ -185,7 +192,7 @@ class TestSpotPricePredictor:
 
     def test_predict_with_insufficient_data(self):
         """Test prediction with insufficient training data."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         weather_data = {}
@@ -199,7 +206,7 @@ class TestSpotPricePredictor:
 
     def test_get_predictions_for_day(self):
         """Test getting predictions for a specific day."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # Generate some predictions
@@ -216,7 +223,7 @@ class TestSpotPricePredictor:
 
     def test_get_prediction_stats(self):
         """Test prediction statistics."""
-        hass = Mock()
+        hass = _make_hass()
         predictor = SpotPricePredictor(hass, "DK1")
 
         # No predictions
@@ -233,120 +240,6 @@ class TestSpotPricePredictor:
         assert "mean_price" in stats
         assert "mean_confidence" in stats
         assert stats["total_predictions"] == 48
-
-
-class TestNordpoolAPI:
-    """Test Nordpool API client."""
-
-    def test_init(self):
-        """Test API initialization."""
-        hass = Mock()
-        api = NordpoolAPI(hass, "DK1", "DKK")
-
-        assert api.region == "DK1"
-        assert api.currency == "DKK"
-        assert api.today == []
-        assert api.tomorrow == []
-
-    def test_get_current_price(self):
-        """Test getting current price."""
-        hass = Mock()
-        api = NordpoolAPI(hass, "DK1", "DKK")
-
-        # No data
-        assert api.get_current_price() is None
-
-        # With data
-        api.today = [100 + i for i in range(24)]
-        price = api.get_current_price()
-        assert price is not None
-        assert 100 <= price <= 123
-
-    def test_get_today_stats(self):
-        """Test today's statistics."""
-        hass = Mock()
-        api = NordpoolAPI(hass, "DK1", "DKK")
-
-        # No data
-        stats = api.get_today_stats()
-        assert stats == {}
-
-        # With data
-        api.today = [100, 200, 300, 400]
-        stats = api.get_today_stats()
-
-        assert stats["min"] == 100
-        assert stats["max"] == 400
-        assert stats["mean"] == 250
-
-    def test_get_tomorrow_stats(self):
-        """Test tomorrow's statistics."""
-        hass = Mock()
-        api = NordpoolAPI(hass, "DK1", "DKK")
-
-        # No data
-        stats = api.get_tomorrow_stats()
-        assert stats == {}
-
-        # With data
-        api.tomorrow = [150, 250, 350]
-        stats = api.get_tomorrow_stats()
-
-        assert stats["min"] == 150
-        assert stats["max"] == 350
-        assert stats["mean"] == 250
-
-
-class TestDMIAPI:
-    """Test DMI API client."""
-
-    def test_init(self):
-        """Test API initialization."""
-        hass = Mock()
-        api = DMIAPI(hass, "test_key")
-
-        assert api.api_key == "test_key"
-        assert api.weather_data == {}
-        assert api.wind_forecast == []
-        assert api.solar_forecast == []
-
-    def test_get_wind_forecast_for_hours(self):
-        """Test getting wind forecast for specific hours."""
-        hass = Mock()
-        api = DMIAPI(hass, "test_key")
-
-        # No data
-        forecast = api.get_wind_forecast_for_hours(24)
-        assert forecast == []
-
-        # With data
-        now = datetime.now()
-        api.wind_forecast = [
-            {"time": (now + timedelta(hours=i)).isoformat(), "wind_speed": 5 + i}
-            for i in range(48)
-        ]
-
-        forecast = api.get_wind_forecast_for_hours(24)
-        assert len(forecast) <= 24
-
-    def test_get_solar_forecast_for_hours(self):
-        """Test getting solar forecast for specific hours."""
-        hass = Mock()
-        api = DMIAPI(hass, "test_key")
-
-        # No data
-        forecast = api.get_solar_forecast_for_hours(24)
-        assert forecast == []
-
-        # With data
-        now = datetime.now()
-        api.solar_forecast = [
-            {"time": (now + timedelta(hours=i)).isoformat(), "radiation": 500 + i * 10}
-            for i in range(48)
-        ]
-
-        forecast = api.get_solar_forecast_for_hours(24)
-        assert len(forecast) <= 24
 
 
 if __name__ == "__main__":

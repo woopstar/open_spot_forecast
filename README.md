@@ -81,7 +81,7 @@ To use this package, you need the following integrations:
 1. In HACS, go to **Integrations**.
 2. Click the three dots in the top-right corner, and select **Custom repositories**.
 3. Add this repository URL and select **Integration** as the category:
-   `https://github.com/woopstar/openspotforecast`
+   `https://github.com/woopstar/open_spot_forecast`
 4. Click **Add**.
 5. The integration will now appear in HACS under the **Integrations** section. Click **Install**.
 6. Restart Home Assistant.
@@ -125,13 +125,13 @@ Full documentation is available in the [`docs/`](docs/) directory:
 
 ---
 
-[releases-shield]: https://img.shields.io/github/v/release/woopstar/openspotforecast?style=for-the-badge
-[releases]: https://github.com/woopstar/openspotforecast/releases
-[downloads-shield]: https://img.shields.io/github/downloads/woopstar/openspotforecast/total.svg?style=for-the-badge
-[downloads]: https://github.com/woopstar/openspotforecast/releases
-[license-shield]: https://img.shields.io/github/license/woopstar/openspotforecast?style=for-the-badge
-[license]: https://github.com/woopstar/openspotforecast/blob/main/LICENSE
+[releases-shield]: https://img.shields.io/github/v/release/woopstar/open_spot_forecast?style=for-the-badge
+[releases]: https://github.com/woopstar/open_spot_forecast/releases
+[downloads-shield]: https://img.shields.io/github/downloads/woopstar/open_spot_forecast/total.svg?style=for-the-badge
+[downloads]: https://github.com/woopstar/open_spot_forecast/releases
+[license-shield]: https://img.shields.io/github/license/woopstar/open_spot_forecast?style=for-the-badge
+[license]: https://github.com/woopstar/open_spot_forecast/blob/main/LICENSE
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-FFDD00.svg?style=for-the-badge&logo=buymeacoffee
 [buymecoffee]: https://www.buymeacoffee.com/woopstar
-[codecov-shield]: https://codecov.io/github/woopstar/openspotforecast/graph/badge.svg
-[codecov]: https://codecov.io/github/woopstar/openspotforecast
+[codecov-shield]: https://codecov.io/github/woopstar/open_spot_forecast/graph/badge.svg
+[codecov]: https://codecov.io/github/woopstar/open_spot_forecast
