@@ -75,7 +75,7 @@ Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tes
 
 ## Feature Vector (20 features)
 
-The canonical feature vector is defined in `docs/ML_DOCUMENTATION.md` and built by
+The canonical feature vector is defined in `docs/ml_documentation.md` and built by
 `FeatureMixin._combine_features()`:
 
 | #  | Feature                | Source          |
@@ -102,7 +102,7 @@ The canonical feature vector is defined in `docs/ML_DOCUMENTATION.md` and built 
 | 19 | `wind_share`           | Derived         |
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
-`docs/ML_DOCUMENTATION.md`.
+`docs/ml_documentation.md`.
 
 ## Slot Granularity — 96 Slots
 
@@ -163,8 +163,8 @@ be satisfied. If a file exceeds either, split it before adding more features.
 ## Documentation Style
 
 Docs live in `docs/` and are organized by responsibility, not by theme. The canonical docs
-are `ARCHITECTURE.md`, `ML_DOCUMENTATION.md`, `SELF_LEARNING.md`, `PERSISTENCE.md`,
-`STROMLIGNING_INTEGRATION.md`, and `USING_EXISTING_SENSORS.md`. Any change that alters
+are `architecture.md`, `ml_documentation.md`, `self_learning.md`, `persistence.md`,
+`stromligning_integration.md`, and `using_existing_sensors.md`. Any change that alters
 behaviour must update the docs that describe it in the same PR.
 
 ## Sensor Wiring
@@ -178,7 +178,7 @@ To wire a new external entity into OSF, follow the full stack in order:
 5. `sensor_reader.py` — add a `read_*` method on `SensorReader`
 6. `__init__.py` — read the value and pass it into `weather_data`
 
-Always check `docs/USING_EXISTING_SENSORS.md` first for the verified entity list.
+Always check `docs/using_existing_sensors.md` first for the verified entity list.
 
 ## Testing Rules
 

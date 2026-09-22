@@ -116,12 +116,12 @@ To use this package, you need the following integrations:
 
 Full documentation is available in the [`docs/`](docs/) directory:
 
-- **[Architecture](docs/ARCHITECTURE.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ML_DOCUMENTATION.md)** — Model, 20-feature vector, confidence
-- **[Self-Learning](docs/SELF_LEARNING.md)** — Self-learning loop, bias correction
-- **[Persistence](docs/PERSISTENCE.md)** — SQLite storage schema and migrations
-- **[Stromligning Integration](docs/STROMLIGNING_INTEGRATION.md)** — Price-source priority
-- **[Using Existing Sensors](docs/USING_EXISTING_SENSORS.md)** — Sensor wiring reference
+- **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 20-feature vector, confidence
+- **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
+- **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
+- **[Stromligning Integration](docs/stromligning_integration.md)** — Price-source priority
+- **[Using Existing Sensors](docs/using_existing_sensors.md)** — Sensor wiring reference
 
 ---
 

@@ -13,12 +13,12 @@ When behaviour changes, check **every** file below. If it describes something yo
 
 | File                              | When to check                                                                 |
 | --------------------------------- | ----------------------------------------------------------------------------- |
-| `docs/ARCHITECTURE.md`            | System overview, data sources, data flow, or component layout changed         |
-| `docs/ML_DOCUMENTATION.md`        | Model, feature vector, data sources, or confidence logic changed              |
-| `docs/SELF_LEARNING.md`           | Self-learning loop, bias correction, or metrics changed                       |
-| `docs/PERSISTENCE.md`             | SQLite schema, migrations, or storage behaviour changed                       |
-| `docs/STROMLIGNING_INTEGRATION.md`| Price-source priority or Stromligning behaviour changed                       |
-| `docs/USING_EXISTING_SENSORS.md`  | Required/recommended entities or sensor wiring changed                        |
+| `docs/architecture.md`            | System overview, data sources, data flow, or component layout changed         |
+| `docs/ml_documentation.md`        | Model, feature vector, data sources, or confidence logic changed              |
+| `docs/self_learning.md`           | Self-learning loop, bias correction, or metrics changed                       |
+| `docs/persistence.md`             | SQLite schema, migrations, or storage behaviour changed                       |
+| `docs/stromligning_integration.md`| Price-source priority or Stromligning behaviour changed                       |
+| `docs/using_existing_sensors.md`  | Required/recommended entities or sensor wiring changed                        |
 | `.github/memories.md`             | Canonical patterns, module map, open issues, or architectural decisions changed |
 | `README.md`                       | User-facing features, descriptions, or links changed                          |
 | `translations/{en,da}.json`       | Any user-facing string added, changed, or removed — see `osf-translation-sync` |
@@ -27,7 +27,7 @@ When behaviour changes, check **every** file below. If it describes something yo
 
 ### Spec-Implementation Consistency (Highest Priority)
 
-- `docs/ML_DOCUMENTATION.md`, `docs/SELF_LEARNING.md`, and `docs/PERSISTENCE.md`
+- `docs/ml_documentation.md`, `docs/self_learning.md`, and `docs/persistence.md`
   describe the model, learning loop, and storage schema. They **must never
   diverge silently** from the implementation.
 - If a change intentionally alters the feature vector, bias-correction formula,
@@ -60,16 +60,16 @@ Before opening a PR:
 
 - [ ] Read every docs file listed above
 - [ ] For each file: does it describe something I changed? If yes, update it
-- [ ] `docs/ML_DOCUMENTATION.md` consistent with the ML implementation
+- [ ] `docs/ml_documentation.md` consistent with the ML implementation
 - [ ] `.github/memories.md` module map matches current file layout
 - [ ] `translations/en.json` has entries for all new/changed user-facing strings
 - [ ] No stale or misleading documentation remains
 
 ## Anti-Patterns to Avoid
 
-- ❌ Updating the ML model but not `docs/ML_DOCUMENTATION.md`
-- ❌ Adding a new config field but not `docs/USING_EXISTING_SENSORS.md`
+- ❌ Updating the ML model but not `docs/ml_documentation.md`
+- ❌ Adding a new config field but not `docs/using_existing_sensors.md`
 - ❌ Changing a feature but leaving old behavior in `README.md`
 - ❌ Adding a user-facing string but skipping `translations/en.json`
-- ❌ Changing the storage schema but not `docs/PERSISTENCE.md`
+- ❌ Changing the storage schema but not `docs/persistence.md`
 - ❌ Recording a pattern in code but not in `.github/memories.md`

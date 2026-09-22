@@ -90,9 +90,9 @@ When implementing a utility or helper function:
 
 ## ML Specification Compliance (Mandatory)
 
-**Before touching any ML code**, read `docs/ML_DOCUMENTATION.md` — it is the single source
-of truth for the model, feature vector, and data flow. Also read `docs/SELF_LEARNING.md` for
-self-learning/bias-correction changes and `docs/PERSISTENCE.md` for storage changes.
+**Before touching any ML code**, read `docs/ml_documentation.md` — it is the single source
+of truth for the model, feature vector, and data flow. Also read `docs/self_learning.md` for
+self-learning/bias-correction changes and `docs/persistence.md` for storage changes.
 
 Rules:
 
@@ -107,7 +107,7 @@ Rules:
 
 Quick checklist before opening an ML PR:
 
-- [ ] `docs/ML_DOCUMENTATION.md` read and understood
+- [ ] `docs/ml_documentation.md` read and understood
 - [ ] Feature vector stays at 20 canonical features
 - [ ] Slot granularity is 96 (15-min), never hourly (0-23)
 - [ ] Bias correction uses the EMA formula `0.9 * old + 0.1 * bias_ratio`

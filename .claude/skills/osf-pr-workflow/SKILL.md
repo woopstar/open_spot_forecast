@@ -48,12 +48,12 @@ glossary.
 
 Before opening a PR, check and update ALL documentation that describes changed behavior:
 
-- [ ] `docs/ARCHITECTURE.md` — if system overview, data sources, or data flow changed
-- [ ] `docs/ML_DOCUMENTATION.md` — if model, features, or confidence changed
-- [ ] `docs/SELF_LEARNING.md` — if self-learning or bias correction changed
-- [ ] `docs/PERSISTENCE.md` — if storage schema or migrations changed
-- [ ] `docs/STROMLIGNING_INTEGRATION.md` — if price-source priority changed
-- [ ] `docs/USING_EXISTING_SENSORS.md` — if sensor wiring changed
+- [ ] `docs/architecture.md` — if system overview, data sources, or data flow changed
+- [ ] `docs/ml_documentation.md` — if model, features, or confidence changed
+- [ ] `docs/self_learning.md` — if self-learning or bias correction changed
+- [ ] `docs/persistence.md` — if storage schema or migrations changed
+- [ ] `docs/stromligning_integration.md` — if price-source priority changed
+- [ ] `docs/using_existing_sensors.md` — if sensor wiring changed
 - [ ] `.github/memories.md` — if canonical patterns or module map changed
 - [ ] `README.md` — if user-facing features changed
 - [ ] `translations/{en,da}.json` — if user-facing strings changed (see

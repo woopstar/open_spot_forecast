@@ -10,7 +10,7 @@ whether reporting a bug, filing an enhancement, or capturing a chore/tech-debt i
 
 ## Step 1: Investigate Before Drafting
 
-Read the relevant code (and `docs/ML_DOCUMENTATION.md` / `AGENTS.md` if the area
+Read the relevant code (and `docs/ml_documentation.md` / `AGENTS.md` if the area
 applies) before writing the issue. An issue drafted without reading the code
 produces a vague description and an unusable "solution" — grep for the symptom,
 find the responsible file(s), and cite concrete `file:line` references in the body.

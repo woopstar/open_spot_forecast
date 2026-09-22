@@ -25,13 +25,13 @@ Activate this skill when the user asks for a code review, PR review, or diff rev
 ## OSF-Specific Checks
 
 - If the change touches the ML model, feature vector, or prediction logic, read
-  `docs/ML_DOCUMENTATION.md` and `docs/ARCHITECTURE.md` first.
+  `docs/ml_documentation.md` and `docs/architecture.md` first.
 - If the change touches self-learning, bias correction, or error metrics, read
-  `docs/SELF_LEARNING.md` first.
+  `docs/self_learning.md` first.
 - If the change touches SQLite storage or schema migrations, read
-  `docs/PERSISTENCE.md` first.
+  `docs/persistence.md` first.
 - If the change touches price sources (Stromligning, Nordpool) or sensor wiring,
-  read `docs/STROMLIGNING_INTEGRATION.md` and `docs/USING_EXISTING_SENSORS.md` first.
+  read `docs/stromligning_integration.md` and `docs/using_existing_sensors.md` first.
 - If the change affects PR workflow or release notes, check `.github/memories.md`
   and `docs/` for consistency.
 - Verify affected tests exist or are updated.
