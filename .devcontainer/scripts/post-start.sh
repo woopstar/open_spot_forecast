@@ -1,5 +1,5 @@
 #!/bin/bash
-# postStartCommand wrapper for the HSEM devcontainer.
+# postStartCommand wrapper for the OSF devcontainer.
 #
 # Starts the SSH/GPG agent bridge in the background on every container
 # start. Backgrounding is required: devcontainer waits for this command

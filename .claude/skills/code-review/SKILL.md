@@ -22,11 +22,18 @@ Activate this skill when the user asks for a code review, PR review, or diff rev
 4. Compare against repository conventions and docs when the change affects them.
 5. Summarize findings with severity, rationale, and exact file and line references.
 
-## HSEM-Specific Checks
+## OSF-Specific Checks
 
-- If the change touches planner logic, read `docs/planner-spec.md` first.
-- If the change touches Huawei Solar entities, read `docs/huawei_entities.md` first.
-- If the change affects PR workflow or release notes, check `.github/memories.md` and `docs/` for consistency.
+- If the change touches the ML model, feature vector, or prediction logic, read
+  `docs/ML_DOCUMENTATION.md` and `docs/ARCHITECTURE.md` first.
+- If the change touches self-learning, bias correction, or error metrics, read
+  `docs/SELF_LEARNING.md` first.
+- If the change touches SQLite storage or schema migrations, read
+  `docs/PERSISTENCE.md` first.
+- If the change touches price sources (Stromligning, Nordpool) or sensor wiring,
+  read `docs/STROMLIGNING_INTEGRATION.md` and `docs/USING_EXISTING_SENSORS.md` first.
+- If the change affects PR workflow or release notes, check `.github/memories.md`
+  and `docs/` for consistency.
 - Verify affected tests exist or are updated.
 
 ## Output Format

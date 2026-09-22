@@ -1,6 +1,6 @@
 // See https://containers.dev/implementors/json_reference/ for format details.
 {
-  "name": "HSEM",
+  "name": "OSF",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -11,26 +11,26 @@
   },
   "postCreateCommand": "/usr/local/bin/post-create.sh",
   "postStartCommand": "/usr/local/bin/post-start.sh",
-  "runArgs": ["--name", "hsem-devcontainer", "--restart", "always"],
+  "runArgs": ["--name", "osf-devcontainer", "--restart", "always"],
   "remoteUser": "root",
   // "forwardPorts": [8123],
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/hsem,type=bind,consistency=cached",
-  "workspaceFolder": "/workspaces/hsem",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/osf,type=bind,consistency=cached",
+  "workspaceFolder": "/workspaces/osf",
   "mounts": [
-    "source=hsem-root,target=/root,type=volume",
+    "source=osf-root,target=/root,type=volume",
     "type=bind,source=${localEnv:HOME}/.ssh,target=/root/.ssh,readonly",
     "type=bind,source=${localEnv:HOME}/.gnupg,target=/root/.gnupg",
     "type=bind,source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig",
-    "source=hsem-cache,target=/tmp/hsem-cache,type=volume",
-    "source=hsem-worktrees,target=/workspaces/worktrees,type=volume"
+    "source=osf-cache,target=/tmp/osf-cache,type=volume",
+    "source=osf-worktrees,target=/workspaces/worktrees,type=volume"
   ],
   "containerEnv": {
-    "WORKSPACE_DIR": "/workspaces/hsem",
-    "PYTHONPYCACHEPREFIX": "/tmp/hsem-cache/pycache",
-    "MYPY_CACHE_DIR": "/tmp/hsem-cache/mypy",
-    "PYTEST_CACHE_DIR": "/tmp/hsem-cache/pytest",
-    "RUFF_CACHE_DIR": "/tmp/hsem-cache/ruff",
-    "UV_CACHE_DIR": "/tmp/hsem-cache/uv",
+    "WORKSPACE_DIR": "/workspaces/osf",
+    "PYTHONPYCACHEPREFIX": "/tmp/osf-cache/pycache",
+    "MYPY_CACHE_DIR": "/tmp/osf-cache/mypy",
+    "PYTEST_CACHE_DIR": "/tmp/osf-cache/pytest",
+    "RUFF_CACHE_DIR": "/tmp/osf-cache/ruff",
+    "UV_CACHE_DIR": "/tmp/osf-cache/uv",
     "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock",
     "SSH_AGENT_PORT": "9999",
     "GPG_AGENT_PORT": "9998",

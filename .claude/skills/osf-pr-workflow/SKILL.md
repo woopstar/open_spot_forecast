@@ -1,9 +1,9 @@
 ---
-name: hsem-pr-workflow
-description: Activate when creating, updating, or managing a pull request for the HSEM repository. Covers conventional commits, PR description, quality gates, and merge rules.
+name: osf-pr-workflow
+description: Activate when creating, updating, or managing a pull request for the Open Spot Forecast repository. Covers conventional commits, PR description, quality gates, and merge rules.
 ---
 
-# HSEM Pull Request Workflow
+# OSF Pull Request Workflow
 
 Activate this skill when:
 
@@ -32,7 +32,7 @@ Verify: `git --no-optional-locks status` shows only intended changes.
 
 ## Translation Sync
 
-Before opening a PR, run the `hsem-translation-sync` skill if any user-facing
+Before opening a PR, run the `osf-translation-sync` skill if any user-facing
 string changed (entity name, config/options flow label, selector, error,
 service):
 
@@ -41,22 +41,23 @@ python3 scripts/validate_translations.py
 ```
 
 Must report 0 missing keys, 0 stale keys, 0 placeholder mismatches across
-`da.json`, `de.json`, and `es.json`. See `hsem-translation-sync` for the fix
-workflow and terminology glossary.
+`da.json`. See `osf-translation-sync` for the fix workflow and terminology
+glossary.
 
 ## Documentation Update
 
 Before opening a PR, check and update ALL documentation that describes changed behavior:
 
-- [ ] `docs/planner-guide.md` — if planner inputs/outputs/cost function changed
-- [ ] `docs/planner-spec.md` — if planner semantics changed
-- [ ] `docs/config-flow-reference.md` — if config/options flow steps changed
-- [ ] `docs/ev-charge-plan-setup.md` — if EV planned load changed
+- [ ] `docs/ARCHITECTURE.md` — if system overview, data sources, or data flow changed
+- [ ] `docs/ML_DOCUMENTATION.md` — if model, features, or confidence changed
+- [ ] `docs/SELF_LEARNING.md` — if self-learning or bias correction changed
+- [ ] `docs/PERSISTENCE.md` — if storage schema or migrations changed
+- [ ] `docs/STROMLIGNING_INTEGRATION.md` — if price-source priority changed
+- [ ] `docs/USING_EXISTING_SENSORS.md` — if sensor wiring changed
 - [ ] `.github/memories.md` — if canonical patterns or module map changed
 - [ ] `README.md` — if user-facing features changed
-- [ ] `docs/huawei_entities.md` — if new Huawei entities wired
-- [ ] `translations/{en,da,de,es}.json` — if user-facing strings changed (see
-      `hsem-translation-sync`)
+- [ ] `translations/{en,da}.json` — if user-facing strings changed (see
+      `osf-translation-sync`)
 
 **A PR is not done until all affected docs are consistent with the implementation.**
 
@@ -66,13 +67,13 @@ Format: `<type>(<scope>): <description>`
 
 Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `ci`
 
-Scopes should be specific to the domain: `sensor`, `flow`, `config`, `planner`, `milp`, etc.
+Scopes should be specific to the domain: `sensor`, `flow`, `config`, `ml`, `api`, `storage`, etc.
 
 Examples:
 
 ```
-fix(planner): correct cycle cost denominator — Fixes #444
-feat(sensor): add temperature-adaptive charge rate — Fixes #123
+fix(ml): correct bias-correction EMA denominator — Fixes #444
+feat(sensor): add temperature-adaptive confidence — Fixes #123
 ```
 
 ## GitHub Operations — `gh` CLI (Primary), MCP Tools (When Available)

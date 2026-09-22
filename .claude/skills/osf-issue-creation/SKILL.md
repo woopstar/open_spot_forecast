@@ -1,19 +1,19 @@
 ---
-name: hsem-issue-creation
-description: Activate when creating a new GitHub issue for the HSEM repository. Ensures every issue has a Conventional Commits title, a detailed description, a proposed solution, acceptance criteria, a tailored fix prompt, and labels.
+name: osf-issue-creation
+description: Activate when creating a new GitHub issue for the Open Spot Forecast repository. Ensures every issue has a Conventional Commits title, a detailed description, a proposed solution, acceptance criteria, a tailored fix prompt, and labels.
 ---
 
-# HSEM Issue Creation
+# OSF Issue Creation
 
 Activate this skill whenever a new GitHub issue is being created for this repository —
 whether reporting a bug, filing an enhancement, or capturing a chore/tech-debt item.
 
 ## Step 1: Investigate Before Drafting
 
-Read the relevant code (and `docs/planner-spec.md` / `AGENTS.md` if the area applies)
-before writing the issue. An issue drafted without reading the code produces a vague
-description and an unusable "solution" — grep for the symptom, find the responsible
-file(s), and cite concrete `file:line` references in the body.
+Read the relevant code (and `docs/ML_DOCUMENTATION.md` / `AGENTS.md` if the area
+applies) before writing the issue. An issue drafted without reading the code
+produces a vague description and an unusable "solution" — grep for the symptom,
+find the responsible file(s), and cite concrete `file:line` references in the body.
 
 ## Step 2: Title — Conventional Commits
 
@@ -21,15 +21,15 @@ Format: `<type>(<scope>): <description>`
 
 Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `ci`
 
-Scope should name the specific domain (e.g. `sensor`, `ocpp`, `planner`, `config`,
-`milp`). Keep the description short and imperative — it becomes the branch slug and,
-eventually, the commit/PR title.
+Scope should name the specific domain (e.g. `sensor`, `ml`, `config`, `api`,
+`storage`). Keep the description short and imperative — it becomes the branch
+slug and, eventually, the commit/PR title.
 
 Examples:
 
 ```
-fix(ocpp): status sensor misleadingly shows 'disconnected' when unconfigured
-feat(planner): add temperature-adaptive charge rate
+fix(sensor): ml prediction sensor shows stale value after retrain
+feat(ml): add temperature feature to the price model
 chore(quality): enforce prettier for markdown in CI
 ```
 
@@ -84,13 +84,11 @@ asking the user first. At minimum, apply:
 
 1. **One type label** — `bug` or `enhancement` (or `chore` for maintenance-only work).
 2. **One `area:*` label** matching the affected subsystem, if one fits:
-   `area:planner`, `area:inverter`, `area:forecast`, `area:config`,
-   `area:home-assistant`, `area:diagnostics`, `area:safety`, `area:tests`,
-   `area:docs`, `area:refactor`.
-3. Optional topical labels when relevant: `ocpp`, `ev-charging`, `sensors`,
-   `services`, `logging`, `dashboard`, `config`, `dependencies`, `breaking-change`.
-4. Optional priority label if urgency is known: `priority:p0` (must fix before real
-   hardware control) or `priority:p1` (core architecture/planner improvements).
+   `area:forecast`, `area:ml`, `area:data-sources`, `area:config`,
+   `area:home-assistant`, `area:diagnostics`, `area:tests`, `area:docs`,
+   `area:refactor`.
+3. Optional topical labels when relevant: `sensors`, `services`, `logging`,
+   `dashboard`, `config`, `dependencies`, `breaking-change`.
 
 Skip `type:bug` / `type:feature` unless the user's convention has shifted to those —
 `bug` / `enhancement` are the labels actually in use on current open issues.
@@ -102,9 +100,9 @@ multiline body as a shell argument.
 
 ```bash
 gh issue create \
-  --title "fix(ocpp): status sensor misleadingly shows 'disconnected' when unconfigured" \
+  --title "fix(sensor): ml prediction sensor shows stale value when retrained" \
   --body-file /tmp/issue-body.md \
-  --label bug --label area:diagnostics --label ocpp
+  --label bug --label area:ml --label sensors
 ```
 
 Prefer `rtk gh issue create` for the token-savings passthrough.
