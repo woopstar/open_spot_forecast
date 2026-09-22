@@ -81,7 +81,7 @@ To use this package, you need the following integrations:
 1. In HACS, go to **Integrations**.
 2. Click the three dots in the top-right corner, and select **Custom repositories**.
 3. Add this repository URL and select **Integration** as the category:
-   `https://github.com/woopstar/openspotforecast`
+   `https://github.com/woopstar/open_spot_forecast`
 4. Click **Add**.
 5. The integration will now appear in HACS under the **Integrations** section. Click **Install**.
 6. Restart Home Assistant.
@@ -116,22 +116,22 @@ To use this package, you need the following integrations:
 
 Full documentation is available in the [`docs/`](docs/) directory:
 
-- **[Architecture](docs/ARCHITECTURE.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ML_DOCUMENTATION.md)** — Model, 20-feature vector, confidence
-- **[Self-Learning](docs/SELF_LEARNING.md)** — Self-learning loop, bias correction
-- **[Persistence](docs/PERSISTENCE.md)** — SQLite storage schema and migrations
-- **[Stromligning Integration](docs/STROMLIGNING_INTEGRATION.md)** — Price-source priority
-- **[Using Existing Sensors](docs/USING_EXISTING_SENSORS.md)** — Sensor wiring reference
+- **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 20-feature vector, confidence
+- **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
+- **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
+- **[Stromligning Integration](docs/stromligning_integration.md)** — Price-source priority
+- **[Using Existing Sensors](docs/using_existing_sensors.md)** — Sensor wiring reference
 
 ---
 
-[releases-shield]: https://img.shields.io/github/v/release/woopstar/openspotforecast?style=for-the-badge
-[releases]: https://github.com/woopstar/openspotforecast/releases
-[downloads-shield]: https://img.shields.io/github/downloads/woopstar/openspotforecast/total.svg?style=for-the-badge
-[downloads]: https://github.com/woopstar/openspotforecast/releases
-[license-shield]: https://img.shields.io/github/license/woopstar/openspotforecast?style=for-the-badge
-[license]: https://github.com/woopstar/openspotforecast/blob/main/LICENSE
+[releases-shield]: https://img.shields.io/github/v/release/woopstar/open_spot_forecast?style=for-the-badge
+[releases]: https://github.com/woopstar/open_spot_forecast/releases
+[downloads-shield]: https://img.shields.io/github/downloads/woopstar/open_spot_forecast/total.svg?style=for-the-badge
+[downloads]: https://github.com/woopstar/open_spot_forecast/releases
+[license-shield]: https://img.shields.io/github/license/woopstar/open_spot_forecast?style=for-the-badge
+[license]: https://github.com/woopstar/open_spot_forecast/blob/main/LICENSE
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-FFDD00.svg?style=for-the-badge&logo=buymeacoffee
 [buymecoffee]: https://www.buymeacoffee.com/woopstar
-[codecov-shield]: https://codecov.io/github/woopstar/openspotforecast/graph/badge.svg
-[codecov]: https://codecov.io/github/woopstar/openspotforecast
+[codecov-shield]: https://codecov.io/github/woopstar/open_spot_forecast/graph/badge.svg
+[codecov]: https://codecov.io/github/woopstar/open_spot_forecast

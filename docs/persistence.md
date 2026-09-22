@@ -8,14 +8,14 @@ All learning data is stored in a single SQLite database:
 
 ## Schema
 
-| Table | Key | Content |
-|-------|-----|---------|
-| `predictions` | `id` (autoincrement) | Pending predictions awaiting comparison with actual prices |
-| `error_metrics` | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals) |
-| `bias_correction` | `hour` (0-95) | Per-slot multiplicative correction factors |
-| `price_history` | `date` (YYYY-MM-DD) | Daily price arrays (96 values per day) |
-| `weather_history` | `timestamp` (ISO) | 15-min weather snapshots (temp, wind, cloud, humidity, solar) |
-| `meta` | `key` | Training state, schema version |
+| Table             | Key                         | Content                                                                      |
+| ----------------- | --------------------------- | ---------------------------------------------------------------------------- |
+| `predictions`     | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                   |
+| `error_metrics`   | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals) |
+| `bias_correction` | `hour` (0-95)               | Per-slot multiplicative correction factors                                   |
+| `price_history`   | `date` (YYYY-MM-DD)         | Daily price arrays (96 values per day)                                       |
+| `weather_history` | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                |
+| `meta`            | `key`                       | Training state, schema version                                               |
 
 ## Connection Management
 
@@ -29,9 +29,9 @@ All learning data is stored in a single SQLite database:
 
 Auto-migration runs at startup (no user intervention):
 
-| Version | Change |
-|---------|--------|
-| v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`) |
+| Version | Change                                                                             |
+| ------- | ---------------------------------------------------------------------------------- |
+| v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                  |
 | v2 → v3 | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95) |
 
 The `meta` table tracks `schema_version` so migrations only run once.

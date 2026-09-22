@@ -97,11 +97,11 @@ When asked to solve a GitHub issue, always follow these steps in order:
 
 ## ML Specification Rule (Mandatory)
 
-- **Always read `docs/ML_DOCUMENTATION.md` before touching any ML code** — model,
+- **Always read `docs/ml_documentation.md` before touching any ML code** — model,
   feature vector, self-learning, bias correction, confidence scoring, or storage schema.
 - **Every ML change must satisfy all documented invariants**: 20-feature vector, 96-slot
   granularity, bias-correction EMA, solar-scaling factor, and confidence floor.
-- **Update `docs/ML_DOCUMENTATION.md`** (and `docs/SELF_LEARNING.md` / `docs/PERSISTENCE.md`
+- **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
   where relevant) when a change intentionally alters ML semantics. Spec and implementation
   must never diverge silently.
 - **Add or update tests** covering the affected invariants for every ML change.
@@ -112,12 +112,12 @@ When asked to solve a GitHub issue, always follow these steps in order:
 
 - **All documentation that describes the changed behaviour must be updated in the same PR.**
   This includes, but is not limited to:
-  - `docs/ARCHITECTURE.md` — system overview, data sources, data flow
-  - `docs/ML_DOCUMENTATION.md` — model, features, confidence
-  - `docs/SELF_LEARNING.md` — self-learning loop, bias correction
-  - `docs/PERSISTENCE.md` — storage schema, migrations
-  - `docs/STROMLIGNING_INTEGRATION.md` — price-source priority
-  - `docs/USING_EXISTING_SENSORS.md` — sensor wiring
+  - `docs/architecture.md` — system overview, data sources, data flow
+  - `docs/ml_documentation.md` — model, features, confidence
+  - `docs/self_learning.md` — self-learning loop, bias correction
+  - `docs/persistence.md` — storage schema, migrations
+  - `docs/stromligning_integration.md` — price-source priority
+  - `docs/using_existing_sensors.md` — sensor wiring
   - `.github/memories.md` — canonical patterns, module map, open issues
   - `README.md` — user-facing feature descriptions and links
 - **Check every docs/ file before closing a PR** — if a file describes something you changed,
@@ -132,7 +132,7 @@ When asked to solve a GitHub issue, always follow these steps in order:
 - If a value is needed but not yet wired into OSF, add it through the full stack:
   `const.py` → `config_flow.py` → **`translations/en.json`** (and `da.json`, both `config`
   and `options` steps) → `sensor_reader.py` → `__init__.py`
-- **Always check `docs/USING_EXISTING_SENSORS.md` first** for the verified list of available
+- **Always check `docs/using_existing_sensors.md` first** for the verified list of available
   HA entities before searching an upstream integration repo or guessing an entity ID.
 - See `AGENTS.md` → **Sensor Wiring Rule** for the full wiring protocol.
 

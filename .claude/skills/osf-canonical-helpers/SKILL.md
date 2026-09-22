@@ -104,7 +104,7 @@ hourly (0-23) granularity.
 
 ### Feature Vector — 20 Features
 
-The canonical feature vector is defined in `docs/ML_DOCUMENTATION.md` and built
+The canonical feature vector is defined in `docs/ml_documentation.md` and built
 by `FeatureMixin._combine_features()`. Adding/removing a feature is a model
 change — see the `osf-ml-change` skill.
 
@@ -129,12 +129,12 @@ enter the price model.
 
 ### Module Responsibilities (Know Where Code Lives)
 
-| Layer      | Location                        | Key files                                                                   |
-| ---------- | ------------------------------- | --------------------------------------------------------------------------- |
-| Component  | `custom_components/open_spot_forecast/`        | `__init__.py`, `config_flow.py`, `sensor.py`, `binary_sensor.py`, `const.py` |
-| Sensor I/O | `custom_components/open_spot_forecast/`        | `sensor_reader.py`                                                          |
-| ML         | `custom_components/open_spot_forecast/ml/`     | `predictor.py`, `features.py`, `models.py`, `learning.py`, `numpy_models.py`, `storage.py` |
-| API        | `custom_components/open_spot_forecast/api/`    | `nordpool_data.py`                                                          |
+| Layer      | Location                                    | Key files                                                                                  |
+| ---------- | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Component  | `custom_components/open_spot_forecast/`     | `__init__.py`, `config_flow.py`, `sensor.py`, `binary_sensor.py`, `const.py`               |
+| Sensor I/O | `custom_components/open_spot_forecast/`     | `sensor_reader.py`                                                                         |
+| ML         | `custom_components/open_spot_forecast/ml/`  | `predictor.py`, `features.py`, `models.py`, `learning.py`, `numpy_models.py`, `storage.py` |
+| API        | `custom_components/open_spot_forecast/api/` | `nordpool_data.py`                                                                         |
 
 ### Utility Function Centralization
 

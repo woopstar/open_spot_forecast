@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -19,8 +18,8 @@ class DecisionStump:
         self.right_value = None
 
     def fit(
-        self, X: np.ndarray, y: np.ndarray, sample_weights: Optional[np.ndarray] = None
-    ):
+        self, X: np.ndarray, y: np.ndarray, sample_weights: np.ndarray | None = None
+    ) -> None:
         """Find the best split for the data."""
         if sample_weights is None:
             sample_weights = np.ones(len(y))
@@ -129,10 +128,10 @@ class NumpyGradientBoosting:
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.random_state = random_state
-        self.trees = []
+        self.trees: list[DecisionStump] = []
         self.initial_prediction = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Train the gradient boosting model."""
         np.random.seed(self.random_state)
 
@@ -239,9 +238,9 @@ class DecisionTree:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.random_state = random_state
-        self.tree = None
+        self.tree: dict | None = None
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Build the decision tree."""
         np.random.seed(self.random_state)
         self.tree = self._build_tree(X, y, depth=0)
@@ -309,6 +308,8 @@ class DecisionTree:
         """Make predictions."""
         # Ensure X doesn't contain None values
         X_safe = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+        if self.tree is None:
+            return np.zeros(len(X_safe))
         return np.array([self._predict_single(x, self.tree) for x in X_safe])
 
     def _predict_single(self, x: np.ndarray, node: dict) -> float:
@@ -352,9 +353,9 @@ class NumpyRandomForest:
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.random_state = random_state
-        self.trees = []
+        self.trees: list[DecisionTree] = []
 
-    def fit(self, X: np.ndarray, y: np.ndarray):
+    def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         """Train the random forest."""
         np.random.seed(self.random_state)
         n_samples = len(y)
@@ -390,10 +391,10 @@ class FeatureEngineer:
 
     def create_features(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
-    ) -> Tuple[np.ndarray, List[str]]:
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
+    ) -> tuple[np.ndarray, list[str]]:
         """Create feature matrix from prices and weather data."""
         if timestamps is None:
             timestamps = [
@@ -501,10 +502,10 @@ class ElectricityPricePredictor:
 
     def fit(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
-    ):
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
+    ) -> None:
         """Train the models."""
         # Create features
         X, feature_names = self.feature_engineer.create_features(
@@ -520,9 +521,9 @@ class ElectricityPricePredictor:
 
     def predict(
         self,
-        prices: List[float],
-        weather_data: Dict,
-        timestamps: Optional[List[datetime]] = None,
+        prices: list[float],
+        weather_data: dict,
+        timestamps: list[datetime] | None = None,
     ) -> np.ndarray:
         """Make predictions using ensemble."""
         if not self.is_trained:

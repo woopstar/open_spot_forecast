@@ -11,7 +11,7 @@ Activate this skill when touching **any file under `custom_components/open_spot_
 
 ## Step 1: Read the ML Documentation
 
-**Always read `docs/ML_DOCUMENTATION.md` and `docs/ARCHITECTURE.md` before
+**Always read `docs/ml_documentation.md` and `docs/architecture.md` before
 touching any ML code.** These are the source of truth for the model, feature
 vector, and data flow.
 
@@ -35,10 +35,10 @@ If a change intentionally alters the model, feature vector, bias-correction
 formula, confidence logic, or storage schema, **update the relevant doc in the
 same PR**:
 
-- `docs/ML_DOCUMENTATION.md` — model, features, data sources, confidence
-- `docs/SELF_LEARNING.md` — learning loop, bias correction, metrics
-- `docs/PERSISTENCE.md` — schema, migrations
-- `docs/ARCHITECTURE.md` — data flow, component layout
+- `docs/ml_documentation.md` — model, features, data sources, confidence
+- `docs/self_learning.md` — learning loop, bias correction, metrics
+- `docs/persistence.md` — schema, migrations
+- `docs/architecture.md` — data flow, component layout
 
 Docs and implementation must never diverge silently.
 
@@ -64,7 +64,7 @@ wc -l custom_components/open_spot_forecast/ml/*.py
 
 ## Definition of Done for ML Work
 
-- [ ] `docs/ML_DOCUMENTATION.md` read and understood
+- [ ] `docs/ml_documentation.md` read and understood
 - [ ] All invariants verified
 - [ ] Docs updated if semantics changed
 - [ ] Tests added or updated

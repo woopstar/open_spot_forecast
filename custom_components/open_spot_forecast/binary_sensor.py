@@ -68,7 +68,7 @@ class TomorrowAvailableSensor(BinarySensorEntity):
     @property
     def is_on(self) -> bool:
         """Return true if tomorrow's prices are available."""
-        return self.api_data.get("tomorrow_available", False)
+        return bool(self.api_data.get("tomorrow_available", False))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -115,7 +115,7 @@ class MLModelTrainedSensor(BinarySensorEntity):
         """Return true if ML model is trained."""
         ml_predictor = self.api_data.get("ml_predictor")
         if ml_predictor:
-            return ml_predictor.is_trained
+            return bool(ml_predictor.is_trained)
         return False
 
     @property

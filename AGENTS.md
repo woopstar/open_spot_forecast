@@ -55,7 +55,7 @@ The agent must use the exact versions defined in the project configuration files
 
 The agent MUST:
 
-1. **Before using any external entity**, check `docs/USING_EXISTING_SENSORS.md` in this
+1. **Before using any external entity**, check `docs/using_existing_sensors.md` in this
    repository first — it is the canonical, verified list of entities OSF reads (Stromligning,
    Met.no weather, Solcast, inverter power, temperature). Only fall back to searching an
    upstream integration repo when an entity is not yet listed there.
@@ -74,32 +74,32 @@ The agent MUST:
 
 **Key entity mappings** (source → HA entity id pattern):
 
-| Source                          | Entity (example)                                  | Used for                          |
-| ------------------------------- | ------------------------------------------------- | --------------------------------- |
-| Stromligning (current price)    | `sensor.stromligning_current_price_vat`           | Confirmed consumer prices (96/day) |
-| Stromligning (tomorrow)         | `binary_sensor.stromligning_tomorrow_spotprice_vat` | Tomorrow's price availability    |
-| Met.no weather (state)          | `weather.forecast_*`                              | Current wind/temp/humidity/cloud  |
-| Met.no weather (forecast)       | `weather.get_forecasts` service                   | 48h hourly forecast               |
-| Solcast solar forecast          | `sensor.solcast_pv_forecast_forecast_today`       | Solar generation estimate         |
-| Inverter solar production       | `sensor.power_inverter_input_total`               | Actual solar (training/scale)     |
-| Outdoor temperature             | `sensor.metroair_330_outdoor_temperature`         | Actual temperature (training)     |
+| Source                       | Entity (example)                                    | Used for                           |
+| ---------------------------- | --------------------------------------------------- | ---------------------------------- |
+| Stromligning (current price) | `sensor.stromligning_current_price_vat`             | Confirmed consumer prices (96/day) |
+| Stromligning (tomorrow)      | `binary_sensor.stromligning_tomorrow_spotprice_vat` | Tomorrow's price availability      |
+| Met.no weather (state)       | `weather.forecast_*`                                | Current wind/temp/humidity/cloud   |
+| Met.no weather (forecast)    | `weather.get_forecasts` service                     | 48h hourly forecast                |
+| Solcast solar forecast       | `sensor.solcast_pv_forecast_forecast_today`         | Solar generation estimate          |
+| Inverter solar production    | `sensor.power_inverter_input_total`                 | Actual solar (training/scale)      |
+| Outdoor temperature          | `sensor.metroair_330_outdoor_temperature`           | Actual temperature (training)      |
 
-**Always check `docs/USING_EXISTING_SENSORS.md` first** before searching an upstream repo or
+**Always check `docs/using_existing_sensors.md` first** before searching an upstream repo or
 guessing an entity ID. If a new entity is confirmed to exist in HA, add it to
-`docs/USING_EXISTING_SENSORS.md` as part of the same PR that wires it into OSF.
+`docs/using_existing_sensors.md` as part of the same PR that wires it into OSF.
 
 ## ML Specification (Mandatory Reference)
 
 The canonical definition of how the OSF ML layer must behave is in
-**`docs/ML_DOCUMENTATION.md`** (with `docs/SELF_LEARNING.md` and `docs/PERSISTENCE.md`).
+**`docs/ml_documentation.md`** (with `docs/self_learning.md` and `docs/persistence.md`).
 
 The agent MUST:
 
-1. **Read `docs/ML_DOCUMENTATION.md` before touching any ML code** — model, feature vector,
+1. **Read `docs/ml_documentation.md` before touching any ML code** — model, feature vector,
    self-learning, bias correction, confidence scoring, or storage schema.
 2. **Verify that every ML change is consistent with the docs** — 20-feature vector, 96-slot
    granularity, bias-correction EMA, solar-scaling factor, and confidence floor must all match.
-3. **Update `docs/ML_DOCUMENTATION.md`** (and `docs/SELF_LEARNING.md` / `docs/PERSISTENCE.md`
+3. **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
    where relevant) whenever a change intentionally alters ML semantics. Docs and implementation
    must never be allowed to diverge silently.
 4. **Add or update tests** that cover the affected invariants for every ML change.

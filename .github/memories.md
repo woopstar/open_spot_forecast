@@ -14,31 +14,31 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### Component layer (`custom_components/open_spot_forecast/`)
 
-| File               | Responsibility                                                              |
-| ------------------ | --------------------------------------------------------------------------- |
-| `const.py`         | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL` |
-| `config_flow.py`   | Two-step config flow (basic settings → sensor configuration) + options flow |
+| File               | Responsibility                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------- |
+| `const.py`         | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                      |
+| `config_flow.py`   | Two-step config flow (basic settings → sensor configuration) + options flow                       |
 | `sensor.py`        | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics) |
-| `binary_sensor.py` | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                           |
-| `sensor_reader.py` | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no) |
-| `__init__.py`      | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring         |
+| `binary_sensor.py` | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
+| `sensor_reader.py` | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
+| `__init__.py`      | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File             | Responsibility                                                              |
-| ---------------- | --------------------------------------------------------------------------- |
-| `predictor.py`   | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` |
-| `features.py`    | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses) |
-| `models.py`      | `ModelMixin` — training + prediction                                        |
-| `learning.py`    | `LearningMixin` — self-learning, bias correction, error metrics             |
-| `numpy_models.py`| `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models            |
-| `storage.py`     | `LearningStorage` — SQLite persistence                                       |
+| File              | Responsibility                                                                  |
+| ----------------- | ------------------------------------------------------------------------------- |
+| `predictor.py`    | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` |
+| `features.py`     | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)     |
+| `models.py`       | `ModelMixin` — training + prediction                                            |
+| `learning.py`     | `LearningMixin` — self-learning, bias correction, error metrics                 |
+| `numpy_models.py` | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                |
+| `storage.py`      | `LearningStorage` — SQLite persistence                                          |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
-| File              | Responsibility                                                              |
-| ----------------- | --------------------------------------------------------------------------- |
-| `nordpool_data.py`| `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs |
+| File               | Responsibility                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------- |
+| `nordpool_data.py` | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -75,34 +75,34 @@ Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tes
 
 ## Feature Vector (20 features)
 
-The canonical feature vector is defined in `docs/ML_DOCUMENTATION.md` and built by
+The canonical feature vector is defined in `docs/ml_documentation.md` and built by
 `FeatureMixin._combine_features()`:
 
-| #  | Feature                | Source          |
-| -- | ---------------------- | --------------- |
-| 0  | `hour`                 | Time            |
-| 1  | `day_of_week`          | Time            |
-| 2  | `is_weekend`           | Time            |
-| 3  | `hour_sin`             | Time            |
-| 4  | `hour_cos`             | Time            |
-| 5  | `wind_speed_mean`      | Weather entity  |
-| 6  | `wind_power_estimate`  | Derived         |
-| 7  | `wind_direction`       | Weather entity  |
-| 8  | `cloud_coverage`       | Weather entity  |
-| 9  | `humidity`             | Weather entity  |
-| 10 | `solar_radiation_mean` | Solcast         |
-| 11 | `solar_power_estimate` | Solcast         |
-| 12 | `price_mean`           | Stromligning    |
-| 13 | `temperature`          | Weather entity  |
-| 14 | `consumption_forecast` | Nordpool API    |
-| 15 | `solar_generation`     | Nordpool API    |
-| 16 | `wind_offshore`        | Nordpool API    |
-| 17 | `wind_onshore`         | Nordpool API    |
-| 18 | `net_demand`           | Derived         |
-| 19 | `wind_share`           | Derived         |
+| #   | Feature                | Source         |
+| --- | ---------------------- | -------------- |
+| 0   | `hour`                 | Time           |
+| 1   | `day_of_week`          | Time           |
+| 2   | `is_weekend`           | Time           |
+| 3   | `hour_sin`             | Time           |
+| 4   | `hour_cos`             | Time           |
+| 5   | `wind_speed_mean`      | Weather entity |
+| 6   | `wind_power_estimate`  | Derived        |
+| 7   | `wind_direction`       | Weather entity |
+| 8   | `cloud_coverage`       | Weather entity |
+| 9   | `humidity`             | Weather entity |
+| 10  | `solar_radiation_mean` | Solcast        |
+| 11  | `solar_power_estimate` | Solcast        |
+| 12  | `price_mean`           | Stromligning   |
+| 13  | `temperature`          | Weather entity |
+| 14  | `consumption_forecast` | Nordpool API   |
+| 15  | `solar_generation`     | Nordpool API   |
+| 16  | `wind_offshore`        | Nordpool API   |
+| 17  | `wind_onshore`         | Nordpool API   |
+| 18  | `net_demand`           | Derived        |
+| 19  | `wind_share`           | Derived        |
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
-`docs/ML_DOCUMENTATION.md`.
+`docs/ml_documentation.md`.
 
 ## Slot Granularity — 96 Slots
 
@@ -135,7 +135,7 @@ model.
 ## Confidence Score
 
 - **Phase 1 — Heuristic** (< 5 samples): `base = 0.80 - wind_penalty - solar_penalty -
-  weekend - days_ahead`, floor `0.30`.
+weekend - days_ahead`, floor `0.30`.
 - **Phase 2 — Learned** (≥ 5 samples): `confidence = max(0.10, 1.0 - (MAE / mean_actual))`
   minus forecast temperature/wind error penalties (max `-0.15` each).
 
@@ -143,14 +143,14 @@ model.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table             | Key                    | Content                                        |
-| ----------------- | ---------------------- | ---------------------------------------------- |
-| `predictions`     | `id` (autoincrement)   | Pending predictions awaiting comparison        |
-| `error_metrics`   | `hour` (0-95)          | Per-slot error arrays                          |
-| `bias_correction` | `hour` (0-95)          | Per-slot correction factors                    |
-| `price_history`   | `date` (YYYY-MM-DD)    | Daily price arrays (96 values/day)             |
-| `weather_history` | `timestamp` (ISO)      | 15-min weather snapshots                       |
-| `meta`            | `key`                  | Training state, schema version                 |
+| Table             | Key                  | Content                                 |
+| ----------------- | -------------------- | --------------------------------------- |
+| `predictions`     | `id` (autoincrement) | Pending predictions awaiting comparison |
+| `error_metrics`   | `hour` (0-95)        | Per-slot error arrays                   |
+| `bias_correction` | `hour` (0-95)        | Per-slot correction factors             |
+| `price_history`   | `date` (YYYY-MM-DD)  | Daily price arrays (96 values/day)      |
+| `weather_history` | `timestamp` (ISO)    | 15-min weather snapshots                |
+| `meta`            | `key`                | Training state, schema version          |
 
 Migrations are versioned in `meta.schema_version` and run once at startup. The legacy JSON
 format (`open_spot_forecast_DK1_learning.json`) is auto-migrated on first startup.
@@ -163,8 +163,8 @@ be satisfied. If a file exceeds either, split it before adding more features.
 ## Documentation Style
 
 Docs live in `docs/` and are organized by responsibility, not by theme. The canonical docs
-are `ARCHITECTURE.md`, `ML_DOCUMENTATION.md`, `SELF_LEARNING.md`, `PERSISTENCE.md`,
-`STROMLIGNING_INTEGRATION.md`, and `USING_EXISTING_SENSORS.md`. Any change that alters
+are `architecture.md`, `ml_documentation.md`, `self_learning.md`, `persistence.md`,
+`stromligning_integration.md`, and `using_existing_sensors.md`. Any change that alters
 behaviour must update the docs that describe it in the same PR.
 
 ## Sensor Wiring
@@ -178,7 +178,7 @@ To wire a new external entity into OSF, follow the full stack in order:
 5. `sensor_reader.py` — add a `read_*` method on `SensorReader`
 6. `__init__.py` — read the value and pass it into `weather_data`
 
-Always check `docs/USING_EXISTING_SENSORS.md` first for the verified entity list.
+Always check `docs/using_existing_sensors.md` first for the verified entity list.
 
 ## Testing Rules
 

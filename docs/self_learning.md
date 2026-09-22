@@ -62,16 +62,16 @@ price patterns — the 14:00-14:15 slot can have very different bias than
 
 Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 
-| Field | Description |
-|-------|-------------|
-| `status` | "learning" when actively comparing predictions |
-| `total_samples` | Total prediction→actual comparisons made |
-| `mae` | Mean absolute error across all slots |
-| `rmse` | Root mean square error |
-| `mean_bias` | Average systematic error (negative = underpredicting) |
-| `slots_tracked` | Number of 15-min slots with data |
-| `pending_predictions` | Predictions still waiting for their 24h aging |
-| `hourly_metrics` | Per-slot MAE, bias, sample count, correction factor |
+| Field                 | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| `status`              | "learning" when actively comparing predictions        |
+| `total_samples`       | Total prediction→actual comparisons made              |
+| `mae`                 | Mean absolute error across all slots                  |
+| `rmse`                | Root mean square error                                |
+| `mean_bias`           | Average systematic error (negative = underpredicting) |
+| `slots_tracked`       | Number of 15-min slots with data                      |
+| `pending_predictions` | Predictions still waiting for their 24h aging         |
+| `hourly_metrics`      | Per-slot MAE, bias, sample count, correction factor   |
 
 ## Reset
 

@@ -1,15 +1,18 @@
 """Self-learning, historical storage, and persistence."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
 
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class LearningMixin:
+class LearningMixin(PredictorBase):
     """Historical price storage, self-learning, and persistence methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -633,6 +636,10 @@ class LearningMixin:
             consumption = await fetch_consumption_prognosis(target, self.region)
             production = await fetch_production_prognosis(target, self.region)
 
+            # Throttle the backfill so we don't trip Nordpool's Cloudflare rate
+            # limiter (which returns 401/429 when hammered with rapid requests).
+            await asyncio.sleep(1.0)
+
             entries: list[dict] = []
             if consumption:
                 for ts, cons in consumption.items():
@@ -705,7 +712,7 @@ class LearningMixin:
                         int(hpo_n),
                         float(hpo_lr),
                     )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             pred_count = data.get("prediction_count", 0)

@@ -54,14 +54,14 @@ All branches MUST be based on main unless the user explicitly instructs otherwis
 
 Based on the change type, read these docs before touching code:
 
-| Change touches                                                              | Must read                       |
-| --------------------------------------------------------------------------- | ------------------------------- |
-| ML model, feature vector, prediction logic                                   | `docs/ML_DOCUMENTATION.md`      |
-| Self-learning, bias correction, error metrics                                | `docs/SELF_LEARNING.md`         |
-| SQLite storage, schema migrations                                            | `docs/PERSISTENCE.md`           |
-| Price sources (Stromligning, Nordpool)                                       | `docs/STROMLIGNING_INTEGRATION.md` |
-| External sensor entities                                                     | `docs/USING_EXISTING_SENSORS.md` |
-| System overview, data flow                                                   | `docs/ARCHITECTURE.md`          |
+| Change touches                                | Must read                          |
+| --------------------------------------------- | ---------------------------------- |
+| ML model, feature vector, prediction logic    | `docs/ml_documentation.md`         |
+| Self-learning, bias correction, error metrics | `docs/self_learning.md`            |
+| SQLite storage, schema migrations             | `docs/persistence.md`              |
+| Price sources (Stromligning, Nordpool)        | `docs/stromligning_integration.md` |
+| External sensor entities                      | `docs/using_existing_sensors.md`   |
+| System overview, data flow                    | `docs/architecture.md`             |
 
 ## Step 6: Understand the Affected Code
 

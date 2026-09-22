@@ -9,15 +9,15 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 
 ## Data Sources
 
-| Source | Type | Used for |
-|--------|------|----------|
-| `sensor.stromligning_current_price_vat` | Confirmed prices (96/day) | Price history, self-learning target |
-| `binary_sensor.stromligning_tomorrow_*` | Tomorrow's prices when available | Known data window extension |
-| `weather.forecast_mellemlokken_23` (state) | Current weather snapshot | Wind, temperature, humidity, cloud |
-| `weather.get_forecasts` (hourly) | 48h weather forecast | Per-slot wind/temp/cloud/humidity for prediction |
-| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast | Solar features for prediction |
-| `sensor.power_inverter_input_total` | Current solar production | Historical solar for training |
-| `sensor.metroair_330_outdoor_temperature` | Actual outdoor temperature | Historical temperature for training |
+| Source                                      | Type                             | Used for                                         |
+| ------------------------------------------- | -------------------------------- | ------------------------------------------------ |
+| `sensor.stromligning_current_price_vat`     | Confirmed prices (96/day)        | Price history, self-learning target              |
+| `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                      |
+| `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud               |
+| `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction |
+| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar features for prediction                    |
+| `sensor.power_inverter_input_total`         | Current solar production         | Historical solar for training                    |
+| `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training              |
 
 ## Component Architecture
 
@@ -117,10 +117,10 @@ that isn't currently available.
 
 ## Training vs Prediction Segmentation
 
-| Phase | Weather source | Purpose |
-|-------|---------------|---------|
-| **Training** | `weather_history` (actual measurements) | Learn real cause→effect: "when wind WAS X, price WAS Y" |
-| **Prediction** | `weather.get_forecasts` (hourly forecast) | Predict future: "if wind WILL BE X, price should be Y" |
+| Phase          | Weather source                            | Purpose                                                 |
+| -------------- | ----------------------------------------- | ------------------------------------------------------- |
+| **Training**   | `weather_history` (actual measurements)   | Learn real cause→effect: "when wind WAS X, price WAS Y" |
+| **Prediction** | `weather.get_forecasts` (hourly forecast) | Predict future: "if wind WILL BE X, price should be Y"  |
 
 Forecasts are ephemeral — pulled fresh each run. Actual measurements are
 stored permanently in `weather_history` (one snapshot every 15 minutes).

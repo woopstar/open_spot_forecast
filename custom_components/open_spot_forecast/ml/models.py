@@ -1,14 +1,17 @@
 """Model training and prediction generation."""
 
+import contextlib
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
+
+from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class ModelMixin:
+class ModelMixin(PredictorBase):
     """Training, prediction, and bias-correction methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -27,9 +30,9 @@ class ModelMixin:
         try:
             dt = datetime.fromisoformat(iso_timestamp)
             if dt.tzinfo is not None:
-                dt = dt.astimezone(timezone.utc)
+                dt = dt.astimezone(UTC)
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     def _train_models(
@@ -136,8 +139,8 @@ class ModelMixin:
                         feature["wind_share"] = (woff + won) / cons if cons > 0 else 0
 
             # Prepare training data
-            X = []
-            y = []
+            X_list: list[list[float]] = []
+            y_list: list[float] = []
 
             for i, feature in enumerate(all_features):
                 feature_vector = [
@@ -163,11 +166,11 @@ class ModelMixin:
                     feature.get("wind_share", 0),
                 ]
                 feature_vector = self._sanitize_feature_vector(feature_vector)
-                X.append(feature_vector)
-                y.append(all_prices[i])
+                X_list.append(feature_vector)
+                y_list.append(all_prices[i])
 
-            X = np.array(X)
-            y = np.array(y)
+            X = np.array(X_list)
+            y = np.array(y_list)
 
             # Train/test split (80/20)
             split_idx = int(0.8 * len(X))
@@ -227,8 +230,8 @@ class ModelMixin:
         if len(all_prices) < 168:  # min 7 days * 24 hours
             return None
 
-        X = []
-        y = []
+        X_list: list[list[float]] = []
+        y_list: list[float] = []
         for i, feature in enumerate(all_features):
             feature_vector = [
                 feature.get("hour", 0),
@@ -253,11 +256,11 @@ class ModelMixin:
                 feature.get("wind_share", 0),
             ]
             feature_vector = self._sanitize_feature_vector(feature_vector)
-            X.append(feature_vector)
-            y.append(all_prices[i])
+            X_list.append(feature_vector)
+            y_list.append(all_prices[i])
 
-        X = np.array(X)
-        y = np.array(y)
+        X = np.array(X_list)
+        y = np.array(y_list)
 
         # 80/20 train/validation split
         split_idx = int(0.8 * len(X))
@@ -300,7 +303,7 @@ class ModelMixin:
 
         # Apply best params to the live model
         self.price_model = NumpyGradientBoosting(
-            n_estimators=best_params["n_estimators"],
+            n_estimators=int(best_params["n_estimators"]),
             learning_rate=best_params["learning_rate"],
             random_state=42,
         )
@@ -308,7 +311,7 @@ class ModelMixin:
         self.is_trained = False
 
         # Persist best params
-        try:
+        with contextlib.suppress(Exception):
             self.storage.save_meta_dict(
                 {
                     "hpo_n_estimators": str(best_params["n_estimators"]),
@@ -316,8 +319,6 @@ class ModelMixin:
                     "hpo_best_mae": str(best_score),
                 }
             )
-        except Exception:
-            pass
 
         return best_params
 
@@ -649,7 +650,7 @@ class ModelMixin:
                 dt = datetime.fromisoformat(start)
                 days_ahead = (dt - datetime.now()).days
                 confidence -= days_ahead * 0.05
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         return max(0.3, min(1.0, confidence))

@@ -50,7 +50,7 @@ The script exits non-zero if there are any hard errors.
   re-translating from scratch; this is the fastest way to fix a batch of
   missing keys and keeps terminology consistent.
 - **Stale keys**: confirm the key has no corresponding code (`grep -rn
-  "<leaf_key>" custom_components/open_spot_forecast`). If genuinely dead, delete it. If it's a
+"<leaf_key>" custom_components/open_spot_forecast`). If genuinely dead, delete it. If it's a
   key that's about to be reintroduced, leave a note in the PR instead of
   deleting.
 - **Placeholder mismatches**: the target value must contain exactly the same
@@ -65,24 +65,24 @@ The script exits non-zero if there are any hard errors.
 Use this glossary consistently so the same English concept always renders the
 same way in Danish, instead of drifting between PRs:
 
-| English              | Danish              |
-| -------------------- | ------------------- |
-| Spot price           | Spotpris            |
-| Forecast             | Prognose            |
-| Prediction           | Forudsigelse        |
-| Confidence           | Konfidens           |
-| Current price        | Aktuel pris         |
-| Tomorrow's prices    | Morgendagens priser |
-| Wind speed           | Vindhastighed       |
-| Wind direction       | Vindretning         |
-| Solar power          | Solenergi           |
-| Solar forecast       | Solprognose         |
-| Temperature          | Temperatur          |
-| Region               | Region              |
-| Currency             | Valuta              |
-| VAT rate             | Momssats            |
-| Decimal precision    | Decimalpræcision    |
-| Price unit           | Prisenhed           |
+| English               | Danish               |
+| --------------------- | -------------------- |
+| Spot price            | Spotpris             |
+| Forecast              | Prognose             |
+| Prediction            | Forudsigelse         |
+| Confidence            | Konfidens            |
+| Current price         | Aktuel pris          |
+| Tomorrow's prices     | Morgendagens priser  |
+| Wind speed            | Vindhastighed        |
+| Wind direction        | Vindretning          |
+| Solar power           | Solenergi            |
+| Solar forecast        | Solprognose          |
+| Temperature           | Temperatur           |
+| Region                | Region               |
+| Currency              | Valuta               |
+| VAT rate              | Momssats             |
+| Decimal precision     | Decimalpræcision     |
+| Price unit            | Prisenhed            |
 | Enable ML predictions | Aktivér ML-prognoser |
 
 Keep product/protocol names and abbreviations untranslated everywhere:

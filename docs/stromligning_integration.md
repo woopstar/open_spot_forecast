@@ -7,22 +7,26 @@ Open Spot Forecast now supports **Stromligning** as the primary price source, pr
 ## Why Stromligning is Better
 
 ### ✅ Real Consumer Prices
+
 - **Includes tariffs** (grid fees, transmission fees)
 - **Includes VAT** (25% in Denmark)
 - **Includes other fees** (PSO, balance tariffs, etc.)
 - **What you actually pay** on your electricity bill
 
 ### ✅ Accurate Cost Predictions
+
 - ML model trained on real costs, not spot prices
 - Predictions show what you'll actually pay
 - Better for automation decisions (when to charge EV, run dishwasher, etc.)
 
 ### ✅ Already Configured
+
 - You have Stromligning installed and working
 - No duplicate API calls
 - Leverages existing integration
 
 ### ✅ Region-Specific
+
 - Handles local tariffs automatically
 - Correct for your specific grid area
 - Updated when tariffs change
@@ -44,6 +48,7 @@ Open Spot Forecast uses a **priority system** for price sources:
 ### Step 1: Install Stromligning
 
 Make sure you have Stromligning installed:
+
 - Repository: https://github.com/MTrab/stromligning
 - Configure it with your region and electricity provider
 
@@ -87,6 +92,7 @@ Stromligning Sensor: sensor.stromligning_current_price_vat
 ### Price Breakdown Example
 
 For a price of **2.45 DKK/kWh**:
+
 - Spot price: 1.85 DKK/kWh
 - Tariffs: 0.35 DKK/kWh
 - Subtotal: 2.20 DKK/kWh
@@ -96,6 +102,7 @@ For a price of **2.45 DKK/kWh**:
 ## Benefits for ML Predictions
 
 ### Before (Spot Prices Only)
+
 ```
 ML Model trained on: 185 DKK/MWh (spot price)
 Prediction: 200 DKK/MWh
@@ -105,6 +112,7 @@ Actual bill: 245 DKK/MWh (with tariffs/VAT)
 ```
 
 ### After (Real Consumer Prices)
+
 ```
 ML Model trained on: 2.45 DKK/kWh (real price)
 Prediction: 2.50 DKK/kWh
@@ -120,7 +128,7 @@ Actual bill: 2.45 DKK/kWh
 ```python
 def read_stromligning_sensor(self, entity_id: str) -> dict:
     """Read Stromligning sensor data.
-    
+
     Returns:
         Dictionary with real consumer prices (including tariffs/VAT)
     """
@@ -134,7 +142,7 @@ def read_stromligning_sensor(self, entity_id: str) -> dict:
         "tariffs": None,
         "vat": None,
     }
-    
+
     # Read sensor state and attributes
     state = self.hass.states.get(entity_id)
     result["current_price"] = float(state.state)
@@ -143,7 +151,7 @@ def read_stromligning_sensor(self, entity_id: str) -> dict:
     result["spot_price"] = state.attributes.get("spot_price")
     result["tariffs"] = state.attributes.get("tariffs")
     result["vat"] = state.attributes.get("vat")
-    
+
     return result
 ```
 
@@ -176,29 +184,30 @@ elif not stromligning_sensor and not nordpool_sensor:
 
 ## Comparison: Stromligning vs Nordpool
 
-| Feature | Stromligning | Nordpool |
-|---------|--------------|----------|
-| **Price Type** | Real consumer price | Spot price only |
-| **Includes Tariffs** | ✅ Yes | ❌ No |
-| **Includes VAT** | ✅ Yes | ❌ No |
-| **Includes Fees** | ✅ Yes | ❌ No |
-| **Matches Bill** | ✅ Yes | ❌ No |
-| **Region-Specific** | ✅ Yes | ❌ No |
-| **Automation Decisions** | ✅ Accurate | ⚠️ Needs conversion |
-| **ML Training** | ✅ Real costs | ⚠️ Spot prices only |
+| Feature                  | Stromligning        | Nordpool            |
+| ------------------------ | ------------------- | ------------------- |
+| **Price Type**           | Real consumer price | Spot price only     |
+| **Includes Tariffs**     | ✅ Yes              | ❌ No               |
+| **Includes VAT**         | ✅ Yes              | ❌ No               |
+| **Includes Fees**        | ✅ Yes              | ❌ No               |
+| **Matches Bill**         | ✅ Yes              | ❌ No               |
+| **Region-Specific**      | ✅ Yes              | ❌ No               |
+| **Automation Decisions** | ✅ Accurate         | ⚠️ Needs conversion |
+| **ML Training**          | ✅ Real costs       | ⚠️ Spot prices only |
 
 ## Example Use Cases
 
 ### 1. EV Charging Automation
 
 **With Stromligning**:
+
 ```yaml
 automation:
   - alias: "Charge EV when real price is low"
     condition:
       - condition: numeric_state
         entity_id: sensor.open_spot_forecast_ml_prediction
-        below: 2.00  # DKK/kWh (real price you'll pay)
+        below: 2.00 # DKK/kWh (real price you'll pay)
     action:
       - service: switch.turn_on
         target:
@@ -210,6 +219,7 @@ automation:
 ### 2. Dishwasher Scheduling
 
 **With Stromligning**:
+
 ```yaml
 automation:
   - alias: "Run dishwasher during cheapest 3 hours"
@@ -235,6 +245,7 @@ automation:
 ### 3. Price Forecast Dashboard
 
 **With Stromligning**:
+
 ```yaml
 type: custom:apexcharts-card
 graph_span: 7d
@@ -259,6 +270,7 @@ series:
 **Problem**: "Stromligning sensor sensor.stromligning_current_price_vat not found"
 
 **Solutions**:
+
 1. Verify Stromligning integration is installed
 2. Check entity ID in Developer Tools → States
 3. Ensure sensor is not disabled
@@ -269,6 +281,7 @@ series:
 **Problem**: "Stromligning sensor has no data, falling back to Nordpool/API"
 
 **Solutions**:
+
 1. Check Stromligning integration is working
 2. Verify sensor state is not "unknown" or "unavailable"
 3. Check Stromligning integration logs
@@ -279,6 +292,7 @@ series:
 **Problem**: Prices are higher than expected
 
 **This is normal!** Stromligning shows real consumer prices:
+
 - Spot price: ~1.85 DKK/kWh
 - With tariffs/VAT: ~2.45 DKK/kWh
 - **This is what you actually pay**
@@ -288,6 +302,7 @@ Check your electricity bill to verify.
 ## Migration from Nordpool
 
 ### Before (Nordpool)
+
 ```yaml
 Nordpool Sensor: sensor.nordpool_kwh_dk1_dkk_3_10_025
 ```
@@ -295,6 +310,7 @@ Nordpool Sensor: sensor.nordpool_kwh_dk1_dkk_3_10_025
 **Result**: Spot prices only (185 DKK/MWh)
 
 ### After (Stromligning)
+
 ```yaml
 Stromligning Sensor: sensor.stromligning_current_price_vat
 ```
@@ -318,7 +334,7 @@ Stromligning Sensor: sensor.stromligning_current_price_vat
 ✅ Better for automation decisions  
 ✅ Region-specific tariffs  
 ✅ Already configured in your system  
-✅ Priority 1 in Open Spot Forecast  
+✅ Priority 1 in Open Spot Forecast
 
 **This is the best price source for Open Spot Forecast!** 💰✨
 
