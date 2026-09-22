@@ -1,14 +1,14 @@
-# AGENTS.md — Home Assistant Solar Energy Management
+# AGENTS.md — Open Spot Forecast
 
 This document is intended for AI coding agents (e.g., OpenAI Copilot, Claude Code) working in this
-repository. It defines setup, constraints, workflow, safety rules, and quality expectations for HSEM
-(Home Assistant Solar Energy Management) development.
+repository. It defines setup, constraints, workflow, safety rules, and quality expectations for
+Open Spot Forecast (OSF) development.
 
 Agents must follow this document strictly.
 
 ## Agent Objectives
 
-- Implement and maintain HSEM features for Home Assistant.
+- Implement and maintain Open Spot Forecast features for Home Assistant.
 - Keep changes minimal, isolated, and testable.
 - Prefer deterministic, explicit implementations over implicit or heuristic behavior.
 - Never fabricate missing technical details.
@@ -33,7 +33,7 @@ If there is uncertainty, stop and request clarification.
 
 ## Repository Structure
 
-- `hsem/` — Core integration and business logic
+- `custom_components/open_spot_forecast/` — Core integration, ML, and business logic
 - `tests/` — Unit and integration tests
 - `docs/` — Architecture documentation and design decisions
 - `scripts/` — Development utilities and testing scripts
@@ -46,99 +46,84 @@ The agent must use the exact versions defined in the project configuration files
 ### Requirements
 
 - Runtime: Python 3.14 (required - see `.python-version`)
-- Follow versions specified in `requirements.txt` and/or `setup.py`
+- Follow versions specified in `requirements.txt` and/or `pyproject.toml`
 
-## Huawei Solar Sensor Usage Rule (Mandatory)
+## Sensor Wiring Rule (Mandatory)
 
-**Every hardware value consumed or written by HSEM MUST use the entity exposed by the
-[`wlcrs/huawei_solar`](https://github.com/wlcrs/huawei_solar) Home Assistant integration.**
-
-The agent MUST:
-
-1. **Before using any battery/inverter value**, check `docs/huawei_entities.md` in this
-   repository first — it is the canonical, verified list of every entity exposed by the
-   `wlcrs/huawei_solar` integration on this installation. Only fall back to searching
-   `number.py`, `sensor.py`, and `select.py` in that repository when you need a register name
-   or an entity that is not yet listed in `docs/huawei_entities.md`.
-2. **If the entity already exists in HSEM** (in `flows/huawei_solar.py`, `sensor_config.py`,
-   `config_reader.py`, `state_collector.py`, and `live_state.py`): re-use it — never hard-code
-   the value.
-3. **If the entity exists in `wlcrs/huawei_solar` but is NOT yet wired into HSEM**: add it through
-   the full stack in this order:
-   - `const.py` — add a default entity-id string under `DEFAULT_CONFIG_VALUES`
-   - `flows/huawei_solar.py` — add to the schema and validation
-   - `translations/en.json` — add `data` label and `data_description` for the new field in
-     **both** `config.step.huawei_solar` and `options.step.huawei_solar`
-   - `models/sensor_config.py` — add the `str | None` field
-   - `custom_sensors/config_reader.py` — read from config entry
-   - `custom_sensors/state_collector.py` — read the HA entity state
-   - `models/live_state.py` — add the field to `LiveState`
-   - `coordinator.py` — pass to `PlannerInput` (if planner-relevant)
-4. **Never use a fixed numeric constant** for a value that the inverter reports (e.g. max SoC,
-   charge cutoff, rated capacity). Always source it from the live entity.
-
-**Key entity mappings** (register name → HA entity id pattern):
-
-| Register / source                            | Entity                                                  | Meaning                             |
-| -------------------------------------------- | ------------------------------------------------------- | ----------------------------------- |
-| `STORAGE_CHARGING_CUTOFF_CAPACITY`           | `number.batteries_end_of_charge_soc`                    | Max SoC during charging (90-100 %)  |
-| `STORAGE_GRID_CHARGE_CUTOFF_STATE_OF_CHARGE` | `number.batteries_grid_charge_cutoff_soc`               | Max SoC when charging **from grid** |
-| `STORAGE_DISCHARGING_CUTOFF_CAPACITY`        | `number.batteries_end_of_discharge_soc`                 | Min SoC floor                       |
-| `STORAGE_MAXIMUM_CHARGING_POWER`             | `number.batteries_maximum_charging_power`               | Max charge power (W)                |
-| `STORAGE_MAXIMUM_DISCHARGING_POWER`          | `number.batteries_maximum_discharging_power`            | Max discharge power (W)             |
-| `STORAGE_STATE_OF_CAPACITY`                  | `sensor.batteries_state_of_capacity`                    | Current SoC (%)                     |
-| `STORAGE_RATED_CAPACITY`                     | `sensor.batteries_rated_capacity`                       | Nameplate capacity (Wh)             |
-| `STORAGE_WORKING_MODE_SETTINGS`              | `select.batteries_working_mode`                         | Working mode select                 |
-| `STORAGE_EXCESS_PV_ENERGY_USE_IN_TOU`        | `select.batteries_excess_pv_energy_use_in_tou`          | Excess PV use mode in TOU           |
-| `STORAGE_HUAWEI_LUNA2000_TOU_…_PERIODS`      | `sensor.batteries_tou_charging_and_discharging_periods` | TOU period schedule                 |
-| `HuaweiSolarActivePowerControlModeEntity`    | `sensor.inverter_active_power_control`                  | Active power / export control mode  |
-
-**Always check `docs/huawei_entities.md` first** before searching the upstream repo or guessing
-an entity ID. If a new entity is confirmed to exist in HA, add it to `docs/huawei_entities.md`
-as part of the same PR that wires it into HSEM.
-
-## Planner Specification (Mandatory Reference)
-
-The canonical definition of how the HSEM planner must behave is in
-**`docs/planner-spec.md`**.
+**Every external value consumed by OSF MUST be read through `SensorReader` in
+`sensor_reader.py`.** Never call `hass.states.get(...)` directly in platform or ML code.
 
 The agent MUST:
 
-1. **Read `docs/planner-spec.md` before touching any planner code** — engine, cost function,
-   SoC simulation, candidate generation, slot population, or safety gates.
-2. **Verify that every planner change is consistent with the spec** — energy balance per slot,
-   SoC bounds, cost function formula, terminal-SoC accounting, candidate invariants, and safety
-   gate behaviour must all match the spec exactly.
-3. **Update `docs/planner-spec.md`** whenever a change intentionally alters planner
-   semantics (goals, formulas, invariants, or safety gates). The spec and the implementation
+1. **Before using any external entity**, check `docs/USING_EXISTING_SENSORS.md` in this
+   repository first — it is the canonical, verified list of entities OSF reads (Stromligning,
+   Met.no weather, Solcast, inverter power, temperature). Only fall back to searching an
+   upstream integration repo when an entity is not yet listed there.
+2. **If the entity already exists in OSF** (in `const.py`, `config_flow.py`, `sensor_reader.py`,
+   and `__init__.py`): re-use it — never hard-code the value.
+3. **If the entity is NOT yet wired into OSF**: add it through the full stack in this order:
+   - `const.py` — add a `CONF_*` key (and a default entity-id string where sensible)
+   - `config_flow.py` — add to the `sensors` step schema (and options flow `init` step)
+   - `translations/en.json` — add `data` label (and `data_description`) for the new field in
+     **both** `config.step.sensors` and `options.step.init`
+   - `translations/da.json` — add the Danish translation, in sync with `en.json`
+   - `sensor_reader.py` — add a `read_*` method on `SensorReader`
+   - `__init__.py` — read the value during the update cycle and pass it into `weather_data`
+4. **Never use a fixed numeric constant** for a value that an entity reports. Always source it
+   from the live entity.
+
+**Key entity mappings** (source → HA entity id pattern):
+
+| Source                          | Entity (example)                                  | Used for                          |
+| ------------------------------- | ------------------------------------------------- | --------------------------------- |
+| Stromligning (current price)    | `sensor.stromligning_current_price_vat`           | Confirmed consumer prices (96/day) |
+| Stromligning (tomorrow)         | `binary_sensor.stromligning_tomorrow_spotprice_vat` | Tomorrow's price availability    |
+| Met.no weather (state)          | `weather.forecast_*`                              | Current wind/temp/humidity/cloud  |
+| Met.no weather (forecast)       | `weather.get_forecasts` service                   | 48h hourly forecast               |
+| Solcast solar forecast          | `sensor.solcast_pv_forecast_forecast_today`       | Solar generation estimate         |
+| Inverter solar production       | `sensor.power_inverter_input_total`               | Actual solar (training/scale)     |
+| Outdoor temperature             | `sensor.metroair_330_outdoor_temperature`         | Actual temperature (training)     |
+
+**Always check `docs/USING_EXISTING_SENSORS.md` first** before searching an upstream repo or
+guessing an entity ID. If a new entity is confirmed to exist in HA, add it to
+`docs/USING_EXISTING_SENSORS.md` as part of the same PR that wires it into OSF.
+
+## ML Specification (Mandatory Reference)
+
+The canonical definition of how the OSF ML layer must behave is in
+**`docs/ML_DOCUMENTATION.md`** (with `docs/SELF_LEARNING.md` and `docs/PERSISTENCE.md`).
+
+The agent MUST:
+
+1. **Read `docs/ML_DOCUMENTATION.md` before touching any ML code** — model, feature vector,
+   self-learning, bias correction, confidence scoring, or storage schema.
+2. **Verify that every ML change is consistent with the docs** — 20-feature vector, 96-slot
+   granularity, bias-correction EMA, solar-scaling factor, and confidence floor must all match.
+3. **Update `docs/ML_DOCUMENTATION.md`** (and `docs/SELF_LEARNING.md` / `docs/PERSISTENCE.md`
+   where relevant) whenever a change intentionally alters ML semantics. Docs and implementation
    must never be allowed to diverge silently.
-4. **Add or update tests** that cover the invariants listed under _Invariants for tests_ in the
-   spec for every planner change.
-5. **Include the spec check in the Definition of Done** — a planner change is not complete until
-   both the spec and the tests are updated and passing.
+4. **Add or update tests** that cover the affected invariants for every ML change.
+5. **Include the doc check in the Definition of Done** — an ML change is not complete until both
+   the docs and the tests are updated and passing.
 
-Key invariants to verify for every planner PR (from the spec):
+Key invariants to verify for every ML PR:
 
-- Energy balance holds for every slot.
-- SoC never leaves configured bounds.
-- Forced discharge/export changes SoC and cost/revenue.
-- Grid charge prices actual grid import (not stored energy).
-- `winner.cost == final_output.cost` — no post-selection mutation.
-- `winner.slots == final_output.slots`.
-- Terminal SoC affects cost; emptying the battery is not free.
-- No-action baseline includes normal PV/battery self-consumption.
-- Read-only / degraded / dry-run gates block hardware writes.
+- Feature vector stays at 20 canonical features (any add/remove is a model change).
+- Slot granularity is 96 (15-min), never hourly (0-23).
+- Bias correction uses the EMA formula `0.9 * old + 0.1 * bias_ratio`.
+- Solar scaling uses the EMA of `actual_power / solcast_estimate`.
+- Training uses `weather_history` actuals; prediction uses live forecasts.
+- Storage schema (predictions, error_metrics, bias_correction, price_history, weather_history,
+  meta) is versioned and migrations run once.
 
-## HSEM Development Rules
+## OSF Development Rules
 
-Solar energy systems must be treated as external hardware interfaces.
+Spot-price forecasting is a data-driven system. The agent must:
 
-The agent must:
-
-- Avoid changes that require physical hardware validation unless:
+- Avoid changes that require live market data validation unless:
   - Proper mocks are provided, or
   - A clear manual test plan is included.
-- Model energy flows and power calculations conservatively and explicitly.
+- Model price and weather calculations conservatively and explicitly.
 - Ensure network calls include reasonable timeouts.
 - Avoid infinite retry loops.
 - Handle disconnections and sensor unavailability gracefully.
@@ -171,7 +156,7 @@ If credentials, API keys, or tokens are required:
 - Run `./scripts/quality.sh lint` locally before committing.
 - Run `./scripts/quality.sh typing` after lint — mypy type checking.
 - Run `./scripts/quality.sh quality` after typing (pyright + vulture static checks).
-- Run `./scripts/quality.sh translations` if any user-facing string changed (en/da/de/es sync).
+- Run `./scripts/quality.sh translations` if any user-facing string changed (en/da sync).
 - Run `./scripts/quality.sh test` to run the full test suite with coverage before opening a PR.
 - See `CODE_QUALITY_STANDARDS.md` for full quality rules and conventions.
 - **Never use `==` or `!=` to compare floating-point values.** In production code use an epsilon
@@ -181,12 +166,11 @@ If credentials, API keys, or tokens are required:
 
 Utility and helper functions must NEVER be duplicated across modules. Follow these rules:
 
-**Rule: If a utility function is used in 2 or more modules, it belongs in `utils/`**
+**Rule: If a utility function is used in 2 or more modules, it belongs in a shared module**
 
 1. **Before writing any utility function**, search existing code:
 
-   - Check `utils/misc.py` for similar functions
-   - Check other `utils/*.py` modules
+   - Check `const.py`, `sensor_reader.py`, and the `ml/` modules for similar functions
    - Search for regex patterns that might match the functionality
 
 2. **If found**: Import and reuse the existing function
@@ -194,18 +178,16 @@ Utility and helper functions must NEVER be duplicated across modules. Follow the
    - Never create a duplicate with a different name
    - Never create a local version in your module
 
-3. **If NOT found AND will be used 2+ times**: Create in utils
+3. **If NOT found AND will be used 2+ times**: Create in the appropriate shared module
 
-   - Add to `utils/misc.py` (or appropriate utils module)
+   - Add to `const.py`, `sensor_reader.py`, or the relevant `ml/` module
    - Use public name (no leading underscore for functions meant to be reused)
    - Document with proper docstring
    - Import in all locations that need it
 
 4. **If a one-off helper** that's ONLY used in one module:
    - Can be private (`_function_name()`) in that module
-   - But if needs grow, refactor to utils immediately
-
-**Real Example - Month Conversion (Anti-pattern):**
+   - But if needs grow, refactor to a shared module immediately
 
 ## Home Assistant Compliance
 
@@ -224,27 +206,6 @@ The agent must:
   and move toward Gold where feasible.
 - Add or update tests for behavior changes, especially setup flows, coordinator behavior, and entity
   state handling.
-
-### Device Topology (issue #875)
-
-HSEM entities are split across **7 devices**, not one: Controller, Battery & Energy, Hourly
-Consumption Profile, Financial, Forecast, EV Primary, and EV Secondary. See
-`custom_components/hsem/devices.py` for the `HSEMDevice` enum and `DeviceInfo` construction, and
-`docs/sensors-reference.md` (Devices section) for the full entity-to-device mapping.
-
-- Every `HSEMEntity` subclass resolves `device_info` via `self._hsem_device` (a class attribute,
-  or set dynamically per instance for entities that come in primary/secondary EV pairs — see
-  `entity.py`). New entities MUST set `_hsem_device` explicitly unless they belong on Controller
-  (the default).
-- The Controller device keeps the pre-split `(DOMAIN, entry_id)` identifier; every other device is
-  `(DOMAIN, f"{entry_id}_<device>")`.
-- `unique_id` is the permanent identity key and must **never** change when moving an entity between
-  devices — only `device_id` (via `entity_registry.async_update_entity`) changes.
-- A one-time entity-registry migration (`custom_components/hsem/device_migration.py`), gated by a
-  migration-version flag on the config entry, reassigns `device_id` for pre-existing entities. It
-  runs once per config entry and is a no-op on subsequent calls.
-- EV Secondary / OCPP entity **names** (not `unique_id`/`entity_id`) drop redundant `"Second"`/`"2"`
-  markers — the device name already disambiguates them via `_attr_has_entity_name = True`.
 
 ## Git Workflow
 
@@ -366,7 +327,7 @@ All cloud endpoints or external integrations must be clearly documented.
 
 The agent must stop and request clarification regarding:
 
-- Energy calculation logic or assumptions
+- ML model, feature-vector, or price-prediction logic or assumptions
 - Home Assistant integration architecture decisions
 - CI/CD expectations or tool configuration
 - Required vs. optional features or breaking changes

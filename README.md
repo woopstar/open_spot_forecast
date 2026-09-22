@@ -1,4 +1,4 @@
-# Huawei Solar Energy Management (HSEM) for Home Assistant
+# Open Spot Forecast for Home Assistant
 
 [![GitHub Release][releases-shield]][releases]
 [![GitHub Downloads][downloads-shield]][downloads]
@@ -6,85 +6,60 @@
 [![BuyMeCoffee][buymecoffeebadge]][buymecoffee]
 [![codecov][codecov-shield]][codecov]
 
-![Icon](assets/icon.png)
-
 ## Introduction
 
-**Huawei Solar Energy Management (HSEM)** is a modular, secure, and highly configurable Home Assistant integration for optimizing Huawei solar batteries, inverters, and related energy devices. HSEM automates battery charging/discharging, grid export/import, and adapts to dynamic energy prices, solar forecasts, and EV charging events.
+**Open Spot Forecast** is a Home Assistant integration that predicts electricity
+spot prices using machine learning, weather forecasts, and confirmed market data.
+It runs a self-learning loop that compares its predictions against actual prices
+and continuously improves accuracy via per-slot bias correction.
 
 ---
 
 ## Features
 
-### Core Optimization
+### Price Forecasting
 
-- **MILP-based planner** — global optimal charge/discharge scheduling via linear programming (HiGHS solver)
-- **8-term cost function** — rigorous mathematical formulation with formal invariants
-- **Multiple candidate strategies** — baseline, passive, aggressive, partial-SoC, and MILP-optimal plans
-- **Time-discounted candidate selection** — prefers near-term savings over far-future gains
+- **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
+  predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day)
+- **20-feature model** — time, wind, solar, temperature, and market-demand
+  features, implemented in pure NumPy (no scikit-learn dependency)
+- **Real consumer prices** — Stromligning integration provides prices with
+  tariffs, fees, and VAT (what you actually pay), with Nordpool as fallback
 
-### Battery Intelligence
+### Self-Learning
 
-- **Dynamic self-learning discharge floor** — reserves enough energy to bridge the house to the next solar surplus or cheap grid window, with self-correcting safety margin
-- **Temperature-adaptive charge rate learning** — 7 temperature buckets track actual charge power at p90, adapting to cold-weather limitations
-- **Battery capacity auto-detection** — learns usable capacity from BMS kWh-remaining readings in the 15-85 % SoC range
-- **Cycle cost accounting** — wear-and-tear costs factored into every charge/discharge decision
-- **Battery export minimum price floor** (issue #752) — optional per-slot hard floor below which intentional battery-to-grid export is forbidden (the optimizer still decides above the floor)
-- **Grid overcurrent protection** — respects main fuse rating, caps total grid draw
-- **Weekday/weekend consumption profiling** — separate EWMA load profiles for workdays and weekends improve prediction accuracy
+- **Per-slot bias correction** — a multiplicative EMA correction factor per
+  15-minute slot, learned from prediction-vs-actual comparisons
+- **Solar scaling factor** — a learned EMA ratio between Solcast's estimate and
+  actual inverter output
+- **Adaptive confidence** — heuristic confidence early on, switching to a
+  learned confidence score once enough samples accumulate
 
-### Solar & Forecast
+### Sensors
 
-- **Solar forecast accuracy auto-correction** — per-hour learned factors (4-day rolling) + intra-hour residual correction (2h decay)
-- **Configurable solar confidence** — plans against a user-selectable percentile (10-90 %) of historical forecast accuracy
-- **48-hour PV horizon** — Solcast today + tomorrow integration
-- **PV curtailment detection** — detects when the inverter throttles solar production
+- Current price, today/tomorrow min/max/mean
+- ML prediction (7-day forecast) with per-slot confidence
+- Prediction confidence and learning metrics
+- Binary sensors for tomorrow's price availability and ML model training status
 
-### EV Charging
+### Data Sources
 
-- **MILP EV co-optimisation** — EV charging scheduled alongside battery in one LP solve
-- **Session-aware EV demand** — treats actively-charging EV as certain demand for the next 2 hours
-- **Embedded OCPP 1.6 server** — direct EV charger control via WebSocket (Easee, Zaptec, Wallbox, etc.), one server per EV (second EV optional, separate port)
-- **Auto-Full on negative prices** — automatically charges EV at full power when electricity is free
-- **Dual EV support** — independent configuration and planning for two EVs
-
-### Financial Visibility
-
-- **Export income / import cost / net balance sensors** — monetary, cumulative, HA Energy dashboard compatible
-- **Savings tracker** — actual vs missed savings with 90-day rolling log
-- **Prediction accuracy scorecard** — 7-day and 30-day SoC MAE, solar MAPE, action mix
-- **Daily plan-vs-actual tracking** — compares planned and actual energy flows
-
-### Safety & Trust
-
-- **Read-only / monitoring mode** — observe what HSEM would do before enabling control
-- **Degraded mode** — safely degrades when critical entities are missing
-- **Availability transition logging** — logs each configured input once when it becomes unavailable and once when it recovers
-- **Hardware write verification** — confirms inverter accepted every command
-- **Data quality diagnostics** — reports missing price/PV data per horizon day
-
-### User Experience
-
-- **Quick setup wizard** — auto-detects Huawei Solar, Solcast, and price entities
-- **Bundled Lovelace dashboard** — single-section dashboard with price charts, energy flow, savings, and accuracy
-- **Live-configurable** — all thresholds and settings editable from the dashboard without restart
-- **`hsem.create_dashboard` service** — creates or updates the bundled Lovelace dashboard automatically
-- **Bilingual** — English and Danish translations
+- **Stromligning** — confirmed consumer prices (96/day)
+- **Met.no weather** — current weather + 48h hourly forecast (built into HA)
+- **Solcast** — solar generation forecast
+- **Nordpool prognoses** — market demand and generation forecasts
 
 ---
 
 ## Quick Start
 
-1. **Remove any previous Huawei Solar Battery Optimization Project integrations.**
-2. **Install HSEM** via Home Assistant's custom integrations or manually.
-3. **Configure your sensors** for solar battery, inverter, grid, and EV charger (if present) — do not use the Fusion Solar app for scheduling; HSEM's planner drives charge/discharge decisions automatically.
-4. **Let HSEM run for at least 14 days** to collect historical data for optimal performance.
-5. **Monitor the Working Mode Sensor** for system status and recommendations.
+1. **Install** Open Spot Forecast via HACS or manually.
+2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
+3. **Add a price source** — Stromligning (recommended) or Nordpool.
+4. **Add weather sensors** (optional but recommended) to improve ML accuracy.
+5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.
 
-**Tip:**
-If you are a new user and want to safely observe how HSEM would control your battery system without making any changes, enable the **Read-Only** mode. This acts as a "dry run" and allows you to review all proposed configuration changes before they are applied.
-
-For detailed documentation, see the [HSEM Wiki](https://github.com/woopstar/hsem/wiki) or the [`docs/`](docs/) directory.
+For detailed documentation, see the [`docs/`](docs/) directory.
 
 ---
 
@@ -92,21 +67,10 @@ For detailed documentation, see the [HSEM Wiki](https://github.com/woopstar/hsem
 
 To use this package, you need the following integrations:
 
-- [Huawei Solar integration by wlcrs](https://github.com/wlcrs/huawei_solar) **VERSION 1.5.0a1 REQUIRED**
-- [Solcast integration by oziee](https://github.com/BJReplay/ha-solcast-solar)
-- Any electricity price integration ([Energi Data Service](https://github.com/MTrab/energidataservice), [Nordpool](https://github.com/custom-components/nordpool), [Amber Electric](https://amber.com.au), etc.)
-
-### Complementary integrations
-
-The following integrations work alongside HSEM but are **not required**:
-
-- [Huawei Solar PEES package by JensenNick](https://github.com/JensenNick/huawei_solar_pees)
-- [Smoothing Analytics Sensors by woopstar](https://github.com/woopstar/smoothing_analytics_sensors)
-- [EV Smart Charging by jonasbkarlsson](https://github.com/jonasbkarlsson/ev_smart_charging)
-
-### Default disabled sensors
-
-The [Huawei Solar integration by wlcrs](https://github.com/wlcrs/huawei_solar) provides `sensor.inverter_active_power_control` and `sensor.batteries_rated_capacity` but they are disabled by default. To use these entities, go to the device settings, select the inverter or batteries device and show hidden/disabled entities. Find the `sensor.inverter_active_power_control` and `sensor.batteries_rated_capacity` and enable them.
+- [Stromligning](https://github.com/MTrab/stromligning) — real consumer prices (recommended)
+- A weather entity (Met.no is built into Home Assistant and free)
+- [Solcast](https://github.com/BJReplay/ha-solcast-solar) — solar forecast (optional)
+- Any electricity price integration ([Nordpool](https://github.com/custom-components/nordpool), etc.)
 
 ---
 
@@ -117,14 +81,14 @@ The [Huawei Solar integration by wlcrs](https://github.com/wlcrs/huawei_solar) p
 1. In HACS, go to **Integrations**.
 2. Click the three dots in the top-right corner, and select **Custom repositories**.
 3. Add this repository URL and select **Integration** as the category:
-   `https://github.com/woopstar/hsem`
+   `https://github.com/woopstar/openspotforecast`
 4. Click **Add**.
 5. The integration will now appear in HACS under the **Integrations** section. Click **Install**.
 6. Restart Home Assistant.
 
 ### Method 2: Manual Installation
 
-1. Copy the `hsem` folder to your `custom_components` folder in your Home Assistant configuration.
+1. Copy the `open_spot_forecast` folder to your `custom_components` folder in your Home Assistant configuration.
 2. Restart Home Assistant.
 3. Add the integration via the Home Assistant integrations page and configure your settings.
 
@@ -133,51 +97,41 @@ The [Huawei Solar integration by wlcrs](https://github.com/wlcrs/huawei_solar) p
 ## Removal
 
 1. In Home Assistant, go to **Settings** -> **Devices & Services**.
-2. Find the **HSEM** integration, click the menu icon (three dots), and select **Delete**.
+2. Find the **Open Spot Forecast** integration, click the menu icon (three dots), and select **Delete**.
 3. Restart Home Assistant.
 
 ### If installed via HACS
 
-4. In HACS, go to **Integrations**, find HSEM, click the menu icon (three dots), and select **Remove**.
+4. In HACS, go to **Integrations**, find Open Spot Forecast, click the menu icon (three dots), and select **Remove**.
 5. Restart Home Assistant again.
 
 ### If installed manually
 
-4. Delete the `custom_components/hsem` folder from your Home Assistant configuration directory.
+4. Delete the `custom_components/open_spot_forecast` folder from your Home Assistant configuration directory.
 5. Restart Home Assistant.
-
-After removal, verify that no HSEM entities remain in **Settings** -> **Devices & Services** -> **Entities**.
 
 ---
 
 ## Documentation
 
-Full documentation is available on the **[HSEM Wiki](https://github.com/woopstar/hsem/wiki)** and in the [`docs/`](docs/) directory:
+Full documentation is available in the [`docs/`](docs/) directory:
 
-- **[Home](https://github.com/woopstar/hsem/wiki/Home)** — User-facing overview: features, FAQ, working modes, excess export, and more
-- **[Architecture Overview](https://github.com/woopstar/hsem/wiki/architecture-overview)** — System context, layered architecture, module map
-- **[Planner Specification](docs/planner-spec.md)** — Normative planner invariants, solar correction, dynamic floor, session EV
-- **[Planner Technical Guide](docs/planner-guide.md)** — How the planner works with worked examples, solar correction, dynamic floor
-- **[Cost Function Math](docs/cost-function-math.md)** — Complete mathematical formulation of the 8-term cost function
-- **[Sensors Reference](docs/sensors-reference.md)** — Complete entity reference: ~40 sensors, switches, numbers, and more
-- **[Config Flow Reference](docs/config-flow-reference.md)** — Setup wizard steps including quick setup and OCPP
-- **[EV Charge Plan Setup](docs/ev-charge-plan-setup.md)** — EV planned load and OCPP charger configuration
-- **[Dashboard Setup](docs/dashboard-setup.md)** — Bundled Lovelace dashboard with 6 views
-- **[Consumption Prediction](docs/consumption-prediction.md)** — ML ridge regression with DOW + DOY + temperature features
-- **[MILP Optimization](docs/milp-optimization.md)** — LP formulation, EV co-optimisation, session-aware demand
-- **[Forecast Accuracy Tracking](docs/forecast-accuracy-tracking.md)** — Solar correction and prediction accuracy
-- **[Troubleshooting Guide](https://github.com/woopstar/hsem/wiki/troubleshooting-guide)** — Diagnose and fix common problems
-- **[All Documentation](docs/index.md)** — Full index of all documentation files
+- **[Architecture](docs/ARCHITECTURE.md)** — System overview, data sources, data flow
+- **[ML Documentation](docs/ML_DOCUMENTATION.md)** — Model, 20-feature vector, confidence
+- **[Self-Learning](docs/SELF_LEARNING.md)** — Self-learning loop, bias correction
+- **[Persistence](docs/PERSISTENCE.md)** — SQLite storage schema and migrations
+- **[Stromligning Integration](docs/STROMLIGNING_INTEGRATION.md)** — Price-source priority
+- **[Using Existing Sensors](docs/USING_EXISTING_SENSORS.md)** — Sensor wiring reference
 
 ---
 
-[releases-shield]: https://img.shields.io/github/v/release/woopstar/hsem?style=for-the-badge
-[releases]: https://github.com/woopstar/hsem/releases
-[downloads-shield]: https://img.shields.io/github/downloads/woopstar/hsem/total.svg?style=for-the-badge
-[downloads]: https://github.com/woopstar/hsem/releases
-[license-shield]: https://img.shields.io/github/license/woopstar/hsem?style=for-the-badge
-[license]: https://github.com/woopstar/hsem/blob/main/LICENSE
+[releases-shield]: https://img.shields.io/github/v/release/woopstar/openspotforecast?style=for-the-badge
+[releases]: https://github.com/woopstar/openspotforecast/releases
+[downloads-shield]: https://img.shields.io/github/downloads/woopstar/openspotforecast/total.svg?style=for-the-badge
+[downloads]: https://github.com/woopstar/openspotforecast/releases
+[license-shield]: https://img.shields.io/github/license/woopstar/openspotforecast?style=for-the-badge
+[license]: https://github.com/woopstar/openspotforecast/blob/main/LICENSE
 [buymecoffeebadge]: https://img.shields.io/badge/buy%20me%20a%20coffee-donate-FFDD00.svg?style=for-the-badge&logo=buymeacoffee
 [buymecoffee]: https://www.buymeacoffee.com/woopstar
-[codecov-shield]: https://codecov.io/github/woopstar/hsem/graph/badge.svg?token=3ATOWIWP5G
-[codecov]: https://codecov.io/github/woopstar/hsem
+[codecov-shield]: https://codecov.io/github/woopstar/openspotforecast/graph/badge.svg
+[codecov]: https://codecov.io/github/woopstar/openspotforecast

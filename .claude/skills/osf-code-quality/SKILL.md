@@ -1,9 +1,9 @@
 ---
-name: hsem-code-quality
-description: Activate before every commit and PR to run the full HSEM quality gate pipeline — lint, typing, quality checks, and tests.
+name: osf-code-quality
+description: Activate before every commit and PR to run the full OSF quality gate pipeline — lint, typing, quality checks, and tests.
 ---
 
-# HSEM Code Quality — Pre-Commit & Pre-PR Gates
+# OSF Code Quality — Pre-Commit & Pre-PR Gates
 
 Activate this skill **before every commit** and **before opening any PR**.
 
@@ -63,14 +63,14 @@ For faster iteration during development:
 
 ## File Size Check
 
-Hard limit: **30 KB per file** in `planner/` and `utils/`. Check before PR:
+Hard limit: **30 KB AND 1000 lines** per file across the codebase. Check before PR:
 
 ```bash
-wc -c custom_components/hsem/planner/*.py
-wc -c custom_components/hsem/utils/*.py
+wc -c custom_components/open_spot_forecast/**/*.py
+wc -l custom_components/open_spot_forecast/**/*.py
 ```
 
-If a file exceeds 30 KB, split it before adding more features.
+If a file exceeds either limit, split it before adding more features.
 
 ## Pre-Commit Hook (Optional but Recommended)
 
@@ -84,7 +84,7 @@ pre-commit run --all-files
 - **Type hints**: every public function has parameter and return type annotations; use `| None`, not `Optional[...]`
 - **Docstrings**: Google-style for public modules, classes, functions, methods
 - **`@override`**: every method that overrides a base class method
-- **Import order**: standard library → third-party → `homeassistant.*` → `custom_components.hsem.*`
+- **Import order**: standard library → third-party → `homeassistant.*` → `custom_components.open_spot_forecast.*`
 - **String formatting**: f-strings for runtime, `%`-formatting for logging
 - **Encoding**: `open(file, encoding='utf-8')` in text mode
 - **Paths**: `pathlib` over `os.path`

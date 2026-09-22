@@ -1,14 +1,14 @@
 ---
-name: hsem-ha-compliance
+name: osf-ha-compliance
 description: Activate when making changes that touch Home Assistant integration surfaces — config flows, entities, translations, services, device info, async patterns, or platform setup.
 ---
 
-# HSEM Home Assistant Compliance Checklist
+# OSF Home Assistant Compliance Checklist
 
 Activate this skill when your change touches any of these HA integration surfaces:
 
-- Config flow (`config_flow.py`, `flows/`)
-- Entity classes and platforms
+- Config flow (`config_flow.py`)
+- Entity classes and platforms (`sensor.py`, `binary_sensor.py`)
 - Translations (`translations/en.json`)
 - Services (`services.yaml`)
 - Device info, unique IDs
@@ -44,7 +44,7 @@ Activate this skill when your change touches any of these HA integration surface
 
 - [ ] Every user-facing string has a key in `translations/en.json`
 - [ ] Field labels, errors, aborts, boolean/switch fields all present
-- [ ] Both `config` and `options` steps updated for `huawei_solar` if applicable
+- [ ] Both `config` and `options` steps updated
 
 ### Entities
 
@@ -67,14 +67,13 @@ Activate this skill when your change touches any of these HA integration surface
 ## Section 2 — Style Guidelines
 
 - [ ] File headers: every `.py` file starts with a docstring describing what the file does
-- [ ] Import order: standard library → third-party → `homeassistant.*` → `custom_components.hsem.*`
+- [ ] Import order: standard library → third-party → `homeassistant.*` → `custom_components.open_spot_forecast.*`
 - [ ] Alphabetical ordering for constants and list/dict content
 - [ ] Use HA constants: `CONF_NAME`, `UnitOfEnergy`, `PERCENTAGE`, `Platform`, `STATE_ON`/`STATE_OFF`
 - [ ] No hardcoded strings: no `"on"`, `"off"`, `"kWh"`, `"%"`, `"unknown"` — use HA constants
 - [ ] Logging: use `%`-formatting, no component name in message, no period at end, restrict `_LOGGER.info`
 - [ ] Type hints: every public function, use `| None` (not `Optional`), `@override` on overrides
 - [ ] Docstrings: Google-style, summary line (imperative, period)
-- [ ] Planner code uses `HSEM_LOGGER` from `utils/logger.py`; non-planner may use `logging.getLogger(__name__)`
 
 ## Section 3 — PR Scope Rules
 

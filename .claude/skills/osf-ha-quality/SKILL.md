@@ -1,9 +1,9 @@
 ---
-name: hsem-ha-quality
+name: osf-ha-quality
 description: Activate when writing or reviewing Home Assistant integration code to ensure Bronze and Silver quality tier standards — HA constants, entity patterns, coordinator usage, config flow, and async correctness.
 ---
 
-# HSEM Home Assistant Quality — Bronze & Silver Tier Standards
+# OSF Home Assistant Quality — Bronze & Silver Tier Standards
 
 Activate this skill when writing or reviewing any code that touches Home Assistant integration surfaces. It enforces Bronze and Silver quality tier requirements from the [HA integration quality scale](https://developers.home-assistant.io/docs/quality_scale/).
 
@@ -36,13 +36,13 @@ Always check [`homeassistant/const.py`](https://github.com/home-assistant/core/b
 
 ```python
 # ✅ Correct: mixins BEFORE base class
-class HSEMBatterySensor(CoordinatorEntity, RestoreEntity, SensorEntity):
+class SpotPriceSensor(CoordinatorEntity, RestoreEntity, SensorEntity):
     ...
 
 # ❌ Wrong: bare Entity, wrong order
-class HSEMBatterySensor(SensorEntity, CoordinatorEntity):  # MRO violation
+class SpotPriceSensor(SensorEntity, CoordinatorEntity):  # MRO violation
     ...
-class HSEMBatterySensor(Entity):  # never use bare Entity
+class SpotPriceSensor(Entity):  # never use bare Entity
     ...
 ```
 
@@ -58,9 +58,9 @@ def unique_id(self) -> str:
 def device_info(self) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, self._entry.entry_id)},
-        name="HSEM",
-        manufacturer="HSEM",
-        model="Energy Management",
+        name="Open Spot Forecast",
+        manufacturer="Open Spot Forecast",
+        model="Spot Price Forecast",
     )
 ```
 
@@ -70,7 +70,7 @@ def device_info(self) -> DeviceInfo:
 # ✅ Every async_step_* returns a dict
 async def async_step_user(self, user_input=None):
     if user_input is not None:
-        return self.async_create_entry(title="HSEM", data=user_input)
+        return self.async_create_entry(title="Open Spot Forecast", data=user_input)
     return self.async_show_form(step_id="user", data_schema=STEP_USER_SCHEMA)
 
 # ❌ State leaks between steps — never store mutable state on self
@@ -119,13 +119,13 @@ from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
 )
 
-class HSEMCoordinator(DataUpdateCoordinator):
+class OSFCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Fetch latest data."""
         ...
 
 # Entities extend CoordinatorEntity to get auto-updates
-class HSEMSensor(CoordinatorEntity, SensorEntity):
+class OSFSensor(CoordinatorEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("my_value")
@@ -145,7 +145,7 @@ Every string the user sees must be in `translations/en.json`:
   "config": {
     "step": {
       "user": {
-        "title": "HSEM Setup",
+        "title": "Open Spot Forecast Setup",
         "data": {
           "name": "Integration Name"
         }
@@ -185,14 +185,14 @@ hass.data[DOMAIN] = shared_data
 async_dispatcher_send(hass, f"{DOMAIN}_updated")
 
 # ✅ Prefix custom event names with domain
-hass.bus.async_fire("hsem_solar_update", {...})  # not "solar_update"
+hass.bus.async_fire("open_spot_forecast_price_update", {...})  # not "price_update"
 ```
 
 ### Logging Standards
 
 ```python
 # ✅ Correct logging patterns
-_LOGGER = logging.getLogger(__name__)   # for non-planner code
+_LOGGER = logging.getLogger(__name__)
 _LOGGER.debug("Value updated to %s", value)  # %-formatting for logging
 _LOGGER.info("Important user event")          # no period at end
 

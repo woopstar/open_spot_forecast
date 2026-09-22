@@ -1,5 +1,5 @@
 #!/bin/bash
-# postCreateCommand wrapper for the HSEM devcontainer.
+# postCreateCommand wrapper for the OSF devcontainer.
 #
 # Installs Python dependencies (always) and runs a one-shot smoke test of
 # the SSH/GPG agent bridge (local dev only).

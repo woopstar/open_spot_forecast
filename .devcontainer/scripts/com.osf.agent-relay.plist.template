@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.hsem.agent-relay</string>
+    <string>com.osf.agent-relay</string>
 
     <key>ProgramArguments</key>
     <array>

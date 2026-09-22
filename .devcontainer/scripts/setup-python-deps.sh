@@ -1,9 +1,9 @@
 #!/bin/sh
-# Installs all Python dependencies for the HSEM devcontainer.
+# Installs all Python dependencies for the OSF devcontainer.
 # Runs as postCreateCommand — always, whether local dev or CI.
 set -eu
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/workspaces/hsem}"
+WORKSPACE_DIR="${WORKSPACE_DIR:-/workspaces/osf}"
 
 pip3 install --upgrade pip
 

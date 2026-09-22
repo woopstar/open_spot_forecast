@@ -1,10 +1,10 @@
-# Code Quality Standards for HSEM
+# Code Quality Standards for Open Spot Forecast
 
 This document defines code quality standards tailored for agentic coding and AI-assisted development. All contributions must adhere to these standards to maintain code consistency, security, and maintainability.
 
 ## Overview
 
-HSEM uses a unified lint pipeline — **ruff** — as the single source of truth for
+Open Spot Forecast uses a unified lint pipeline — **ruff** — as the single source of truth for
 code quality. All tools are invoked via `./scripts/quality.sh`. This ensures:
 
 - **Consistency**: All code follows identical formatting rules across all tools
@@ -194,7 +194,7 @@ The following checks run on every PR:
 | Doc format    | `prettier`                 | `./scripts/quality.sh lint`         | Markdown / YAML / JSON style   |
 | Linting       | `ruff check`               | `./scripts/quality.sh lint`         | Bugs, style issues, complexity |
 | Type Checking | `mypy`                     | `./scripts/quality.sh typing`       | Type errors and unsafe code    |
-| Translations  | `validate_translations.py` | `./scripts/quality.sh translations` | en/da/de/es keys stay in sync  |
+| Translations  | `validate_translations.py` | `./scripts/quality.sh translations` | en/da keys stay in sync  |
 | Tests         | `pytest`                   | `./scripts/quality.sh test`         | Verifies functionality         |
 | Coverage      | `coverage`                 | `--cov` flag                        | Ensures new code is tested     |
 

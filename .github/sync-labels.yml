@@ -103,27 +103,21 @@
 - name: "area:docs"
   color: 0075ca
   description: "Documentation and troubleshooting"
-- name: "area:ev-charging"
+- name: "area:data-sources"
   color: 5319e7
-  description: "EV charging, OCPP server, and charger coordination"
+  description: "Price, weather, and solar data sources (Stromligning, Nordpool, Solcast, Met.no)"
 - name: "area:forecast"
   color: 5319e7
-  description: "PV, load, price, and prediction logic"
+  description: "Price, weather, and prediction logic"
 - name: "area:home-assistant"
   color: 006b75
   description: "Home Assistant entities, services, coordinators, and config flow"
-- name: "area:inverter"
+- name: "area:ml"
   color: 7057ff
-  description: "Inverter control, write verification, and hardware capabilities"
-- name: "area:planner"
-  color: 1d76db
-  description: "Planner logic, scoring, schedules, and energy decisions"
+  description: "ML model, feature vector, self-learning, and bias correction"
 - name: "area:refactor"
   color: c2e0c6
   description: "Structure changes without intended behavior change"
-- name: "area:safety"
-  color: b60205
-  description: "Safety, degraded mode, validation, and hardware risk"
 - name: "area:tests"
   color: c5def5
   description: "Unit tests, HA mocks, regression tests, and benchmarks"
@@ -131,10 +125,10 @@
 # Issue triage taxonomy: how urgent an issue is.
 - name: "priority:p0"
   color: b60205
-  description: "Must fix before real hardware control"
+  description: "Must fix before release"
 - name: "priority:p1"
   color: d93f0b
-  description: "Core architecture and planner improvements"
+  description: "Core architecture and ML improvements"
 
 - name: "feedback"
   color: ededed
