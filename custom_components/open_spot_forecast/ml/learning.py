@@ -1,5 +1,6 @@
 """Self-learning, historical storage, and persistence."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -632,6 +633,10 @@ class LearningMixin:
             _LOGGER.info("Backfilling Nordpool data for %s", date_str)
             consumption = await fetch_consumption_prognosis(target, self.region)
             production = await fetch_production_prognosis(target, self.region)
+
+            # Throttle the backfill so we don't trip Nordpool's Cloudflare rate
+            # limiter (which returns 401/429 when hammered with rapid requests).
+            await asyncio.sleep(1.0)
 
             entries: list[dict] = []
             if consumption:
