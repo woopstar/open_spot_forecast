@@ -33,6 +33,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Cap the number of predictions exposed as entity attributes. The full 7-day
+# forecast (672 slots) blows past Home Assistant's 16 KB attribute limit and
+# slows down state writes, so we only surface the next 24 hours (96 slots).
+_MAX_PREDICTIONS_IN_ATTRIBUTES = 96
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -145,12 +150,11 @@ class SpotPriceSensor(SensorEntity):
             "last_update": self.api_data.get("last_update"),
         }
 
-        # Include Stromligning 15-min prices if available
+        # Include Stromligning 15-min prices if available. We deliberately omit
+        # the raw dict arrays (prices_15min / raw_today / raw_tomorrow) — they
+        # are large and push the attribute payload past HA's 16 KB limit.
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data:
-            attrs["prices_15min"] = stromligning_data.get("prices_15min", [])
-            attrs["raw_today"] = stromligning_data.get("raw_today", [])
-            attrs["raw_tomorrow"] = stromligning_data.get("raw_tomorrow", [])
             attrs["today_prices"] = stromligning_data.get("today", [])
             attrs["tomorrow_prices"] = stromligning_data.get("tomorrow", [])
             attrs["price_source"] = "stromligning"
@@ -158,8 +162,6 @@ class SpotPriceSensor(SensorEntity):
             # Fall back to Nordpool
             nordpool = self.api_data.get("nordpool")
             if nordpool:
-                attrs["raw_today"] = nordpool.raw_today
-                attrs["raw_tomorrow"] = nordpool.raw_tomorrow
                 attrs["today_prices"] = nordpool.today
                 attrs["tomorrow_prices"] = nordpool.tomorrow
                 attrs["price_source"] = "nordpool"
@@ -561,9 +563,10 @@ class MLPredictionSensor(SensorEntity):
         ml_predictor = self.api_data.get("ml_predictor")
         attrs = {}
         if ml_predictor:
-            # Convert predictions to include unit of measurement
+            # Convert predictions to include unit of measurement. Only surface
+            # the next 24 hours to stay under HA's 16 KB attribute limit.
             predictions_with_unit = []
-            for pred in ml_predictor.predictions:
+            for pred in ml_predictor.predictions[:_MAX_PREDICTIONS_IN_ATTRIBUTES]:
                 price = pred.get("price")
                 if price is not None:
                     # Prices are already in kr/kWh, just apply VAT
@@ -648,6 +651,7 @@ class LearningMetricsSensor(SensorEntity):
         self.hass = hass
         self.entry = entry
         self.api_data = api_data
+        self._cached_metrics: dict[str, Any] | None = None
 
         self._attr_unique_id = util_slugify(
             f"{DOMAIN}_{entry.entry_id}_learning_metrics"
@@ -665,33 +669,45 @@ class LearningMetricsSensor(SensorEntity):
         )
 
     async def _handle_update(self) -> None:
+        # Invalidate the cache so the next state write recomputes metrics.
+        self._cached_metrics = None
         self.async_write_ha_state()
+
+    def _get_metrics(self) -> dict[str, Any]:
+        """Return learning metrics, computing once per state write.
+
+        ``native_value`` and ``extra_state_attributes`` are both evaluated
+        during a single state write; caching avoids running the (expensive)
+        metric aggregation twice and keeps the update under HA's 0.5 s
+        slow-update threshold.
+        """
+        if self._cached_metrics is None:
+            ml_predictor = self.api_data.get("ml_predictor")
+            self._cached_metrics = (
+                ml_predictor.get_learning_metrics() if ml_predictor else {}
+            )
+        return self._cached_metrics
 
     @property
     def native_value(self) -> int | None:
-        ml_predictor = self.api_data.get("ml_predictor")
-        if ml_predictor:
-            metrics = ml_predictor.get_learning_metrics()
-            return metrics.get("total_samples", 0)
-        return None
+        metrics = self._get_metrics()
+        return metrics.get("total_samples", 0) if metrics else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        ml_predictor = self.api_data.get("ml_predictor")
+        metrics = self._get_metrics()
         attrs = {}
-        if ml_predictor:
-            metrics = ml_predictor.get_learning_metrics()
-            if metrics:
-                attrs["status"] = metrics.get("status", "idle")
-                attrs["message"] = metrics.get("message", "")
-                attrs["is_learning"] = metrics.get("is_learning", False)
-                attrs["mae"] = metrics.get("mae")
-                attrs["rmse"] = metrics.get("rmse")
-                attrs["mean_bias"] = metrics.get("mean_bias")
-                attrs["mean_pct_error"] = metrics.get("mean_pct_error")
-                attrs["learning_confidence"] = metrics.get("learning_confidence")
-                attrs["hours_tracked"] = metrics.get("slots_tracked")
-                attrs["bias_corrections"] = metrics.get("bias_corrections")
-                attrs["pending_predictions"] = metrics.get("pending_predictions")
-                attrs["hourly_metrics"] = metrics.get("hourly_metrics")
+        if metrics:
+            attrs["status"] = metrics.get("status", "idle")
+            attrs["message"] = metrics.get("message", "")
+            attrs["is_learning"] = metrics.get("is_learning", False)
+            attrs["mae"] = metrics.get("mae")
+            attrs["rmse"] = metrics.get("rmse")
+            attrs["mean_bias"] = metrics.get("mean_bias")
+            attrs["mean_pct_error"] = metrics.get("mean_pct_error")
+            attrs["learning_confidence"] = metrics.get("learning_confidence")
+            attrs["hours_tracked"] = metrics.get("slots_tracked")
+            attrs["bias_corrections"] = metrics.get("bias_corrections")
+            attrs["pending_predictions"] = metrics.get("pending_predictions")
+            attrs["hourly_metrics"] = metrics.get("hourly_metrics")
         return attrs

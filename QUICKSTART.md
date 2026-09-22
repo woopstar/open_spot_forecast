@@ -199,7 +199,8 @@ predictions:
     predicted_price: 248.7
     confidence: 0.91
     model: "GradientBoosting"
-  # ... 672 predictions for 7 days
+  # ... 96 predictions for the next 24 hours (attributes are capped to stay
+  # under Home Assistant's 16 KB attribute limit)
 
 prediction_min: 150.5
 prediction_max: 450.2

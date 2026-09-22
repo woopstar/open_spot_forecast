@@ -166,9 +166,11 @@ class SensorReader:
                 result["tomorrow"] = [float(p) for p in tomorrow_data if p is not None]
                 _LOGGER.debug("Found tomorrow prices in 'tomorrow' attribute")
 
-        # If we still have no prices but have current price, use it as fallback
+        # If we still have no prices but have current price, use it as fallback.
+        # This is expected during the midnight rollover when the sensor clears
+        # its price arrays but still reports a current price, so log at debug.
         if not result["today"] and result["current_price"] is not None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Stromligning sensor has current price but no price arrays. "
                 "Using current price as fallback for today."
             )
