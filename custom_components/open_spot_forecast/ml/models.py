@@ -6,10 +6,12 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class ModelMixin:
+class ModelMixin(PredictorBase):
     """Training, prediction, and bias-correction methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -137,8 +139,8 @@ class ModelMixin:
                         feature["wind_share"] = (woff + won) / cons if cons > 0 else 0
 
             # Prepare training data
-            X = []
-            y = []
+            X_list: list[list[float]] = []
+            y_list: list[float] = []
 
             for i, feature in enumerate(all_features):
                 feature_vector = [
@@ -164,11 +166,11 @@ class ModelMixin:
                     feature.get("wind_share", 0),
                 ]
                 feature_vector = self._sanitize_feature_vector(feature_vector)
-                X.append(feature_vector)
-                y.append(all_prices[i])
+                X_list.append(feature_vector)
+                y_list.append(all_prices[i])
 
-            X = np.array(X)
-            y = np.array(y)
+            X = np.array(X_list)
+            y = np.array(y_list)
 
             # Train/test split (80/20)
             split_idx = int(0.8 * len(X))
@@ -228,8 +230,8 @@ class ModelMixin:
         if len(all_prices) < 168:  # min 7 days * 24 hours
             return None
 
-        X = []
-        y = []
+        X_list: list[list[float]] = []
+        y_list: list[float] = []
         for i, feature in enumerate(all_features):
             feature_vector = [
                 feature.get("hour", 0),
@@ -254,11 +256,11 @@ class ModelMixin:
                 feature.get("wind_share", 0),
             ]
             feature_vector = self._sanitize_feature_vector(feature_vector)
-            X.append(feature_vector)
-            y.append(all_prices[i])
+            X_list.append(feature_vector)
+            y_list.append(all_prices[i])
 
-        X = np.array(X)
-        y = np.array(y)
+        X = np.array(X_list)
+        y = np.array(y_list)
 
         # 80/20 train/validation split
         split_idx = int(0.8 * len(X))
@@ -301,7 +303,7 @@ class ModelMixin:
 
         # Apply best params to the live model
         self.price_model = NumpyGradientBoosting(
-            n_estimators=best_params["n_estimators"],
+            n_estimators=int(best_params["n_estimators"]),
             learning_rate=best_params["learning_rate"],
             random_state=42,
         )

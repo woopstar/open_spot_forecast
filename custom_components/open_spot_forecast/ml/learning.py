@@ -7,10 +7,12 @@ from typing import Any
 
 import numpy as np
 
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class LearningMixin:
+class LearningMixin(PredictorBase):
     """Historical price storage, self-learning, and persistence methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes

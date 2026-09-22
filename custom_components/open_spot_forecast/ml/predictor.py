@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
+from homeassistant.core import HomeAssistant
+
 from .features import FeatureMixin
 from .learning import LearningMixin
 from .models import ModelMixin
@@ -19,7 +21,9 @@ _LOGGER = logging.getLogger(__name__)
 class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
     """ML-based spot price predictor using weather and historical price data."""
 
-    def __init__(self, hass, region: str, tz_name: str = "Europe/Copenhagen"):
+    def __init__(
+        self, hass: HomeAssistant, region: str, tz_name: str = "Europe/Copenhagen"
+    ):
         """Initialize the predictor."""
         self.hass = hass
         self.region = region

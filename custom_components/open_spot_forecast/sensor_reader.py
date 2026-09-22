@@ -73,7 +73,7 @@ class SensorReader:
 
         Falls back to using current price if no arrays found.
         """
-        result = {
+        result: dict[str, Any] = {
             "current_price": None,
             "today": [],
             "tomorrow": [],
@@ -193,7 +193,7 @@ class SensorReader:
 
         This sensor contains tomorrow's prices in the 'prices' attribute.
         """
-        result = {
+        result: dict[str, Any] = {
             "tomorrow": [],
             "raw_tomorrow": [],
             "available": False,
@@ -274,7 +274,7 @@ class SensorReader:
         Returns:
             Dictionary with weather data
         """
-        weather_data = {
+        weather_data: dict[str, Any] = {
             "wind_speed": None,
             "wind_direction": None,
             "solar_power": None,
@@ -384,7 +384,7 @@ class SensorReader:
         Returns:
             Dictionary with solar forecast data
         """
-        result = {
+        result: dict[str, Any] = {
             "current_power": None,
             "estimate_today": None,
             "estimate10": None,
@@ -446,7 +446,7 @@ class SensorReader:
         Returns:
             Dictionary with weather data
         """
-        result = {
+        result: dict[str, Any] = {
             "temperature": None,
             "wind_speed": None,
             "wind_direction": None,

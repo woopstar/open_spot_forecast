@@ -5,10 +5,12 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class FeatureMixin:
+class FeatureMixin(PredictorBase):
     """Feature extraction and engineering methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -39,14 +41,14 @@ class FeatureMixin:
         # Fallback: use current wind speed from HA sensor (scalar)
         wind_speed = weather_data.get("wind_speed", 0)
         if isinstance(wind_speed, (int, float)) and wind_speed > 0:
-            wind_power = self._wind_power_curve(wind_speed)
+            wind_power_scalar = self._wind_power_curve(wind_speed)
             return {
                 "wind_speed_mean": float(wind_speed),
                 "wind_speed_max": float(wind_speed),
                 "wind_speed_std": 0.0,
-                "wind_power_mean": float(wind_power),
-                "wind_power_max": float(wind_power),
-                "wind_power_estimate": float(wind_power),
+                "wind_power_mean": float(wind_power_scalar),
+                "wind_power_max": float(wind_power_scalar),
+                "wind_power_estimate": float(wind_power_scalar),
                 "wind_direction": float(weather_data.get("wind_direction", 0)),
             }
 

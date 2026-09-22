@@ -102,7 +102,7 @@ class SpotPriceSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_current_price")
         self._attr_name = "Current Spot Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -129,7 +129,7 @@ class SpotPriceSensor(SensorEntity):
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("current_price") is not None:
             # Stromligning already includes tariffs and VAT
-            return round(stromligning_data["current_price"], self.precision)
+            return float(round(stromligning_data["current_price"], self.precision))
 
         nordpool = self.api_data.get("nordpool")
         if nordpool:
@@ -137,7 +137,7 @@ class SpotPriceSensor(SensorEntity):
             if price is not None:
                 # Convert from MWh to kWh and apply VAT
                 converted = price / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
     @property
@@ -187,7 +187,7 @@ class TodayMinSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_min")
         self._attr_name = "Today Min Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -211,7 +211,7 @@ class TodayMinSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
-                return round(min_price, self.precision)
+                return float(round(min_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -219,7 +219,7 @@ class TodayMinSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "min" in stats:
                 converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -241,7 +241,7 @@ class TodayMaxSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_max")
         self._attr_name = "Today Max Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -265,7 +265,7 @@ class TodayMaxSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
-                return round(max_price, self.precision)
+                return float(round(max_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -273,7 +273,7 @@ class TodayMaxSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "max" in stats:
                 converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -295,7 +295,7 @@ class TodayMeanSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_mean")
         self._attr_name = "Today Mean Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -319,7 +319,7 @@ class TodayMeanSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)
-                return round(mean_price, self.precision)
+                return float(round(mean_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -327,7 +327,7 @@ class TodayMeanSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "mean" in stats:
                 converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -349,7 +349,7 @@ class TomorrowMinSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_min")
         self._attr_name = "Tomorrow Min Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -373,7 +373,7 @@ class TomorrowMinSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
-                return round(min_price, self.precision)
+                return float(round(min_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -381,7 +381,7 @@ class TomorrowMinSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "min" in stats:
                 converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -403,7 +403,7 @@ class TomorrowMaxSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_max")
         self._attr_name = "Tomorrow Max Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -427,7 +427,7 @@ class TomorrowMaxSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
-                return round(max_price, self.precision)
+                return float(round(max_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -435,7 +435,7 @@ class TomorrowMaxSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "max" in stats:
                 converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -457,7 +457,7 @@ class TomorrowMeanSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_mean")
         self._attr_name = "Tomorrow Mean Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -481,7 +481,7 @@ class TomorrowMeanSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)
-                return round(mean_price, self.precision)
+                return float(round(mean_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -489,7 +489,7 @@ class TomorrowMeanSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "mean" in stats:
                 converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -511,7 +511,7 @@ class MLPredictionSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -555,13 +555,13 @@ class MLPredictionSensor(SensorEntity):
                 price = next_pred.get("price")
                 if price is not None:
                     # Prices are already in kr/kWh, just apply VAT
-                    return round(price * (1 + self.vat), self.precision)
+                    return float(round(price * (1 + self.vat), self.precision))
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         ml_predictor = self.api_data.get("ml_predictor")
-        attrs = {}
+        attrs: dict[str, Any] = {}
         if ml_predictor:
             # Convert predictions to include unit of measurement. Only surface
             # the next 24 hours to stay under HA's 16 KB attribute limit.
@@ -616,7 +616,7 @@ class PredictionConfidenceSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_confidence")
         self._attr_name = "Prediction Confidence"
-        self._attr_unit_of_measurement = "%"
+        self._attr_native_unit_of_measurement = "%"
         self._attr_suggested_display_precision = 1
 
         self._attr_device_info = {
@@ -637,7 +637,7 @@ class PredictionConfidenceSensor(SensorEntity):
         if ml_predictor:
             stats = ml_predictor.get_prediction_stats()
             if stats and "mean_confidence" in stats:
-                return round(stats["mean_confidence"] * 100, 1)
+                return float(round(stats["mean_confidence"] * 100, 1))
         return None
 
 
@@ -657,7 +657,7 @@ class LearningMetricsSensor(SensorEntity):
             f"{DOMAIN}_{entry.entry_id}_learning_metrics"
         )
         self._attr_name = "Learning Metrics"
-        self._attr_unit_of_measurement = "samples"
+        self._attr_native_unit_of_measurement = "samples"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},

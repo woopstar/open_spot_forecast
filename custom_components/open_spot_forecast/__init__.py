@@ -269,7 +269,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Initialize ML predictor
     ml_predictor = None
     if enable_ml:
-        tz_name = REGIONS.get(region, {}).get("tz", "Europe/Copenhagen")
+        tz_name = str(REGIONS.get(region, {}).get("tz", "Europe/Copenhagen"))
         ml_predictor = SpotPricePredictor(hass, region, tz_name)
         # Load learning data asynchronously
         await ml_predictor._load_learning_data()

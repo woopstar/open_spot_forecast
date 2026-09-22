@@ -3,6 +3,7 @@
 import asyncio
 import logging
 from datetime import date
+from typing import cast
 
 import aiohttp
 from aiohttp import ClientTimeout
@@ -46,7 +47,7 @@ async def _get_json(url: str, label: str) -> dict | None:
             async with aiohttp.ClientSession(headers=headers) as session:  # noqa: SIM117
                 async with session.get(url, timeout=ClientTimeout(total=30)) as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        return cast(dict, await resp.json())
                     if resp.status in _RETRYABLE_STATUS and attempt < _MAX_RETRIES:
                         delay = _RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
