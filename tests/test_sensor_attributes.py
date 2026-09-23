@@ -61,7 +61,7 @@ def _predictions(count: int) -> list[dict]:
 
 
 def test_ml_prediction_attributes_truncate_predictions():
-    """Only the next 24 hours of predictions are exposed as attributes."""
+    """Only the next 48 hours of predictions are exposed as attributes."""
     predictor = MagicMock()
     predictor.predictions = _predictions(200)
     predictor.get_prediction_stats.return_value = {
@@ -77,7 +77,7 @@ def test_ml_prediction_attributes_truncate_predictions():
 
     attrs = sensor.extra_state_attributes
 
-    assert len(attrs["predictions"]) == 96
+    assert len(attrs["predictions"]) == 192
     assert attrs["total_predictions"] == 200
 
 
