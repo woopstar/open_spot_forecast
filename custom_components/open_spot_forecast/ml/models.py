@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
+from homeassistant.util import dt as dt_util
+
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -498,7 +500,7 @@ class ModelMixin(PredictorBase):
             len(hourly_pattern),
         )
 
-        now = datetime.now()
+        now = dt_util.utcnow()
 
         # Start from the next whole hour
         next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -524,8 +526,9 @@ class ModelMixin(PredictorBase):
                 dt = start_time + timedelta(
                     days=day, minutes=interval * interval_minutes
                 )
+                dt_local = dt_util.as_local(dt)
 
-                hour = dt.hour
+                hour = dt_local.hour
 
                 # Apply hourly pattern
                 if hour < len(hourly_pattern):
@@ -537,10 +540,9 @@ class ModelMixin(PredictorBase):
                 confidence = max(0.3, 1.0 - (day * 0.1))
 
                 dt_end = dt + timedelta(minutes=interval_minutes)
-                dt_tz = dt.replace(tzinfo=self.tz) if self.tz else dt
-                dt_end_tz = dt_end.replace(tzinfo=self.tz) if self.tz else dt_end
-                start_str = dt_tz.isoformat()
-                end_str = dt_end_tz.isoformat()
+                dt_end_local = dt_util.as_local(dt_end)
+                start_str = dt_local.isoformat()
+                end_str = dt_end_local.isoformat()
 
                 self.predictions.append(
                     {
