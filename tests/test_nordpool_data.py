@@ -37,6 +37,7 @@ def _session(response: MagicMock) -> MagicMock:
 async def test_consumption_prognosis_success():
     """A 200 response is parsed into an hourly volume dict."""
     payload = {
+        "updatedAt": "2026-09-22T15:56:32Z",
         "multiAreaEntries": [
             {
                 "deliveryStart": "2026-09-22T00:00:00Z",
@@ -46,18 +47,19 @@ async def test_consumption_prognosis_success():
                 "deliveryStart": "2026-09-22T01:00:00Z",
                 "entryPerArea": {"DK1": {"volume": 2139}},
             },
-        ]
+        ],
     }
     with patch(
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, payload)),
     ) as client_session:
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, updated_at = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result == {
         "2026-09-22T00:00:00Z": 2240.0,
         "2026-09-22T01:00:00Z": 2139.0,
     }
+    assert updated_at == "2026-09-22T15:56:32Z"
     # A browser-like User-Agent must be sent to avoid Cloudflare bot detection.
     assert client_session.call_args.kwargs["headers"] == {"User-Agent": USER_AGENT}
 
@@ -87,15 +89,15 @@ async def test_retry_on_transient_status_then_success():
             new=AsyncMock(),
         ),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result == {"2026-09-22T00:00:00Z": 2240.0}
 
 
 @pytest.mark.asyncio
 async def test_persistent_failure_returns_none():
-    """A persistent 401 exhausts retries and returns None."""
-    sessions = [_session(_response(401, {})) for _ in range(4)]
+    """A persistent transient failure exhausts retries and returns None."""
+    sessions = [_session(_response(503, {})) for _ in range(4)]
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
@@ -106,15 +108,38 @@ async def test_persistent_failure_returns_none():
             new=AsyncMock(),
         ),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, updated_at = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
+    assert updated_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_auth_error_not_retried(status):
+    """An auth/forbidden response returns None immediately, without retrying."""
+    with (
+        patch(
+            "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
+            side_effect=[_session(_response(status, {}))],
+        ) as client_session,
+        patch(
+            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            new=AsyncMock(),
+        ) as sleep_mock,
+    ):
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+
+    assert result is None
+    client_session.assert_called_once()
+    sleep_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_production_prognosis_success():
     """A successful production response is parsed into interval dicts."""
     payload = {
+        "updatedAt": "2026-09-22T16:10:20Z",
         "content": [
             {
                 "deliveryStart": "2026-09-22T00:00:00Z",
@@ -125,13 +150,13 @@ async def test_production_prognosis_success():
                 },
                 "totalDayAheadPrognosis": 1753.97,
             }
-        ]
+        ],
     }
     with patch(
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, payload)),
     ):
-        result = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
+        result, updated_at = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
 
     assert result == [
         {
@@ -142,6 +167,36 @@ async def test_production_prognosis_success():
             "total": 1753.97,
         }
     ]
+    assert updated_at == "2026-09-22T16:10:20Z"
+
+
+@pytest.mark.asyncio
+async def test_production_without_by_type_breakdown_returns_none():
+    """A response with no per-type breakdown returns (None, updated_at).
+
+    Nordpool publishes the day-ahead total before the Solar/WindOffshore/
+    WindOnshore breakdown. Until that breakdown appears there is no per-type
+    data, so the parsed result is None rather than fabricated zero values.
+    """
+    payload = {
+        "updatedAt": "2026-09-22T15:05:05Z",
+        "content": [
+            {
+                "forecastByType": {},
+                "totalDayAheadPrognosis": 1026.21,
+                "deliveryStart": "2026-09-22T22:00:00Z",
+                "deliveryEnd": "2026-09-22T22:15:00Z",
+            }
+        ],
+    }
+    with patch(
+        "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
+        return_value=_session(_response(200, payload)),
+    ):
+        result, updated_at = await fetch_production_prognosis(date(2026, 9, 23), "DK1")
+
+    assert result is None
+    assert updated_at == "2026-09-22T15:05:05Z"
 
 
 @pytest.mark.asyncio
@@ -151,9 +206,10 @@ async def test_non_retryable_status_returns_none():
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(404, {})),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, updated_at = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
+    assert updated_at is None
 
 
 @pytest.mark.asyncio
@@ -177,7 +233,7 @@ async def test_request_exception_retries_then_succeeds():
             new=AsyncMock(),
         ),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result == {"2026-09-22T00:00:00Z": 2240.0}
 
@@ -195,7 +251,7 @@ async def test_request_exception_exhausts_retries():
             new=AsyncMock(),
         ),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
 
@@ -207,7 +263,7 @@ async def test_consumption_empty_result_returns_none():
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, {"multiAreaEntries": []})),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
 
@@ -231,7 +287,7 @@ async def test_consumption_skips_entries_missing_start_or_volume():
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, payload)),
     ):
-        result = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
 
@@ -243,7 +299,7 @@ async def test_production_empty_content_returns_none():
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, {"content": []})),
     ):
-        result = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
 
@@ -256,29 +312,35 @@ async def test_production_skips_entry_missing_start():
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, payload)),
     ):
-        result = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_production_uses_defaults_when_prognosis_missing():
-    """Missing forecastByType/defaults fall back to 0.0 values."""
+    """A missing per-type prognosis falls back to 0.0 for that type."""
     payload = {
-        "content": [{"deliveryStart": "2026-09-22T00:00:00Z", "forecastByType": {}}]
+        "content": [
+            {
+                "deliveryStart": "2026-09-22T00:00:00Z",
+                "forecastByType": {"WindOffshore": {"dayAheadPrognosis": 715}},
+                "totalDayAheadPrognosis": 1753.97,
+            }
+        ]
     }
     with patch(
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(_response(200, payload)),
     ):
-        result = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
+        result, _ = await fetch_production_prognosis(date(2026, 9, 22), "DK1")
 
     assert result == [
         {
             "deliveryStart": "2026-09-22T00:00:00Z",
             "solar": 0.0,
-            "wind_offshore": 0.0,
+            "wind_offshore": 715.0,
             "wind_onshore": 0.0,
-            "total": 0.0,
+            "total": 1753.97,
         }
     ]

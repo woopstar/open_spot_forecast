@@ -633,8 +633,8 @@ class LearningMixin(PredictorBase):
                 continue
 
             _LOGGER.info("Backfilling Nordpool data for %s", date_str)
-            consumption = await fetch_consumption_prognosis(target, self.region)
-            production = await fetch_production_prognosis(target, self.region)
+            consumption, _ = await fetch_consumption_prognosis(target, self.region)
+            production, _ = await fetch_production_prognosis(target, self.region)
 
             # Throttle the backfill so we don't trip Nordpool's Cloudflare rate
             # limiter (which returns 401/429 when hammered with rapid requests).
@@ -729,8 +729,13 @@ class LearningMixin(PredictorBase):
 
             # Backfill Nordpool data for all dates in price_history so
             # the next training cycle has real supply/demand features.
+            # Run in the background: the backfill issues many network calls
+            # and must never block Home Assistant startup.
             if self.price_history:
-                await self._backfill_nordpool_data()
+                self.hass.async_create_background_task(
+                    self._backfill_nordpool_data(),
+                    "open_spot_forecast_nordpool_backfill",
+                )
 
             # Catch-up replay: if learned samples are tiny compared to pending
             # predictions (e.g. after schema migration wiped error_metrics), replay
