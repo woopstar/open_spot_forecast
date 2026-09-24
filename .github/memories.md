@@ -22,6 +22,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                          |
 | `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
 | `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
+| `time_slots.py`      | 15-min slot arithmetic (floor/ceil to a slot, first predicted slot), shared by component and ML   |
 | `__init__.py`        | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
@@ -135,6 +136,10 @@ Adding or removing a feature is a model change — see the `osf-ml-change` skill
 
 The system models **96 slots per day** (15-minute intervals), not 24 hours. Per-slot bias
 correction and error metrics are keyed `0-95`. Never assume hourly (0-23) granularity.
+
+Slot boundary arithmetic lives in `time_slots.py`: `floor_to_slot()`, `ceil_to_slot()` and
+`first_prediction_slot()` (where predictions start). They round on the UTC timeline, so
+never round with `dt.replace(minute=...)` or add minutes to a local datetime inline.
 
 ## Bias Correction Formula
 

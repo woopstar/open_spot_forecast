@@ -102,6 +102,10 @@ The system models **96 slots per day** (15-minute intervals), not 24 hours.
 Per-slot bias correction and error metrics are keyed `0-95`. Never assume
 hourly (0-23) granularity.
 
+Round to slot boundaries with `floor_to_slot()` / `ceil_to_slot()` and get the
+first predicted slot from `first_prediction_slot()`, all in `time_slots.py`.
+They work on the UTC timeline, so they stay correct across DST changes.
+
 ### Feature Vector — 20 Features
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Model

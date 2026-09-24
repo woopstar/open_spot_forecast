@@ -100,8 +100,8 @@ class SpotPricePredictor(
             interval_minutes: Prediction interval in minutes (default 15)
             known_data_end_time: Timestamp after which to start predicting.
                 No predictions will be generated for times we already
-                have actual/committed prices for. If None, starts from
-                the next whole hour after now.
+                have actual/committed prices for. If None, starts at
+                the current slot (see first_prediction_slot).
         """
         with self._predict_lock:
             self._predict(
