@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timedelta
-from random import randint
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -33,6 +32,8 @@ from .const import (
 )
 from .ml.predictor import SpotPricePredictor
 from .sensor_reader import SensorReader, async_read_weather_forecast
+from .time_slots import tomorrow_prices_complete
+from .tomorrow_prices import TomorrowPriceChecker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -278,6 +279,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     hass.data[DOMAIN][entry.entry_id] = api_data
 
+    def update_tomorrow_available() -> bool:
+        """Recompute tomorrow_available; return True if tomorrow just became complete."""
+        was_complete = api_data["tomorrow_available"]
+        api_data["tomorrow_available"] = tomorrow_prices_complete(
+            api_data["prices_tomorrow"]
+        )
+        arrived = api_data["tomorrow_available"] and not was_complete
+        if arrived:
+            _LOGGER.info(
+                "Tomorrow's prices are complete (%d intervals)",
+                len(api_data["prices_tomorrow"]),
+            )
+        return arrived
+
     # Initial data fetch
     try:
         _LOGGER.info("Starting initial data fetch for Open Spot Forecast")
@@ -335,8 +350,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             len(api_data["prices_tomorrow"]),
         )
 
-        # Set tomorrow availability flag (used by binary sensor)
-        api_data["tomorrow_available"] = len(api_data["prices_tomorrow"]) >= 23
+        # Set tomorrow availability flag
+        update_tomorrow_available()
 
         # Read weather data from sensors or DMI API
         weather_data = {}
@@ -428,14 +443,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         raise ConfigEntryNotReady from err
 
     # Schedule updates
-    rand_min = randint(10, 40)
-    rand_sec = randint(0, 59)
+    def read_stromligning_prices() -> None:
+        """Read today's and tomorrow's prices from Stromligning into api_data."""
+        _LOGGER.debug("Reading today's and tomorrow's prices")
 
-    async def update_tomorrow_prices(_now):
-        """Fetch tomorrow's prices (published ~13:00 CET)."""
-        _LOGGER.debug("Fetching tomorrow's prices")
-
-        # Try to read from Stromligning sensor first (priority 1)
         if stromligning_sensor:
             stromligning_data = sensor_reader.read_stromligning_sensor(
                 stromligning_sensor
@@ -461,18 +472,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 api_data["stromligning_data"] = stromligning_data
                 api_data["price_source"] = "stromligning"
                 _LOGGER.debug("Updated prices from Stromligning")
-            else:
-                # Fall through to Nordpool/API
-                pass
 
-        # No price sensors configured
-        if not stromligning_sensor:
-            pass  # No fallback
-
-        api_data["tomorrow_available"] = len(api_data["prices_tomorrow"]) >= 23
+    async def refresh_forecast() -> None:
+        """Re-read the prices and re-run the forecast (the model retrains on new data)."""
+        read_stromligning_prices()
+        update_tomorrow_available()
         api_data["last_update"] = datetime.now()
 
-        # Update ML predictions if enabled
         if ml_predictor:
             # Read weather data
             weather_data = {}
@@ -543,6 +549,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 await ml_predictor.save_learning_data()
 
         async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
+
+    def start_forecast_refresh() -> None:
+        """Refresh the forecast in the background once tomorrow is complete."""
+        entry.async_create_background_task(
+            hass, refresh_forecast(), "open_spot_forecast_tomorrow_prices"
+        )
+
+    async def check_tomorrow_prices() -> bool:
+        """Re-read the prices; refresh the forecast when tomorrow completes.
+
+        Called by TomorrowPriceChecker from 13:00 local until tomorrow's
+        prices are complete. Returns whether they are.
+        """
+        read_stromligning_prices()
+        api_data["last_update"] = datetime.now()
+        if update_tomorrow_available() and ml_predictor:
+            start_forecast_refresh()
+        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
+        return bool(api_data["tomorrow_available"])
 
     async def update_forecasts(_now):
         """Update ML forecasts (every 6 hours)."""
@@ -638,7 +663,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 api_data["prices_tomorrow"] = []
                 api_data["stromligning_data"] = stromligning_data
             else:
-                # No tomorrow data yet — clear it until update_tomorrow_prices runs
+                # No tomorrow data yet — clear it until the tomorrow-price check finds it
                 api_data["prices_tomorrow"] = []
             api_data["tomorrow_available"] = False
 
@@ -655,7 +680,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Read current prices once (used for both tomorrow check and learning)
         current_prices: list[float] = []
-        tomorrow_arrived = False
         if stromligning_sensor:
             stromligning_data = sensor_reader.read_stromligning_sensor(
                 stromligning_sensor
@@ -671,12 +695,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     stromligning_tomorrow_sensor
                 )
                 if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    if not api_data["prices_tomorrow"]:
-                        _LOGGER.info(
-                            "Tomorrow's prices now available (%d intervals)",
-                            len(tomorrow_data["tomorrow"]),
-                        )
-                        tomorrow_arrived = True
                     api_data["prices_tomorrow"] = tomorrow_data["tomorrow"]
 
             _LOGGER.debug(
@@ -686,7 +704,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             current_prices = api_data["prices_today"]
             _LOGGER.debug("Using %d cached prices for learning", len(current_prices))
 
-        api_data["tomorrow_available"] = len(api_data["prices_tomorrow"]) >= 23
+        tomorrow_arrived = update_tomorrow_available()
 
         # --- Collect weather snapshot for historical training ---
         if ml_predictor and wind_speed_sensor:
@@ -772,11 +790,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Tomorrow's prices extend the training data: refresh the forecast now
         # (the model retrains on them) instead of waiting for the next run
         if tomorrow_arrived and ml_predictor:
-            entry.async_create_background_task(
-                hass,
-                update_tomorrow_prices(_now),
-                "open_spot_forecast_tomorrow_prices",
-            )
+            start_forecast_refresh()
 
         async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
         _LOGGER.debug("15-minute update completed, sensors notified")
@@ -784,12 +798,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Schedule callbacks
     listeners = []
 
-    # Tomorrow's prices at ~13:xx CET
-    listeners.append(
-        async_track_time_change(
-            hass, update_tomorrow_prices, hour=13, minute=rand_min, second=rand_sec
-        )
-    )
+    # Tomorrow's prices: re-checked from 13:00 local until complete. The
+    # checker reschedules itself, so unload cancels its pending check
+    tomorrow_checker = TomorrowPriceChecker(hass, check_tomorrow_prices)
+    tomorrow_checker.schedule(api_data["tomorrow_available"])
+    listeners.append(tomorrow_checker.cancel)
 
     # Forecasts every 6 hours
     if enable_ml:

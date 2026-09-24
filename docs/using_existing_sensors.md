@@ -46,4 +46,9 @@ The primary price source. Provides 96 consumer-price intervals per day
 actually pay — not the raw Nordpool spot price.
 
 The integration also reads the tomorrow availability binary sensor to know
-when tomorrow's confirmed prices are published (~13:00 CET).
+when tomorrow's confirmed prices are published (~13:00 CET). From 13:00 local
+it re-reads the prices every ~5 minutes until tomorrow is complete, i.e. has
+a price for every 15-minute slot of the next local day (96, or 92/100 on a
+DST-change day), and stops for the day at 18:00. Open Spot Forecast's own
+`Tomorrow Prices Available` binary sensor turns on only then; its attributes
+show `tomorrow_prices_count` against `tomorrow_slots_expected`.

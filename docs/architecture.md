@@ -77,7 +77,7 @@ Every 15 min ──→ Read Stromligning prices
              │   Read tomorrow prices if available
              │   Self-learning: compare all predictions for the current
              │   slot vs actual, per-lead-time MAE/RMSE (day 1/2/3/4+)
-             │   Tomorrow's prices just appeared → run the ~13:xx refresh now
+             │   Tomorrow's prices just completed → refresh the forecast now
              │
 Every 6 hours → Read weather forecast (weather.get_forecasts)
              │   Retrain model if training data changed since last training
@@ -85,9 +85,11 @@ Every 6 hours → Read weather forecast (weather.get_forecasts)
              │   Store predictions in SQLite for future learning
              │   Apply per-slot bias corrections
              │
-Daily ~13:xx → Read tomorrow's confirmed prices
-             │   Extend known-data window
-             │   Retrain model (price history changed), regenerate predictions
+From 13:00 ──→ Re-read prices every ~5 min until tomorrow is complete
+             │   (every slot of the next local day: 96, or 92/100 on DST days;
+             │   gives up at 18:00 and tries again the next day)
+             │   Once complete: extend known-data window, retrain model
+             │   (price history changed), regenerate predictions
              │
 Midnight ────→ Rotate tomorrow → today
 ```

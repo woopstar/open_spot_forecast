@@ -24,7 +24,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
 | `price_series.py`    | `is_invalid_price_series()` — rejects all-zero days and days with missing/non-finite prices       |
 | `time_slots.py`      | 15-min slot arithmetic (floor/ceil to a slot, first predicted slot), shared by component and ML   |
-| `__init__.py`        | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
+| `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete |
+| `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                       |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
@@ -142,8 +143,9 @@ Adding or removing a feature is a model change — see the `osf-ml-change` skill
 The system models **96 slots per day** (15-minute intervals), not 24 hours. Per-slot bias
 correction and error metrics are keyed `0-95`. Never assume hourly (0-23) granularity.
 
-Slot boundary arithmetic lives in `time_slots.py`: `floor_to_slot()`, `ceil_to_slot()` and
-`first_prediction_slot()` (where predictions start). They round on the UTC timeline, so
+Slot boundary arithmetic lives in `time_slots.py`: `floor_to_slot()`, `ceil_to_slot()`,
+`first_prediction_slot()` (where predictions start), `slots_in_local_day()` (96, or 92/100 on
+DST days) and `tomorrow_prices_complete()` (the only "tomorrow is available" check). They round on the UTC timeline, so
 never round with `dt.replace(minute=...)` or add minutes to a local datetime inline.
 
 ## Bias Correction Formula

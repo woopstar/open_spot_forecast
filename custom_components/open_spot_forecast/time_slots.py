@@ -6,7 +6,10 @@ so a 15-minute boundary in UTC is one in local time too, and a DST change
 cannot shift the result.
 """
 
-from datetime import UTC, datetime, timedelta
+from collections.abc import Sequence
+from datetime import UTC, date, datetime, timedelta
+
+from homeassistant.util import dt as dt_util
 
 SLOT_MINUTES = 15
 
@@ -70,3 +73,41 @@ def first_prediction_slot(
         known_end = ceil_to_slot(known_data_end_time.astimezone(UTC), interval_minutes)
         start = max(start, known_end)
     return start
+
+
+def slots_in_local_day(day: date, interval_minutes: int = SLOT_MINUTES) -> int:
+    """Return the number of slots in a local calendar day.
+
+    96 for 15-minute slots on a normal day; 92 on the spring-forward day and
+    100 on the fall-back day, since those days last 23 and 25 hours.
+
+    Args:
+        day: Local calendar date, in Home Assistant's time zone.
+        interval_minutes: Slot length in minutes (a divisor of 60).
+
+    Returns:
+        The number of slots between the day's local midnight and the next.
+    """
+    # Subtract in UTC: aware datetimes sharing a tzinfo subtract by wall clock
+    start = dt_util.start_of_local_day(day).astimezone(UTC)
+    end = dt_util.start_of_local_day(day + timedelta(days=1)).astimezone(UTC)
+    return (end - start) // timedelta(minutes=interval_minutes)
+
+
+def tomorrow_prices_complete(
+    prices: Sequence[float], now: datetime | None = None
+) -> bool:
+    """Return True if ``prices`` has a price for every slot of tomorrow.
+
+    Tomorrow is the next local calendar day, so a DST-change day needs 92 or
+    100 prices instead of 96. A partial publication is not complete.
+
+    Args:
+        prices: Tomorrow's 15-minute prices.
+        now: Current time (defaults to now), used to find tomorrow's date.
+
+    Returns:
+        True if there are at least as many prices as tomorrow has slots.
+    """
+    today = dt_util.as_local(now or dt_util.utcnow()).date()
+    return len(prices) >= slots_in_local_day(today + timedelta(days=1))

@@ -19,8 +19,9 @@ GradientBoosting(
 
 The model is retrained on all accumulated historical data **when its training
 inputs have changed**, not on a fixed schedule (`ml/retraining.py`). Every
-forecast run (startup, every 6 hours, ~13:xx, and as soon as the 15-minute
-update sees tomorrow's prices appear) first stores today's known prices, then
+forecast run (startup, every 6 hours, and as soon as the 13:00-18:00
+tomorrow-price check or the 15-minute update sees tomorrow's prices complete)
+first stores today's known prices, then
 compares two UTC timestamps:
 
 - `last_data_update` — the newest of:

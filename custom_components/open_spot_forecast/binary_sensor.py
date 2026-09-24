@@ -1,6 +1,7 @@
 """Binary sensor platform for Open Spot Forecast."""
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from homeassistant.components.binary_sensor import (
@@ -11,9 +12,10 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify as util_slugify
+from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .const import DOMAIN, UPDATE_SIGNAL
+from .time_slots import slots_in_local_day, tomorrow_prices_complete
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -67,17 +69,17 @@ class TomorrowAvailableSensor(BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return true if tomorrow's prices are available."""
-        return bool(self.api_data.get("tomorrow_available", False))
+        """Return true if tomorrow's prices cover the whole next local day."""
+        return tomorrow_prices_complete(self.api_data.get("prices_tomorrow", []))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return additional attributes."""
-        nordpool = self.api_data.get("nordpool")
-        attrs = {}
-        if nordpool:
-            attrs["tomorrow_prices_count"] = len(nordpool.tomorrow)
-        return attrs
+        """Return tomorrow's price count and the count a complete day needs."""
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        return {
+            "tomorrow_prices_count": len(self.api_data.get("prices_tomorrow", [])),
+            "tomorrow_slots_expected": slots_in_local_day(tomorrow),
+        }
 
 
 class MLModelTrainedSensor(BinarySensorEntity):
