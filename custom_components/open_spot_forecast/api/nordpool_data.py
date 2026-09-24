@@ -20,9 +20,11 @@ USER_AGENT = (
 )
 
 # Status codes that indicate a transient failure worth retrying with backoff.
-# 401/403 are included because Cloudflare bot protection returns them
-# intermittently for otherwise-valid requests.
-_RETRYABLE_STATUS = frozenset({401, 403, 429, 500, 502, 503, 504})
+# 429 (rate limit) and 5xx (server errors) may resolve on retry. 401/403 are
+# deliberately excluded: they signal an auth/permission/bot-block failure that
+# will not succeed on retry, and retrying them with backoff previously stalled
+# startup for minutes when the Nordpool API refused our requests.
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
 
 # Maximum retry attempts (in addition to the initial request).
 _MAX_RETRIES = 3
@@ -80,11 +82,11 @@ async def _get_json(url: str, label: str) -> dict | None:
 
 async def fetch_consumption_prognosis(
     target_date: date, area: str = "DK1"
-) -> dict | None:
+) -> tuple[dict | None, str | None]:
     """Fetch Nordpool consumption prognosis for a given date and area.
 
-    Returns hourly consumption forecast in MW, keyed by ISO timestamp.
-    Returns None on failure.
+    Returns a tuple of (hourly consumption forecast in MW keyed by ISO
+    timestamp, Nordpool's ``updatedAt`` timestamp). Both are None on failure.
     """
     url = (
         f"{NORDPOOL_API}/ConsumptionPrognoses"
@@ -93,8 +95,9 @@ async def fetch_consumption_prognosis(
     )
     data = await _get_json(url, "Consumption prognosis")
     if data is None:
-        return None
+        return None, None
 
+    updated_at = data.get("updatedAt")
     entries = data.get("multiAreaEntries", [])
     result: dict = {}
     for entry in entries:
@@ -109,17 +112,23 @@ async def fetch_consumption_prognosis(
         target_date,
         len(result),
     )
-    return result if result else None
+    return (result if result else None), updated_at
 
 
 async def fetch_production_prognosis(
     target_date: date, area: str = "DK1"
-) -> list[dict] | None:
+) -> tuple[list[dict] | None, str | None]:
     """Fetch Nordpool production data prognosis for a given date and area.
 
-    Returns 15-minute resolution production forecasts in MW.
-    Each entry: {deliveryStart, solar, wind_offshore, wind_onshore, total}
-    Returns None on failure.
+    Returns a tuple of (list of 15-minute production forecast entries,
+    Nordpool's ``updatedAt`` timestamp). Each entry is
+    {deliveryStart, solar, wind_offshore, wind_onshore, total}.
+
+    Nordpool publishes the day-ahead total before the per-type breakdown
+    (Solar/WindOffshore/WindOnshore). Until that breakdown appears there is
+    no per-type data to report, so the list is None even though the total is
+    available; the caller uses ``updatedAt`` to detect when the breakdown is
+    published later.
     """
     url = (
         f"{NORDPOOL_API}/ProductionDataPrognoses"
@@ -128,15 +137,20 @@ async def fetch_production_prognosis(
     )
     data = await _get_json(url, "Production prognosis")
     if data is None:
-        return None
+        return None, None
 
+    updated_at = data.get("updatedAt")
     content = data.get("content", [])
     result: list[dict] = []
+    has_breakdown = False
     for entry in content:
         start = entry.get("deliveryStart")
         if not start:
             continue
         forecast = entry.get("forecastByType", {})
+        if not forecast:
+            continue
+        has_breakdown = True
         solar_data = forecast.get("Solar", {})
         wind_off = forecast.get("WindOffshore", {})
         wind_on = forecast.get("WindOnshore", {})
@@ -151,9 +165,16 @@ async def fetch_production_prognosis(
             }
         )
 
+    if not has_breakdown:
+        _LOGGER.info(
+            "Production prognosis for %s has no per-type breakdown yet",
+            target_date,
+        )
+        return None, updated_at
+
     _LOGGER.info(
         "Fetched production prognosis for %s: %d intervals",
         target_date,
         len(result),
     )
-    return result if result else None
+    return (result if result else None), updated_at

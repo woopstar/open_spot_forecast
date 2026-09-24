@@ -89,14 +89,13 @@ async def _fetch_nordpool_prognoses(
     weather_data if the API calls succeed. Also returns a list of
     entries suitable for storage in SQLite.
 
-    Caching strategy:
-    - Nordpool day-ahead data is published once daily (~13:00 CET) and
-      never changes after publication.
-    - Today's data: fetched once per day (validated via cache date).
-    - Tomorrow's data: fetched once after 13:00 (when published).
-    - If api_data is provided, cached data is reused and no API call
-      is made when data is already fresh. This avoids redundant
-      fetches in the 6-hourly update cycle.
+    Freshness is keyed on Nordpool's ``updatedAt`` timestamp rather than the
+    wall-clock date. Day-ahead data is immutable once published, but the
+    production per-type breakdown (Solar/WindOffshore/WindOnshore) is
+    published later than the total, which surfaces as a later ``updatedAt``.
+    We always fetch (calls are infrequent — startup + 6-hourly) and compare
+    ``updatedAt`` so we pick up that late breakdown without guessing from the
+    hour of day.
 
     Args:
         hass: Home Assistant instance
@@ -114,66 +113,63 @@ async def _fetch_nordpool_prognoses(
     tomorrow = today + timedelta(days=1)
     now = datetime.now()
 
-    # --- Cache check ---
-    if api_data is not None:
-        cache = api_data.get("_nordpool_cache", {})
-        cache_date = cache.get("date")  # ISO date string of last successful fetch
+    cache = api_data.get("_nordpool_cache", {}) if api_data is not None else {}
+    consumption_cache = cache.setdefault("consumption", {})
+    production_cache = cache.setdefault("production", {})
 
-        # Today data is fresh if cached today (it never changes after publication)
-        fresh_today = cache_date == today.isoformat() and cache.get("has_today")
-        # Tomorrow data is fresh if cached after 13:00 (published time) on any
-        # recent day. The data is static once published — it doesn't matter if
-        # the cache was set today or yesterday, as long as it was post-13:00.
-        cached_post_13 = cache.get("cached_after_13", False)
-        fresh_tomorrow = cached_post_13 and cache.get("has_tomorrow")
-
-        if fresh_today and fresh_tomorrow:
-            # Inject cached data — no API call needed
-            cached_cons = cache.get("consumption_prognosis")
-            cached_prod = cache.get("production_prognosis")
-            if cached_cons:
-                weather_data["consumption_prognosis"] = cached_cons
-            if cached_prod:
-                weather_data["production_prognosis"] = cached_prod
-            _LOGGER.debug(
-                "Nordpool data reused from cache (date=%s, has_today=%s, has_tomorrow=%s)",
-                cache_date,
-                fresh_today,
-                fresh_tomorrow,
-            )
-            return []
-
-    # --- Fetch needed dates ---
-    stored_entries: list[dict] = []
-    # Always fetch today (most important — used immediately for prediction)
+    # Always fetch today. Tomorrow's day-ahead total is published ~13:00 CET,
+    # but the per-type breakdown arrives later; fetching before 13:00 only
+    # returns empty data, so skip it then.
     dates_to_fetch = [today]
-    # Tomorrow's day-ahead is published ~13:00 CET — only fetch if we're past
-    # that OR at startup (api_data is None, meaning first load). Before 13:00
-    # the API may return empty data for tomorrow, so skip it to avoid noise.
     if now.hour >= 13 or api_data is None:
         dates_to_fetch.append(tomorrow)
 
+    stored_entries: list[dict] = []
     for target in dates_to_fetch:
-        consumption = await fetch_consumption_prognosis(target, region)
-        production = await fetch_production_prognosis(target, region)
+        date_key = target.isoformat()
 
+        consumption, cons_updated = await fetch_consumption_prognosis(target, region)
+        production, prod_updated = await fetch_production_prognosis(target, region)
+
+        # --- Consumption ---
         if consumption:
+            cached = consumption_cache.get(date_key)
+            if cached and cons_updated == cached.get("updated_at"):
+                # Unchanged since the last fetch — reuse what we already parsed.
+                consumption = cached.get("data") or {}
+            else:
+                consumption_cache[date_key] = {
+                    "updated_at": cons_updated,
+                    "data": consumption,
+                }
+
             if "consumption_prognosis" not in weather_data:
                 weather_data["consumption_prognosis"] = {}
             weather_data["consumption_prognosis"].update(consumption)
 
             # Build storage entries combining consumption + production
             for ts, cons in consumption.items():
-                entry: dict = {
-                    "timestamp": ts,
-                    "consumption": cons,
-                    "solar": None,
-                    "wind_offshore": None,
-                    "wind_onshore": None,
-                }
-                stored_entries.append(entry)
+                stored_entries.append(
+                    {
+                        "timestamp": ts,
+                        "consumption": cons,
+                        "solar": None,
+                        "wind_offshore": None,
+                        "wind_onshore": None,
+                    }
+                )
 
+        # --- Production ---
         if production:
+            cached = production_cache.get(date_key)
+            if cached and prod_updated == cached.get("updated_at"):
+                production = cached.get("data") or []
+            else:
+                production_cache[date_key] = {
+                    "updated_at": prod_updated,
+                    "data": production,
+                }
+
             if "production_prognosis" not in weather_data:
                 weather_data["production_prognosis"] = []
             weather_data["production_prognosis"].extend(production)
@@ -188,29 +184,9 @@ async def _fetch_nordpool_prognoses(
                     entry["wind_offshore"] = p.get("wind_offshore")
                     entry["wind_onshore"] = p.get("wind_onshore")
 
-    # --- Update cache ---
     if api_data is not None:
-        has_cons = bool(weather_data.get("consumption_prognosis"))
-        has_prod = bool(weather_data.get("production_prognosis"))
-        api_data["_nordpool_cache"] = {
-            "date": today.isoformat(),
-            "has_today": today in dates_to_fetch and (has_cons or has_prod),
-            "has_tomorrow": tomorrow in dates_to_fetch and (has_cons or has_prod),
-            "cached_after_13": now.hour >= 13,
-            "consumption_prognosis": weather_data.get(
-                "consumption_prognosis", {}
-            ).copy(),
-            "production_prognosis": [
-                dict(p) for p in weather_data.get("production_prognosis", [])
-            ],
-        }
-        _LOGGER.info(
-            "Nordpool cache updated: date=%s, has_today=%s, has_tomorrow=%s, after_13=%s",
-            today.isoformat(),
-            api_data["_nordpool_cache"]["has_today"],
-            api_data["_nordpool_cache"]["has_tomorrow"],
-            now.hour >= 13,
-        )
+        api_data["_nordpool_cache"] = cache
+        _LOGGER.info("Nordpool cache updated for %d dates", len(dates_to_fetch))
 
     return stored_entries
 
