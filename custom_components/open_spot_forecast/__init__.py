@@ -654,6 +654,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
         # Read current prices once (used for both tomorrow check and learning)
         current_prices: list[float] = []
+        tomorrow_arrived = False
         if stromligning_sensor:
             stromligning_data = sensor_reader.read_stromligning_sensor(
                 stromligning_sensor
@@ -674,6 +675,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                             "Tomorrow's prices now available (%d intervals)",
                             len(tomorrow_data["tomorrow"]),
                         )
+                        tomorrow_arrived = True
                     api_data["prices_tomorrow"] = tomorrow_data["tomorrow"]
 
             _LOGGER.debug(
@@ -765,6 +767,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                         await ml_predictor.save_learning_data()
             except Exception as err:
                 _LOGGER.error("Self-learning update error: %s", err, exc_info=True)
+
+        # Tomorrow's prices extend the training data: refresh the forecast now
+        # (the model retrains on them) instead of waiting for the next run
+        if tomorrow_arrived and ml_predictor:
+            entry.async_create_background_task(
+                hass,
+                update_tomorrow_prices(_now),
+                "open_spot_forecast_tomorrow_prices",
+            )
 
         async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
         _LOGGER.debug("15-minute update completed, sensors notified")

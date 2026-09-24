@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
 
@@ -28,7 +29,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
       error_metrics   — per-hour error tracking (JSON-serialized arrays)
       bias_correction — per-hour multiplicative correction factors
       price_history   — historical daily prices for model training
-      meta            — key/value pairs (training_samples, is_trained)
+      meta            — key/value pairs (training_samples, is_trained, hpo_counter)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 
@@ -46,6 +47,9 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
         self.region = region
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
+        # When training inputs (weather/Nordpool rows) last changed (UTC);
+        # the predictor retrains when this is newer than its last training
+        self.last_data_write: datetime | None = None
 
         storage_dir = Path(hass.config.path(".storage"))
         storage_dir.mkdir(exist_ok=True)
@@ -547,6 +551,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
                 ),
             )
             conn.commit()
+            self.last_data_write = dt_util.utcnow()
 
     def find_weather_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
         """Find weather snapshot closest to a given timestamp (blocking)."""
@@ -616,13 +621,27 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
             conn.commit()
 
     def insert_nordpool_prognoses_batch(self, entries: list[dict]) -> None:
-        """Store multiple Nordpool prognosis entries (blocking)."""
+        """Store multiple Nordpool prognosis entries (blocking).
+
+        Every forecast run re-sends the same prognoses, so rows are only
+        rewritten when a value differs; last_data_write moves only on a
+        real change.
+        """
         with self._lock:
             conn = self._ensure_conn()
-            conn.executemany(
-                """INSERT OR REPLACE INTO nordpool_prognoses
+            cursor = conn.executemany(
+                """INSERT INTO nordpool_prognoses
                    (timestamp, consumption, solar, wind_offshore, wind_onshore)
-                   VALUES (?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(timestamp) DO UPDATE SET
+                       consumption = excluded.consumption,
+                       solar = excluded.solar,
+                       wind_offshore = excluded.wind_offshore,
+                       wind_onshore = excluded.wind_onshore
+                   WHERE consumption IS NOT excluded.consumption
+                      OR solar IS NOT excluded.solar
+                      OR wind_offshore IS NOT excluded.wind_offshore
+                      OR wind_onshore IS NOT excluded.wind_onshore""",
                 [
                     (
                         e.get("timestamp", ""),
@@ -635,6 +654,8 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
                 ],
             )
             conn.commit()
+            if cursor.rowcount > 0:
+                self.last_data_write = dt_util.utcnow()
 
     def find_nordpool_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
         """Find Nordpool prognosis closest to a timestamp (blocking)."""

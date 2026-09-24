@@ -15,7 +15,36 @@ GradientBoosting(
 )
 ```
 
-The model is retrained every 6 hours on all accumulated historical data.
+## Retraining
+
+The model is retrained on all accumulated historical data **when its training
+inputs have changed**, not on a fixed schedule (`ml/retraining.py`). Every
+forecast run (startup, every 6 hours, ~13:xx, and as soon as the 15-minute
+update sees tomorrow's prices appear) first stores today's known prices, then
+compares two UTC timestamps:
+
+- `last_data_update` — the newest of:
+  - today's price-history entry being added or changed (a new day, a price
+    correction, or tomorrow's prices extending the day)
+  - a weather snapshot written to `weather_history` (every 15 minutes)
+  - a Nordpool prognosis row whose values changed (re-sending identical
+    prognoses does not count)
+- `last_trained_at` — when the last successful training **started**, so data
+  written during a training run triggers the next one
+
+The model retrains if it is untrained or `last_data_update > last_trained_at`;
+otherwise the existing model is reused. In an install with a weather sensor a
+snapshot lands every 15 minutes, so in practice each scheduled run retrains;
+without new data (e.g. two runs back to back) it does not. Forecast runs are
+serialized so two retrains never overlap.
+
+Trained trees are kept in memory only, so the first forecast after a restart
+always retrains from the persisted history.
+
+**Hyperparameter optimization** (a grid search over `n_estimators` and
+`learning_rate`) runs once per 7 new days of price data. The day counter is
+persisted as `hpo_counter` in the `meta` table, so it survives restarts. After
+optimization the model is refitted with the best parameters in the same run.
 
 ## Feature Vector (20 features)
 

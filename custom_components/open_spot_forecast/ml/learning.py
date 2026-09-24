@@ -683,6 +683,7 @@ class LearningMixin(PredictorBase):
             self.is_trained = data.get("is_trained", False)
             self.solar_scale = data.get("solar_scale", 1.0)
             self._solar_scale_samples = data.get("solar_scale_samples", 0)
+            self._restore_hpo_counter(data)
 
             # Restore optimized hyperparameters if available
             hpo_n = data.get("hpo_n_estimators")

@@ -15,7 +15,7 @@ All learning data is stored in a single SQLite database:
 | `bias_correction`    | `hour` (0-95)               | Per-slot multiplicative correction factors                                                           |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays (96 values per day)                                                               |
 | `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                                        |
-| `meta`               | `key`                       | Training state, schema version                                                                       |
+| `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error |
 
 `lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every
@@ -62,6 +62,11 @@ Every 15 min ──→ weather snapshot inserted into weather_history
 
 Predictions are stored individually as they're generated (672 per forecast run).
 Error metrics and bias corrections are persisted in bulk via `save_all()`.
+
+Nordpool prognosis rows are upserted and only rewritten when a value differs.
+`LearningStorage.last_data_write` records (in memory) when a weather snapshot
+or a changed Nordpool row was last written; the predictor uses it to decide
+whether to retrain (see `docs/ml_documentation.md` → Retraining).
 
 ## JSON Legacy
 

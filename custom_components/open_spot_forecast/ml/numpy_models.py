@@ -132,8 +132,11 @@ class NumpyGradientBoosting:
         self.initial_prediction = None
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
-        """Train the gradient boosting model."""
+        """Train the gradient boosting model, replacing any previous fit."""
         np.random.seed(self.random_state)
+
+        # Drop stumps from an earlier fit so a retrain doesn't stack on top
+        self.trees = []
 
         # Initialize with mean
         self.initial_prediction = np.mean(y)
