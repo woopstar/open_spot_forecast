@@ -10,7 +10,7 @@ mixins inherit a consistent, fully-typed ``self``.
 
 from __future__ import annotations
 
-from datetime import tzinfo
+from datetime import datetime, tzinfo
 from typing import Any
 
 from homeassistant.core import HomeAssistant
@@ -38,6 +38,9 @@ class PredictorBase:
     _solar_scale_samples: int
     is_trained: bool
     training_samples: int
+    last_trained_at: datetime | None
+    _prices_updated_at: datetime | None
+    _hpo_counter: int
     error_metrics: dict[int, dict[str, Any]]
     bias_correction: dict[int, float]
     volatility_mae: dict[int, float]
@@ -69,4 +72,15 @@ class PredictorBase:
         raise NotImplementedError
 
     def _update_bias_correction(self, slot: int) -> None:
+        raise NotImplementedError
+
+    def _train_models(
+        self, historical_prices: list[float], features: list[dict]
+    ) -> None:
+        raise NotImplementedError
+
+    def _optimize_hyperparameters(self) -> dict | None:
+        raise NotImplementedError
+
+    def _restore_hpo_counter(self, data: dict[str, Any]) -> None:
         raise NotImplementedError

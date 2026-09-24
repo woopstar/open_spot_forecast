@@ -1,6 +1,7 @@
 """Machine learning predictor for spot prices."""
 
 import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -13,12 +14,13 @@ from .features import FeatureMixin
 from .learning import LearningMixin
 from .models import ModelMixin
 from .numpy_models import NumpyGradientBoosting, NumpyRandomForest
+from .retraining import RetrainMixin
 from .storage import LearningStorage
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
+class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin, RetrainMixin):
     """ML-based spot price predictor using weather and historical price data."""
 
     def __init__(
@@ -55,6 +57,16 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
         self.is_trained = False
         self.training_samples = 0
 
+        # Retrain tracking (see retraining.py): retrain when training inputs
+        # changed after last_trained_at; HPO counts new days of price data
+        self.last_trained_at: datetime | None = None
+        self._prices_updated_at: datetime | None = None
+        self._hpo_counter = 0
+
+        # A retrain can take minutes and forecast runs can overlap, so
+        # serialize predict() — two threads must never fit the same model
+        self._predict_lock = threading.Lock()
+
         # Self-learning: error tracking (predictions stored in SQLite)
         self.error_metrics = {}  # Track prediction errors by hour
         self.bias_correction = {}  # Hourly bias correction factors
@@ -88,6 +100,24 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
                 have actual/committed prices for. If None, starts from
                 the next whole hour after now.
         """
+        with self._predict_lock:
+            self._predict(
+                weather_data,
+                historical_prices,
+                forecast_days,
+                interval_minutes,
+                known_data_end_time,
+            )
+
+    def _predict(
+        self,
+        weather_data: dict,
+        historical_prices: list[float],
+        forecast_days: int,
+        interval_minutes: int,
+        known_data_end_time: datetime | None,
+    ) -> None:
+        """Generate price predictions; the caller holds _predict_lock."""
         try:
             _LOGGER.info(
                 "Starting ML prediction with %d historical prices, forecast_days=%d",
@@ -163,14 +193,18 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
                 self.is_trained,
             )
 
-            # Train models if not already trained or if model has no trees
-            model_needs_training = (
-                not self.is_trained or len(self.price_model.trees) == 0
-            )
-
-            if model_needs_training and len(historical_prices) > 24:
-                _LOGGER.info("Training ML models...")
-                self._train_models(historical_prices, all_features)
+            # Retrain only if the model is missing or its inputs changed
+            if len(historical_prices) > 24:
+                self.record_training_prices(historical_prices)
+                if self.needs_retraining():
+                    _LOGGER.info(
+                        "Training ML models (data updated %s, last trained %s)",
+                        self.last_data_update,
+                        self.last_trained_at,
+                    )
+                    self.retrain(historical_prices, all_features)
+                else:
+                    _LOGGER.debug("No new training data since %s", self.last_trained_at)
 
             # Generate predictions
             if self.is_trained:

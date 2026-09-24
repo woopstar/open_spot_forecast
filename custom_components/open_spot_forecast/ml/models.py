@@ -40,11 +40,12 @@ class ModelMixin(PredictorBase):
     def _train_models(
         self, historical_prices: list[float], features: list[dict]
     ) -> None:
-        """Train ML models on historical data."""
-        try:
-            # Store today's prices for future training
-            self.store_daily_prices(historical_prices)
+        """Train ML models on historical data.
 
+        Today's prices must already be in price_history (see
+        RetrainMixin.record_training_prices).
+        """
+        try:
             # Get ALL historical prices and features (multi-day training)
             all_prices, all_features = self.get_all_historical_prices()
 
@@ -198,13 +199,6 @@ class ModelMixin(PredictorBase):
             self.is_trained = True
             self.training_samples = len(all_prices)
 
-            # Periodic hyperparameter optimization (once per ~7 days of new data)
-            self._hpo_counter = getattr(self, "_hpo_counter", 0) + 1
-            if self._hpo_counter >= 7 and len(self.price_history) >= 7:
-                _LOGGER.info("Triggering periodic hyperparameter optimization")
-                self._optimize_hyperparameters()
-                self._hpo_counter = 0
-
         except Exception as err:
             _LOGGER.error("Error training ML models: %s", err, exc_info=True)
             self.is_trained = False
@@ -217,7 +211,8 @@ class ModelMixin(PredictorBase):
         storage meta table. Returns the best param dict or None if
         insufficient data.
 
-        Called periodically (once per week or after many new samples).
+        Called by RetrainMixin.retrain once per HPO_INTERVAL_DAYS new days
+        of price data.
         """
         from .numpy_models import NumpyGradientBoosting
 
@@ -309,7 +304,7 @@ class ModelMixin(PredictorBase):
             learning_rate=best_params["learning_rate"],
             random_state=42,
         )
-        # Trigger re-training with new params
+        # The new model is unfitted until the caller retrains it
         self.is_trained = False
 
         # Persist best params

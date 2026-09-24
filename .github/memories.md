@@ -27,10 +27,11 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 | File              | Responsibility                                                                  |
 | ----------------- | ------------------------------------------------------------------------------- |
-| `predictor.py`    | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` |
+| `predictor.py`    | `SpotPricePredictor` — composes the Feature, Model, Learning and Retrain mixins |
 | `features.py`     | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)     |
 | `models.py`       | `ModelMixin` — training + prediction                                            |
 | `learning.py`     | `LearningMixin` — self-learning, bias correction, error metrics                 |
+| `retraining.py`   | `RetrainMixin` — retrain when training data changed, HPO cadence                |
 | `numpy_models.py` | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                |
 | `storage.py`      | `LearningStorage` — SQLite persistence                                          |
 
@@ -60,8 +61,16 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 ### ML predictor
 
 `SpotPricePredictor` in `ml/predictor.py` is the single ML predictor. It composes
-`FeatureMixin`, `ModelMixin`, and `LearningMixin`. Never re-implement feature extraction,
-model training, or self-learning outside `ml/`.
+`FeatureMixin`, `ModelMixin`, `LearningMixin`, and `RetrainMixin`. Never re-implement feature
+extraction, model training, or self-learning outside `ml/`.
+
+### Retraining
+
+The model retrains when its inputs change, not on a timer: `predict()` stores today's prices
+via `record_training_prices()` and retrains only if `needs_retraining()` (untrained, or
+`last_data_update > last_trained_at`). New training-data writes must move
+`LearningStorage.last_data_write` (or `_prices_updated_at` for prices), or they will never
+reach the model. HPO runs once per 7 new price days (`hpo_counter` in `meta`).
 
 ### Learning storage
 
