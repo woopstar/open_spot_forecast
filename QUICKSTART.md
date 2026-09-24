@@ -208,8 +208,9 @@ predictions:
     predicted_price: 248.7
     confidence: 0.91
     model: "GradientBoosting"
-  # ... 96 predictions for the next 24 hours (attributes are capped to stay
-  # under Home Assistant's 16 KB attribute limit)
+  # ... predictions for the configured window (default 48 hours = 192 slots;
+  # configurable in 12-hour steps up to 72 hours to stay under Home
+  # Assistant's 16 KB attribute limit)
 
 prediction_min: 150.5
 prediction_max: 450.2

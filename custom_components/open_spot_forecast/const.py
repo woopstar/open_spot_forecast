@@ -9,6 +9,7 @@ CONF_ENABLE_ML_PREDICTION = "enable_ml_prediction"
 CONF_VAT = "vat"
 CONF_PRICE_TYPE = "price_type"
 CONF_PRECISION = "precision"
+CONF_PREDICTION_HOURS = "prediction_hours"
 
 # Weather sensor configuration keys
 CONF_WIND_SPEED_SENSOR = "wind_speed_sensor"
@@ -28,6 +29,7 @@ DEFAULT_CURRENCY = "DKK"
 DEFAULT_VAT = 0.25
 DEFAULT_PRECISION = 3
 DEFAULT_PRICE_TYPE = "kWh"
+DEFAULT_PREDICTION_HOURS = 48
 
 # Platforms
 PLATFORMS = ["sensor", "binary_sensor"]
@@ -100,6 +102,12 @@ REGIONS = {
     "FR": {"currency": "EUR", "country": "France", "vat": 0.055, "tz": "Europe/Paris"},
     "DE": {"currency": "EUR", "country": "Germany", "vat": 0.19, "tz": "Europe/Berlin"},
 }
+
+# Prediction attribute window. The full 7-day forecast (672 slots) blows past
+# Home Assistant's 16 KB attribute limit, so only the next N hours of predictions
+# are surfaced as entity attributes. Configurable in 12-hour steps up to 72 hours.
+PREDICTION_HOURS_OPTIONS = [12, 24, 36, 48, 60, 72]
+SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"

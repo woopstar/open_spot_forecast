@@ -14,6 +14,7 @@ from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_PRECISION,
+    CONF_PREDICTION_HOURS,
     CONF_PRICE_TYPE,
     CONF_REGION,
     CONF_SOLAR_FORECAST_SENSOR,
@@ -26,10 +27,12 @@ from .const import (
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_CURRENCY,
     DEFAULT_PRECISION,
+    DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_TYPE,
     DEFAULT_REGION,
     DEFAULT_VAT,
     DOMAIN,
+    PREDICTION_HOURS_OPTIONS,
     REGIONS,
 )
 
@@ -159,6 +162,12 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_ENABLE_ML_PREDICTION,
                     default=self._data.get(CONF_ENABLE_ML_PREDICTION, True),
                 ): bool,
+                vol.Optional(
+                    CONF_PREDICTION_HOURS,
+                    default=self._data.get(
+                        CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS
+                    ),
+                ): vol.In(PREDICTION_HOURS_OPTIONS),
             }
         )
 
@@ -207,6 +216,15 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         CONF_ENABLE_ML_PREDICTION, True
                     ),
                 ): bool,
+                vol.Optional(
+                    CONF_PREDICTION_HOURS,
+                    default=self.config_entry.options.get(
+                        CONF_PREDICTION_HOURS,
+                        self.config_entry.data.get(
+                            CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS
+                        ),
+                    ),
+                ): vol.In(PREDICTION_HOURS_OPTIONS),
                 vol.Optional(
                     CONF_STROMLIGNING_SENSOR,
                     default=self.config_entry.options.get(

@@ -17,26 +17,24 @@ from homeassistant.util import slugify as util_slugify
 from .const import (
     CONF_CURRENCY,
     CONF_PRECISION,
+    CONF_PREDICTION_HOURS,
     CONF_PRICE_TYPE,
     CONF_REGION,
     CONF_VAT,
     DEFAULT_CURRENCY,
     DEFAULT_PRECISION,
+    DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_TYPE,
     DEFAULT_REGION,
     DEFAULT_VAT,
     DOMAIN,
     PRICE_IN,
+    SLOTS_PER_HOUR,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-# Cap the number of predictions exposed as entity attributes. The full 7-day
-# forecast (672 slots) blows past Home Assistant's 16 KB attribute limit and
-# slows down state writes, so we only surface the next 48 hours (192 slots).
-_MAX_PREDICTIONS_IN_ATTRIBUTES = 192
 
 
 async def async_setup_entry(
@@ -52,6 +50,10 @@ async def async_setup_entry(
     vat = entry.options.get(CONF_VAT, DEFAULT_VAT)
     precision = entry.options.get(CONF_PRECISION, DEFAULT_PRECISION)
     price_type = entry.options.get(CONF_PRICE_TYPE, DEFAULT_PRICE_TYPE)
+    prediction_hours = entry.options.get(
+        CONF_PREDICTION_HOURS,
+        entry.data.get(CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS),
+    )
 
     sensors = [
         SpotPriceSensor(
@@ -63,7 +65,16 @@ async def async_setup_entry(
         TomorrowMinSensor(hass, entry, api_data, currency, vat, precision, price_type),
         TomorrowMaxSensor(hass, entry, api_data, currency, vat, precision, price_type),
         TomorrowMeanSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        MLPredictionSensor(hass, entry, api_data, currency, vat, precision, price_type),
+        MLPredictionSensor(
+            hass,
+            entry,
+            api_data,
+            currency,
+            vat,
+            precision,
+            price_type,
+            prediction_hours,
+        ),
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
     ]
@@ -500,7 +511,17 @@ class MLPredictionSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_icon = "mdi:brain"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
+    def __init__(
+        self,
+        hass,
+        entry,
+        api_data,
+        currency,
+        vat,
+        precision,
+        price_type,
+        prediction_hours=DEFAULT_PREDICTION_HOURS,
+    ):
         self.hass = hass
         self.entry = entry
         self.api_data = api_data
@@ -508,6 +529,10 @@ class MLPredictionSensor(SensorEntity):
         self.vat = vat
         self.precision = precision
         self.price_type = price_type
+
+        # Cap the predictions exposed as attributes to the configured hourly
+        # window (12-hour steps, up to 72 hours) to stay under HA's 16 KB limit.
+        self._max_predictions = int(prediction_hours) * SLOTS_PER_HOUR
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
@@ -564,9 +589,9 @@ class MLPredictionSensor(SensorEntity):
         attrs: dict[str, Any] = {}
         if ml_predictor:
             # Convert predictions to include unit of measurement. Only surface
-            # the next 48 hours to stay under HA's 16 KB attribute limit.
+            # the configured hourly window to stay under HA's 16 KB attribute limit.
             predictions_with_unit = []
-            for pred in ml_predictor.predictions[:_MAX_PREDICTIONS_IN_ATTRIBUTES]:
+            for pred in ml_predictor.predictions[: self._max_predictions]:
                 price = pred.get("price")
                 if price is not None:
                     # Prices are already in kr/kWh, just apply VAT

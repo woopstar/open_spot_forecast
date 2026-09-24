@@ -24,7 +24,8 @@
           "solar_forecast_sensor": "Solar Forecast Sensor",
           "temperature_sensor": "Temperature Sensor",
           "dmi_api_key": "DMI API Key (alternative weather source)",
-          "enable_ml_prediction": "Enable ML Predictions"
+          "enable_ml_prediction": "Enable ML Predictions",
+          "prediction_hours": "Prediction Hours (12 to 72)"
         }
       }
     },
@@ -42,6 +43,7 @@
         "description": "Configure advanced options for spot price forecasting",
         "data": {
           "enable_ml_prediction": "Enable ML Price Predictions",
+          "prediction_hours": "Prediction Hours (12 to 72)",
           "dmi_api_key": "DMI API Key (for weather data)",
           "stromligning_sensor": "Stromligning Sensor (real prices with tariffs/VAT)",
           "nordpool_sensor": "Nordpool Sensor (spot prices)",
