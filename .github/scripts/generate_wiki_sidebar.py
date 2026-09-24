@@ -60,7 +60,7 @@ def discover_adrs(docs_dir: str) -> list[tuple[str, str]]:
 
     adrs: list[tuple[str, str]] = []
     for f in sorted(adr_dir.glob("adr-*.md")):
-        name = f.stem  # e.g. "adr-001-planner-extraction"
+        name = f.stem  # e.g. "adr-001-ml-feature-vector"
         # GitHub wiki page URLs are flat even when files are stored in
         # subdirectories in the wiki git repository.
         path = name
@@ -72,7 +72,7 @@ def discover_adrs(docs_dir: str) -> list[tuple[str, str]]:
 def generate_sidebar(rows: list[tuple[str, str]], adrs: list[tuple[str, str]]) -> str:
     """Generate _Sidebar.md content."""
     lines: list[str] = [
-        "# HSEM Documentation",
+        "# Open Spot Forecast Documentation",
         "",
         "## Quick Reference",
         "",

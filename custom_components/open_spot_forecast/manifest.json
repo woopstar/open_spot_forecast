@@ -1,18 +1,22 @@
 {
-  "domain": "open_spot_forecast",
-  "name": "Open Spot Forecast",
-  "after_dependencies": [
-    "nordpool",
-    "stromligning",
-    "met",
-    "solcast_solar",
-    "recorder"
-  ],
-  "codeowners": ["@andreas-kruger"],
-  "config_flow": true,
-  "documentation": "https://github.com/open-spot-forecast/open_spot_forecast/blob/main/README.md",
-  "iot_class": "cloud_polling",
-  "issue_tracker": "https://github.com/open-spot-forecast/open_spot_forecast/issues",
-  "requirements": ["numpy>=2.3.0"],
-  "version": "0.1.0-beta1"
+    "domain": "open_spot_forecast",
+    "name": "Open Spot Forecast",
+    "after_dependencies": [
+        "nordpool",
+        "stromligning",
+        "met",
+        "solcast_solar",
+        "recorder"
+    ],
+    "codeowners": [
+        "@woopstar"
+    ],
+    "config_flow": true,
+    "documentation": "https://github.com/woopstar/open_spot_forecast/blob/main/README.md",
+    "iot_class": "cloud_polling",
+    "issue_tracker": "https://github.com/woopstar/open_spot_forecast/issues",
+    "requirements": [
+        "numpy>=2.3.0"
+    ],
+    "version": "0.0.1"
 }

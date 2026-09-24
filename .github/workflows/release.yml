@@ -6,7 +6,7 @@ on:
     types: [published]
 
 env:
-  COMPONENT_DIR: hsem
+  COMPONENT_DIR: open_spot_forecast
 
 permissions:
   contents: read
@@ -22,23 +22,23 @@ jobs:
         uses: actions/checkout@v7.0.1
       - name: Update manifest.json version to ${{ github.event.release.tag_name }}
         run: |
-          python3 ${{ github.workspace }}/.github/scripts/update_hacs_manifest.py --version ${{ github.event.release.tag_name }} --path /custom_components/hsem/
+          python3 ${{ github.workspace }}/.github/scripts/update_hacs_manifest.py --version ${{ github.event.release.tag_name }} --path /custom_components/open_spot_forecast/
       - name: Commit manifest update
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add ./custom_components/hsem/manifest.json
+          git add ./custom_components/open_spot_forecast/manifest.json
           git commit -m "Updated manifest.json"
           git push origin HEAD:${{ github.event.release.target_commitish }}
       - name: Create zip
         run: |
-          cd custom_components/hsem
-          zip hsem.zip -r ./
+          cd custom_components/open_spot_forecast
+          zip open_spot_forecast.zip -r ./
       - name: Upload zip to release
         uses: svenstaro/upload-release-action@2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ./custom_components/hsem/hsem.zip
-          asset_name: hsem.zip
+          file: ./custom_components/open_spot_forecast/open_spot_forecast.zip
+          asset_name: open_spot_forecast.zip
           tag: ${{ github.ref }}
           overwrite: true

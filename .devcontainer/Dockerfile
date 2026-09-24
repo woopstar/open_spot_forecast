@@ -2,7 +2,7 @@ FROM python:3.14.7-slim
 
 ENV SSH_AUTH_SOCK=/tmp/ssh-agent.sock
 ENV GNUPGHOME=/tmp/gpg-home
-ENV WORKSPACE_DIR=/workspaces/hsem
+ENV WORKSPACE_DIR=/workspaces/osf
 
 # Install GPG, smartcard support, YubiKey manager, and dev tooling
 RUN apt-get update && apt-get install -y --no-install-recommends \

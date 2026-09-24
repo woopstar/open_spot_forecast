@@ -14,6 +14,7 @@
 ### Basic Setup (No API Keys Required)
 
 Works immediately with Nordpool public API:
+
 - Current spot prices
 - Today's min/max/mean
 - Tomorrow's prices (after 13:00 CET)
@@ -30,6 +31,7 @@ Stromligning Sensor: sensor.stromligning_current_price_vat
 ```
 
 **Why Stromligning?**
+
 - Real consumer prices (includes tariffs + VAT)
 - What you actually pay on your electricity bill
 - Better for automation decisions
@@ -46,6 +48,7 @@ Temperature Sensor: sensor.home_temperature
 ```
 
 **Why Weather Data?**
+
 - Improves ML prediction accuracy by 20-30%
 - Wind and solar are major price drivers
 - Helps predict price spikes
@@ -61,6 +64,7 @@ Enable ML Predictions: true
 After installation, you'll have:
 
 ### Price Sensors
+
 - `sensor.open_spot_forecast_current_price` - Current price
 - `sensor.open_spot_forecast_today_min` - Today's lowest
 - `sensor.open_spot_forecast_today_max` - Today's highest
@@ -70,13 +74,16 @@ After installation, you'll have:
 - `sensor.open_spot_forecast_tomorrow_mean` - Tomorrow's average
 
 ### Forecast Sensors
+
 - `sensor.open_spot_forecast_ml_prediction` - **ML-based 7-day forecast**
 - `sensor.open_spot_forecast_prediction_confidence` - Prediction confidence (%)
 
 ### Learning Sensors
+
 - `sensor.open_spot_forecast_learning_metrics` - Self-learning status
 
 ### Status Sensors
+
 - `binary_sensor.open_spot_forecast_tomorrow_available` - Tomorrow's prices ready
 - `binary_sensor.open_spot_forecast_ml_model_trained` - ML model status
 
@@ -177,18 +184,20 @@ automation:
 ### Current Price Sensor
 
 **Attributes**:
+
 ```yaml
 region: DK1
 currency: DKK
 vat: 0.25
 last_update: "2026-07-06T13:15:00"
-today_prices: [234.5, 235.1, 236.8, ...]  # 24 values
-tomorrow_prices: [240.2, 241.5, ...]       # 24 values (when available)
+today_prices: [234.5, 235.1, 236.8, ...] # 24 values
+tomorrow_prices: [240.2, 241.5, ...] # 24 values (when available)
 ```
 
 ### ML Prediction Sensor
 
 **Attributes**:
+
 ```yaml
 predictions:
   - timestamp: "2026-07-06T14:00:00"
@@ -199,7 +208,8 @@ predictions:
     predicted_price: 248.7
     confidence: 0.91
     model: "GradientBoosting"
-  # ... 672 predictions for 7 days
+  # ... 96 predictions for the next 24 hours (attributes are capped to stay
+  # under Home Assistant's 16 KB attribute limit)
 
 prediction_min: 150.5
 prediction_max: 450.2
@@ -224,6 +234,7 @@ training_samples: 720
 **Problem**: `binary_sensor.open_spot_forecast_tomorrow_available` is off
 
 **Solution**:
+
 - Nordpool publishes tomorrow's prices around 13:00 CET
 - Wait until after 13:30 CET
 - Check your internet connection
@@ -234,6 +245,7 @@ training_samples: 720
 **Problem**: ML prediction sensor shows "unavailable"
 
 **Solution**:
+
 1. Check if ML model is trained: `binary_sensor.open_spot_forecast_ml_model_trained`
 2. If not trained, wait for 24+ hours of data collection
 3. Configure weather sensors to improve predictions
@@ -244,6 +256,7 @@ training_samples: 720
 **Problem**: Prices are much higher/lower than expected
 
 **Solution**:
+
 1. Check currency setting (DKK, EUR, SEK, NOK)
 2. Verify VAT rate is correct for your country
 3. Check price unit (kWh vs MWh)
@@ -255,16 +268,18 @@ training_samples: 720
 ### 1. Monitor Confidence Scores
 
 Use confidence to decide when to act:
+
 ```yaml
 condition:
   - condition: numeric_state
     entity_id: sensor.open_spot_forecast_prediction_confidence
-    above: 70  # Only act on high-confidence predictions
+    above: 70 # Only act on high-confidence predictions
 ```
 
 ### 2. Track Prediction Accuracy
 
 Create a statistics sensor:
+
 ```yaml
 sensor:
   - platform: statistics
@@ -277,6 +292,7 @@ sensor:
 ### 3. Use Templates for Cheapest Hours
 
 Find the next 3 cheapest hours:
+
 ```yaml
 template:
   - sensor:
@@ -321,6 +337,7 @@ template:
 ### Check Logs
 
 Enable debug logging in `configuration.yaml`:
+
 ```yaml
 logger:
   default: info
@@ -331,6 +348,7 @@ logger:
 ### Report Issues
 
 When reporting issues, include:
+
 1. Home Assistant version
 2. Integration version
 3. Region configured

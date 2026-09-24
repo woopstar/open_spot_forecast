@@ -33,6 +33,11 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# Cap the number of predictions exposed as entity attributes. The full 7-day
+# forecast (672 slots) blows past Home Assistant's 16 KB attribute limit and
+# slows down state writes, so we only surface the next 48 hours (192 slots).
+_MAX_PREDICTIONS_IN_ATTRIBUTES = 192
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -97,7 +102,7 @@ class SpotPriceSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_current_price")
         self._attr_name = "Current Spot Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -124,7 +129,7 @@ class SpotPriceSensor(SensorEntity):
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("current_price") is not None:
             # Stromligning already includes tariffs and VAT
-            return round(stromligning_data["current_price"], self.precision)
+            return float(round(stromligning_data["current_price"], self.precision))
 
         nordpool = self.api_data.get("nordpool")
         if nordpool:
@@ -132,7 +137,7 @@ class SpotPriceSensor(SensorEntity):
             if price is not None:
                 # Convert from MWh to kWh and apply VAT
                 converted = price / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
     @property
@@ -145,12 +150,11 @@ class SpotPriceSensor(SensorEntity):
             "last_update": self.api_data.get("last_update"),
         }
 
-        # Include Stromligning 15-min prices if available
+        # Include Stromligning 15-min prices if available. We deliberately omit
+        # the raw dict arrays (prices_15min / raw_today / raw_tomorrow) — they
+        # are large and push the attribute payload past HA's 16 KB limit.
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data:
-            attrs["prices_15min"] = stromligning_data.get("prices_15min", [])
-            attrs["raw_today"] = stromligning_data.get("raw_today", [])
-            attrs["raw_tomorrow"] = stromligning_data.get("raw_tomorrow", [])
             attrs["today_prices"] = stromligning_data.get("today", [])
             attrs["tomorrow_prices"] = stromligning_data.get("tomorrow", [])
             attrs["price_source"] = "stromligning"
@@ -158,8 +162,6 @@ class SpotPriceSensor(SensorEntity):
             # Fall back to Nordpool
             nordpool = self.api_data.get("nordpool")
             if nordpool:
-                attrs["raw_today"] = nordpool.raw_today
-                attrs["raw_tomorrow"] = nordpool.raw_tomorrow
                 attrs["today_prices"] = nordpool.today
                 attrs["tomorrow_prices"] = nordpool.tomorrow
                 attrs["price_source"] = "nordpool"
@@ -185,7 +187,7 @@ class TodayMinSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_min")
         self._attr_name = "Today Min Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -209,7 +211,7 @@ class TodayMinSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
-                return round(min_price, self.precision)
+                return float(round(min_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -217,7 +219,7 @@ class TodayMinSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "min" in stats:
                 converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -239,7 +241,7 @@ class TodayMaxSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_max")
         self._attr_name = "Today Max Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -263,7 +265,7 @@ class TodayMaxSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
-                return round(max_price, self.precision)
+                return float(round(max_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -271,7 +273,7 @@ class TodayMaxSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "max" in stats:
                 converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -293,7 +295,7 @@ class TodayMeanSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_mean")
         self._attr_name = "Today Mean Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -317,7 +319,7 @@ class TodayMeanSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)
-                return round(mean_price, self.precision)
+                return float(round(mean_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -325,7 +327,7 @@ class TodayMeanSensor(SensorEntity):
             stats = nordpool.get_today_stats()
             if stats and "mean" in stats:
                 converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -347,7 +349,7 @@ class TomorrowMinSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_min")
         self._attr_name = "Tomorrow Min Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -371,7 +373,7 @@ class TomorrowMinSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
-                return round(min_price, self.precision)
+                return float(round(min_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -379,7 +381,7 @@ class TomorrowMinSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "min" in stats:
                 converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -401,7 +403,7 @@ class TomorrowMaxSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_max")
         self._attr_name = "Tomorrow Max Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -425,7 +427,7 @@ class TomorrowMaxSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
-                return round(max_price, self.precision)
+                return float(round(max_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -433,7 +435,7 @@ class TomorrowMaxSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "max" in stats:
                 converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -455,7 +457,7 @@ class TomorrowMeanSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_mean")
         self._attr_name = "Tomorrow Mean Price"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -479,7 +481,7 @@ class TomorrowMeanSensor(SensorEntity):
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)
-                return round(mean_price, self.precision)
+                return float(round(mean_price, self.precision))
 
         # Fallback to Nordpool
         nordpool = self.api_data.get("nordpool")
@@ -487,7 +489,7 @@ class TomorrowMeanSensor(SensorEntity):
             stats = nordpool.get_tomorrow_stats()
             if stats and "mean" in stats:
                 converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return round(converted * (1 + self.vat), self.precision)
+                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
 
@@ -509,7 +511,7 @@ class MLPredictionSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
-        self._attr_unit_of_measurement = f"{currency}/{price_type}"
+        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
         self._attr_suggested_display_precision = precision
 
         self._attr_device_info = {
@@ -543,7 +545,7 @@ class MLPredictionSensor(SensorEntity):
                             if pred_time > now:
                                 next_pred = pred
                                 break
-                        except (ValueError, TypeError):
+                        except ValueError, TypeError:
                             continue
 
                 # Fallback to first prediction if no future prediction found
@@ -553,17 +555,18 @@ class MLPredictionSensor(SensorEntity):
                 price = next_pred.get("price")
                 if price is not None:
                     # Prices are already in kr/kWh, just apply VAT
-                    return round(price * (1 + self.vat), self.precision)
+                    return float(round(price * (1 + self.vat), self.precision))
         return None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         ml_predictor = self.api_data.get("ml_predictor")
-        attrs = {}
+        attrs: dict[str, Any] = {}
         if ml_predictor:
-            # Convert predictions to include unit of measurement
+            # Convert predictions to include unit of measurement. Only surface
+            # the next 48 hours to stay under HA's 16 KB attribute limit.
             predictions_with_unit = []
-            for pred in ml_predictor.predictions:
+            for pred in ml_predictor.predictions[:_MAX_PREDICTIONS_IN_ATTRIBUTES]:
                 price = pred.get("price")
                 if price is not None:
                     # Prices are already in kr/kWh, just apply VAT
@@ -613,7 +616,7 @@ class PredictionConfidenceSensor(SensorEntity):
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_confidence")
         self._attr_name = "Prediction Confidence"
-        self._attr_unit_of_measurement = "%"
+        self._attr_native_unit_of_measurement = "%"
         self._attr_suggested_display_precision = 1
 
         self._attr_device_info = {
@@ -634,7 +637,7 @@ class PredictionConfidenceSensor(SensorEntity):
         if ml_predictor:
             stats = ml_predictor.get_prediction_stats()
             if stats and "mean_confidence" in stats:
-                return round(stats["mean_confidence"] * 100, 1)
+                return float(round(stats["mean_confidence"] * 100, 1))
         return None
 
 
@@ -648,12 +651,13 @@ class LearningMetricsSensor(SensorEntity):
         self.hass = hass
         self.entry = entry
         self.api_data = api_data
+        self._cached_metrics: dict[str, Any] | None = None
 
         self._attr_unique_id = util_slugify(
             f"{DOMAIN}_{entry.entry_id}_learning_metrics"
         )
         self._attr_name = "Learning Metrics"
-        self._attr_unit_of_measurement = "samples"
+        self._attr_native_unit_of_measurement = "samples"
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
@@ -665,33 +669,45 @@ class LearningMetricsSensor(SensorEntity):
         )
 
     async def _handle_update(self) -> None:
+        # Invalidate the cache so the next state write recomputes metrics.
+        self._cached_metrics = None
         self.async_write_ha_state()
+
+    def _get_metrics(self) -> dict[str, Any]:
+        """Return learning metrics, computing once per state write.
+
+        ``native_value`` and ``extra_state_attributes`` are both evaluated
+        during a single state write; caching avoids running the (expensive)
+        metric aggregation twice and keeps the update under HA's 0.5 s
+        slow-update threshold.
+        """
+        if self._cached_metrics is None:
+            ml_predictor = self.api_data.get("ml_predictor")
+            self._cached_metrics = (
+                ml_predictor.get_learning_metrics() if ml_predictor else {}
+            )
+        return self._cached_metrics
 
     @property
     def native_value(self) -> int | None:
-        ml_predictor = self.api_data.get("ml_predictor")
-        if ml_predictor:
-            metrics = ml_predictor.get_learning_metrics()
-            return metrics.get("total_samples", 0)
-        return None
+        metrics = self._get_metrics()
+        return metrics.get("total_samples", 0) if metrics else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        ml_predictor = self.api_data.get("ml_predictor")
+        metrics = self._get_metrics()
         attrs = {}
-        if ml_predictor:
-            metrics = ml_predictor.get_learning_metrics()
-            if metrics:
-                attrs["status"] = metrics.get("status", "idle")
-                attrs["message"] = metrics.get("message", "")
-                attrs["is_learning"] = metrics.get("is_learning", False)
-                attrs["mae"] = metrics.get("mae")
-                attrs["rmse"] = metrics.get("rmse")
-                attrs["mean_bias"] = metrics.get("mean_bias")
-                attrs["mean_pct_error"] = metrics.get("mean_pct_error")
-                attrs["learning_confidence"] = metrics.get("learning_confidence")
-                attrs["hours_tracked"] = metrics.get("slots_tracked")
-                attrs["bias_corrections"] = metrics.get("bias_corrections")
-                attrs["pending_predictions"] = metrics.get("pending_predictions")
-                attrs["hourly_metrics"] = metrics.get("hourly_metrics")
+        if metrics:
+            attrs["status"] = metrics.get("status", "idle")
+            attrs["message"] = metrics.get("message", "")
+            attrs["is_learning"] = metrics.get("is_learning", False)
+            attrs["mae"] = metrics.get("mae")
+            attrs["rmse"] = metrics.get("rmse")
+            attrs["mean_bias"] = metrics.get("mean_bias")
+            attrs["mean_pct_error"] = metrics.get("mean_pct_error")
+            attrs["learning_confidence"] = metrics.get("learning_confidence")
+            attrs["hours_tracked"] = metrics.get("slots_tracked")
+            attrs["bias_corrections"] = metrics.get("bias_corrections")
+            attrs["pending_predictions"] = metrics.get("pending_predictions")
+            attrs["hourly_metrics"] = metrics.get("hourly_metrics")
         return attrs

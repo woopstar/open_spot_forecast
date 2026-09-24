@@ -23,7 +23,7 @@ The devcontainer is pre-configured to use your YubiKey for SSH authentication an
 
 **Persistent `/root`**
 
-The whole `/root` home directory is backed by a named Docker volume (`hsem-root`), with the host
+The whole `/root` home directory is backed by a named Docker volume (`osf-root`), with the host
 identity bind mounts above (`.ssh`, `.gnupg`, `.gitconfig`) layered on top of it. This means CLI
 tool state under `/root` — `.claude`, `.copilot`, `.config`, shell history, etc. — survives
 container rebuilds instead of requiring re-authentication or re-setup every time. Anything you
@@ -65,7 +65,7 @@ Docker Desktop on macOS runs containers inside a Linux VM, so the default bind-m
 
 - Mounting the workspace with `consistency=cached` to reduce cross-VM sync overhead.
 - Storing Python tool caches (`__pycache__`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `uv`) in
-  a named Docker volume (`hsem-cache`) mounted at `/tmp/hsem-cache`, outside the bind-mounted
+  a named Docker volume (`osf-cache`) mounted at `/tmp/osf-cache`, outside the bind-mounted
   workspace entirely. This also keeps `grep`/`find`/`ruff format .`-style commands run from the
   workspace root from wandering into cache contents.
 
@@ -81,7 +81,7 @@ create linked git worktrees under the path set by `git.worktree_directory`. `.ze
 pins this to the absolute path `/workspaces/worktrees` (matching the convention Claude Code's
 `EnterWorktree` tool already uses) rather than relying on Zed's relative default, so it resolves
 the same way regardless of where in Zed's config resolution it's read from. That path is backed
-by a dedicated named Docker volume (`hsem-worktrees`), so linked worktrees persist across
+by a dedicated named Docker volume (`osf-worktrees`), so linked worktrees persist across
 container rebuilds instead of living in the container's writable layer, which gets discarded on
 rebuild. Worktrees are treated as disposable, container-scoped scratch space (like the tool
 caches) rather than durable source of truth — they aren't visible from the host filesystem, since

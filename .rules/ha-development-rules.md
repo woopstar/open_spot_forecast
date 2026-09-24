@@ -1,10 +1,9 @@
-# HSEM Compliance Checklist — Read Before Any Code Change
+# OSF Compliance Checklist — Read Before Any Code Change
 
 This checklist enforces Home Assistant development guidelines from:
 
 - https://developers.home-assistant.io/docs/creating_component_code_review
 - https://developers.home-assistant.io/docs/development_guidelines
-- Validated in issue #491
 
 Apply these rules to **every** PR, regardless of scope.
 
@@ -37,14 +36,14 @@ Branch naming: `<type>/<issue-number>-<slug>`
 - [ ] **Device info**: Every entity has `unique_id` (stable, uses config entry ID) and `device_info` with `identifiers={(DOMAIN, entry.entry_id)}`.
 - [ ] **Unload**: Every listener, timer, task created in setup is cancelled/removed in teardown. `hass.data[DOMAIN]` popped.
 - [ ] **Platform communication**: Share data via `hass.data[DOMAIN]`. Notify platforms of updates via `homeassistant.helpers.dispatcher`.
-- [ ] **Event names**: Prefix all custom event names with the domain name (e.g., `hsem_person` not `person`).
+- [ ] **Event names**: Prefix all custom event names with the domain name (e.g., `open_spot_forecast_price_update` not `price_update`).
 
 ---
 
 ## Section 2 — Style Guidelines
 
-- [ ] **File headers**: Every `.py` file starts with a docstring describing what the file does. Example: `"""Support for HSEM battery planner."""`
-- [ ] **Import order**: Standard library → third-party → `homeassistant.*` → `custom_components.hsem.*`
+- [ ] **File headers**: Every `.py` file starts with a docstring describing what the file does. Example: `"""Support for Open Spot Forecast price sensors."""`
+- [ ] **Import order**: Standard library → third-party → `homeassistant.*` → `custom_components.open_spot_forecast.*`
 - [ ] **Alphabetical ordering**: Constants and the content of lists/dictionaries should be in alphabetical order.
 - [ ] **HA constants**: Always check [`homeassistant/const.py`](https://github.com/home-assistant/core/blob/dev/homeassistant/const.py) before defining your own. Use `CONF_NAME`, `UnitOfEnergy`, `PERCENTAGE`, `Platform`, `STATE_ON`/`STATE_OFF`, etc.
 - [ ] **No hardcoded strings**: No `"on"`, `"off"`, `"kWh"`, `"%"`, `"unknown"` — use HA constants.
@@ -56,7 +55,6 @@ Branch naming: `<type>/<issue-number>-<slug>`
 - [ ] **Comments**: Full sentences ending with a period.
 - [ ] **`@override`**: Every method that overrides a base class method has `@override` decorator.
 - [ ] **Config migration**: `async_migrate_entry` present if `CONFIG_VERSION > 1`.
-- [ ] **Logging**: Planner code uses `HSEM_LOGGER` from `utils/logger.py`. Non-planner code may use `logging.getLogger(__name__)`.
 
 ---
 
@@ -90,12 +88,12 @@ Branch naming: `<type>/<issue-number>-<slug>`
 
 ## Canonical Helpers — Never Re-Invent
 
-| Helper                                 | Location                   | Use for                 |
-| -------------------------------------- | -------------------------- | ----------------------- |
-| `clamp_efficiency(pct)`                | `utils/misc.py`            | Efficiency % → fraction |
-| `calculate_recommended_threshold(...)` | `utils/misc.py`            | Discharge threshold     |
-| `DISCHARGE_RECS` / `CHARGE_RECS`       | `utils/recommendations.py` | Recommendation checks   |
-| `HSEM_LOGGER`                          | `utils/logger.py`          | Planner logging         |
+| Helper                                    | Location           | Use for                                     |
+| ----------------------------------------- | ------------------ | ------------------------------------------- |
+| `DOMAIN`, `CONF_*`, `REGIONS`, `PRICE_IN` | `const.py`         | Config keys, regions, price units           |
+| `SensorReader`                            | `sensor_reader.py` | All external entity reads                   |
+| `SpotPricePredictor`                      | `ml/predictor.py`  | ML prediction (features + model + learning) |
+| `LearningStorage`                         | `ml/storage.py`    | SQLite persistence                          |
 
 ---
 

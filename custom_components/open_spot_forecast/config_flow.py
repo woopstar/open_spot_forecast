@@ -4,7 +4,9 @@ import logging
 from typing import Any
 
 import voluptuous as vol
+
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
 from homeassistant.helpers.selector import selector
 
@@ -45,7 +47,9 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._errors = {}
         self._data = {}
 
-    async def async_step_user(self, user_input: dict[str, Any] | None = None):
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the initial step - basic settings."""
         self._errors = {}
 
@@ -61,7 +65,7 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         # Build the form for step 1
         regions_list = sorted(REGIONS.keys())
-        currencies = sorted(list(set(r["currency"] for r in REGIONS.values())))
+        currencies = sorted({str(r["currency"]) for r in REGIONS.values()})
         price_types = ["kWh", "MWh", "Wh"]
 
         data_schema = vol.Schema(
@@ -86,7 +90,9 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=self._errors,
         )
 
-    async def async_step_sensors(self, user_input: dict[str, Any] | None = None):
+    async def async_step_sensors(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle the second step - sensor configuration."""
         self._errors = {}
 
@@ -171,7 +177,6 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def async_get_options_flow(config_entry):
         """Get the options flow."""
         return OpenSpotForecastOptionsFlow()
-        return OpenSpotForecastOptionsFlow()
 
 
 class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
@@ -181,7 +186,9 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
         """Initialize the options flow."""
         self._errors = {}
 
-    async def async_step_init(self, user_input: dict[str, Any] | None = None):
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
         """Handle options step."""
         self._errors = {}
 

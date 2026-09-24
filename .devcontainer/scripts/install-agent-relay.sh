@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install/uninstall the HSEM agent relay as a macOS LaunchAgent.
+# Install/uninstall the OSF agent relay as a macOS LaunchAgent.
 #
 # The relay bridges YubiKey GPG/SSH agent sockets over TCP so Docker
 # containers can access them. This installs it as a per-user service
@@ -12,17 +12,17 @@
 
 set -e
 
-LABEL="com.hsem.agent-relay"
+LABEL="com.osf.agent-relay"
 PLIST="$HOME/Library/LaunchAgents/${LABEL}.plist"
 LOG="$HOME/Library/Logs/${LABEL}.log"
 APP_SUPPORT="$HOME/Library/Application Support"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELAY_SRC="$SCRIPT_DIR/start-agent-relay.py"
-RELAY_DST="$APP_SUPPORT/hsem-agent-relay.py"
-TEMPLATE="$SCRIPT_DIR/com.hsem.agent-relay.plist.template"
+RELAY_DST="$APP_SUPPORT/osf-agent-relay.py"
+TEMPLATE="$SCRIPT_DIR/com.osf.agent-relay.plist.template"
 
 install_service() {
-    echo "Installing HSEM agent relay as LaunchAgent..."
+    echo "Installing OSF agent relay as LaunchAgent..."
 
     if [ ! -f "$RELAY_SRC" ]; then
         echo "ERROR: Relay script not found at $RELAY_SRC"
@@ -58,7 +58,7 @@ install_service() {
 }
 
 uninstall_service() {
-    echo "Uninstalling HSEM agent relay..."
+    echo "Uninstalling OSF agent relay..."
 
     launchctl bootout "gui/$(id -u)/${LABEL}" 2>/dev/null || true
     rm -f "$PLIST"

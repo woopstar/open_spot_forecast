@@ -1,5 +1,6 @@
 """Storage module for persisting ML learning data using SQLite."""
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -81,7 +82,7 @@ class LearningStorage:
             return False
 
         try:
-            with open(self._json_path, "r", encoding="utf-8") as f:
+            with open(self._json_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             predictions = data.get("prediction_history", [])
@@ -329,10 +330,8 @@ class LearningStorage:
         """
         with self._lock:
             if self._conn is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-                except Exception:
-                    pass
 
     def close(self) -> None:
         """Close the database connection (for cleanup on shutdown).
@@ -342,10 +341,8 @@ class LearningStorage:
         """
         with self._lock:
             if self._conn is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                except Exception:
-                    pass
                 self._conn.close()
                 self._conn = None
                 _LOGGER.debug("Closed SQLite connection")
@@ -1102,10 +1099,8 @@ class LearningStorage:
         ):
             raw = meta.pop(key, None)
             if raw is not None:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     result[key] = converter(raw)
-                except (ValueError, TypeError):
-                    pass
         # Include remaining meta keys (HPO params, etc.)
         for key, value in meta.items():
             if key not in result and key not in ("schema_version",):

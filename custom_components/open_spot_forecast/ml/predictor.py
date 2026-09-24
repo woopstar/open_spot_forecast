@@ -1,11 +1,13 @@
 """Machine learning predictor for spot prices."""
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import numpy as np
+
+from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .features import FeatureMixin
 from .learning import LearningMixin
@@ -19,14 +21,13 @@ _LOGGER = logging.getLogger(__name__)
 class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
     """ML-based spot price predictor using weather and historical price data."""
 
-    def __init__(self, hass, region: str, tz_name: str = "Europe/Copenhagen"):
+    def __init__(
+        self, hass: HomeAssistant, region: str, tz_name: str = "Europe/Copenhagen"
+    ):
         """Initialize the predictor."""
         self.hass = hass
         self.region = region
-        try:
-            self.tz = ZoneInfo(tz_name)
-        except Exception:
-            self.tz = timezone.utc
+        self.tz = dt_util.get_time_zone(tz_name) or UTC
         self.predictions = []
         self.confidence_scores = []
 

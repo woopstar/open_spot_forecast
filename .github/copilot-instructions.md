@@ -6,13 +6,13 @@
 
 It contains:
 
-- Module responsibility map for all planner and utils files
+- Module responsibility map for all component, sensor, ML, and API files
 - Canonical patterns you must use (never re-invent)
-- MILP variable vector layout (8\*n)
+- Feature vector layout (20 features) and 96-slot granularity
 - File size limits and oversized files
-- Cycle cost formula with the mandatory 2x denominator
+- Bias-correction EMA and solar-scaling factor formulas
 - File organization patterns (by responsibility, not by theme)
-- Huawei entity wiring protocol
+- Sensor wiring protocol
 - Logging and testing rules
 
 ## HA Development Compliance (Read Before PR)
@@ -42,11 +42,11 @@ When asked to solve a GitHub issue, always follow these steps in order:
 1. **Read the GitHub issue** — Understand the problem fully before touching any code.
 2. **Read `.github/memories.md`** — Check if the issue touches a known pattern or canonical helper.
 3. **Create a branch** using the issue prefix and a short slug.
-   - Format: `<type>/<issue-number>-<slug>` — e.g., `fix/444-milp-cycle-cost`
+   - Format: `<type>/<issue-number>-<slug>` — e.g., `fix/444-bias-correction-ema`
 4. **Understand the relevant code** — Search and read the affected files before making changes.
 5. **Implement the smallest safe fix** — No unrelated changes, no broad refactors.
 6. **Update documentation** — Update every docs/ file that describes the changed behaviour
-   (planner guide, spec, config flow reference, memories.md, README, etc.).
+   (ML documentation, self-learning, persistence, README, memories.md, etc.).
 7. **Add or update regression tests** — Cover the bug or new behavior.
 8. **Run the relevant tests** — `pytest tests/` or the targeted test file.
 9. **Run lint/type + quality checks** — all four must pass before opening a PR:
@@ -95,53 +95,55 @@ When asked to solve a GitHub issue, always follow these steps in order:
 - **Prefer `rtk gh ...`** — RTK filters `gh` output and cuts 26-87 % of the tokens.
 - **Local git is still fine** for `git add` / `git commit` / `git checkout` / `git push`.
 
-## Planner Specification Rule (Mandatory)
+## ML Specification Rule (Mandatory)
 
-- **Always read `docs/planner-spec.md` before touching any planner code** — engine, cost
-  function, SoC simulation, candidate generation, slot population, or safety gates.
-- **Every planner change must satisfy all spec invariants**: energy balance per slot, SoC bounds,
-  cost identity (`winner.cost == final_output.cost`), terminal-SoC accounting, and safety gates.
-- **Update `docs/planner-spec.md`** when a change intentionally alters planner semantics.
-  Spec and implementation must never diverge silently.
-- **Add or update tests** covering the affected invariants for every planner change.
-- A planner PR is not done until: spec is consistent, invariant tests pass, and lint is clean.
-- See `AGENTS.md` → **Planner Specification** for the full compliance checklist.
+- **Always read `docs/ml_documentation.md` before touching any ML code** — model,
+  feature vector, self-learning, bias correction, confidence scoring, or storage schema.
+- **Every ML change must satisfy all documented invariants**: 20-feature vector, 96-slot
+  granularity, bias-correction EMA, solar-scaling factor, and confidence floor.
+- **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
+  where relevant) when a change intentionally alters ML semantics. Spec and implementation
+  must never diverge silently.
+- **Add or update tests** covering the affected invariants for every ML change.
+- An ML PR is not done until: docs are consistent, invariant tests pass, and lint is clean.
+- See `AGENTS.md` → **ML Specification** for the full compliance checklist.
 
 ## Documentation Update Rule (Mandatory)
 
 - **All documentation that describes the changed behaviour must be updated in the same PR.**
   This includes, but is not limited to:
-  - `docs/planner-guide.md` — planner inputs, outputs, cost function, scenarios
-  - `docs/planner-spec.md` — specification invariants and formulas
-  - `docs/config-flow-reference.md` — config/options flow step tables
-  - `docs/ev-charge-plan-setup.md` — EV planned load setup guide
+  - `docs/architecture.md` — system overview, data sources, data flow
+  - `docs/ml_documentation.md` — model, features, confidence
+  - `docs/self_learning.md` — self-learning loop, bias correction
+  - `docs/persistence.md` — storage schema, migrations
+  - `docs/stromligning_integration.md` — price-source priority
+  - `docs/using_existing_sensors.md` — sensor wiring
   - `.github/memories.md` — canonical patterns, module map, open issues
   - `README.md` — user-facing feature descriptions and links
 - **Check every docs/ file before closing a PR** — if a file describes something you changed,
   update it. Stale documentation causes confusion and bugs.
 - **A PR is not done until all affected docs are consistent with the implementation.**
 
-## Huawei Solar Sensor Rule (Mandatory)
+## Sensor Wiring Rule (Mandatory)
 
-- **Always use entities exposed by `wlcrs/huawei_solar`** for every inverter/battery value.
-- Never hard-code numeric battery constants — always source from the live HA entity.
-- If a value is needed but not yet wired into HSEM, add it through the full stack:
-  `const.py` → `flows/huawei_solar.py` → **`translations/en.json`** (both `config` and
-  `options` `huawei_solar` steps) → `models/sensor_config.py` →
-  `custom_sensors/config_reader.py` → `custom_sensors/state_collector.py` →
-  `models/live_state.py` → `coordinator.py`
-- **Always check `docs/huawei_entities.md` first** for the verified list of available HA entities
-  before searching the upstream `wlcrs/huawei_solar` repo or guessing an entity ID.
-- See `AGENTS.md` → **Huawei Solar Sensor Usage Rule** for the full wiring protocol.
+- **Always read external entities through `SensorReader`** in `sensor_reader.py` — never
+  call `hass.states.get(...)` directly in platform or ML code.
+- Never hard-code a numeric value that an entity reports — always source from the live HA entity.
+- If a value is needed but not yet wired into OSF, add it through the full stack:
+  `const.py` → `config_flow.py` → **`translations/en.json`** (and `da.json`, both `config`
+  and `options` steps) → `sensor_reader.py` → `__init__.py`
+- **Always check `docs/using_existing_sensors.md` first** for the verified list of available
+  HA entities before searching an upstream integration repo or guessing an entity ID.
+- See `AGENTS.md` → **Sensor Wiring Rule** for the full wiring protocol.
 
 ## Canonical Helpers (Mandatory)
 
 These helpers exist — never re-implement them inline:
 
-- **`clamp_efficiency(pct)`** in `utils/misc.py` — converts efficiency % to fraction
-- **`calculate_recommended_threshold(...)`** in `utils/misc.py` — discharge threshold with real parameters, never use `cycle_cost * 0.30` as proxy
-- **`DISCHARGE_RECS`** and **`CHARGE_RECS`** in `utils/recommendations.py` — canonical frozensets, never redefine locally
-- **`HSEM_LOGGER`** in `utils/logger.py` — use for all planner logging, never `logging.getLogger(__name__)`
+- **`const.py`** — `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS` — never hard-code config keys or region names
+- **`SensorReader`** in `sensor_reader.py` — all external entity reads go through this class
+- **`SpotPricePredictor`** in `ml/predictor.py` — the single ML predictor (FeatureMixin + ModelMixin + LearningMixin)
+- **`LearningStorage`** in `ml/storage.py` — all SQLite persistence goes through this class
 
 ## File Size Rule (Mandatory)
 
@@ -152,9 +154,9 @@ These helpers exist — never re-implement them inline:
 - Check before every PR:
   ```bash
   # Lines
-  find custom_components/hsem -name '*.py' -exec sh -c 'l=$(wc -l < "$1"); [ "$l" -gt 1000 ] && echo "$l $1"' _ {} \;
+  find custom_components/open_spot_forecast -name '*.py' -exec sh -c 'l=$(wc -l < "$1"); [ "$l" -gt 1000 ] && echo "$l $1"' _ {} \;
   # Size
-  find custom_components/hsem -name '*.py' -exec sh -c 's=$(wc -c < "$1"); [ "$s" -gt 30720 ] && echo "$s $1"' _ {} \;
+  find custom_components/open_spot_forecast -name '*.py' -exec sh -c 's=$(wc -c < "$1"); [ "$s" -gt 30720 ] && echo "$s $1"' _ {} \;
   ```
 
 ## Issue-Solving Rules
@@ -181,7 +183,7 @@ These helpers exist — never re-implement them inline:
 - Always use [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) for commit messages and pull request titles.
 - Format: `<type>(<scope>): <description>`
 - Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `perf`, `test`, `ci`
-- Scopes should be specific to the domain being changed (e.g., `sensor`, `flow`, `config`)
+- Scopes should be specific to the domain being changed (e.g., `sensor`, `flow`, `config`, `ml`)
 - Always include `Fixes #<ISSUE_NUMBER>` in the PR description
 
 ## Code Quality
@@ -228,13 +230,12 @@ These helpers exist — never re-implement them inline:
 
 ## Do Not
 
-- Do not refactor planner or safety logic unless solving a specific issue that requires it.
+- Do not refactor ML or storage logic unless solving a specific issue that requires it.
 - Do not change runtime behavior unless specifically requested.
 - Do not fix unrelated bugs in the same PR.
 - Do not reformat the entire codebase unless required by tooling setup.
 - Do not generate code without understanding the context first.
-- Do not redefine `DISCHARGE_RECS`, `CHARGE_RECS`, or `clamp_efficiency()` locally — import from canonical locations.
-- Do not use `cycle_cost * 0.30` as a threshold proxy — use `calculate_recommended_threshold()`.
+- Do not redefine canonical constants or helpers locally — import from canonical locations.
 - Do not use `break` in slot iteration loops unless the loop is explicitly ordered and early exit is provably correct.
 
 <!-- rtk-instructions v2 -->

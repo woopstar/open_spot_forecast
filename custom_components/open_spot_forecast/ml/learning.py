@@ -1,15 +1,18 @@
 """Self-learning, historical storage, and persistence."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
 
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class LearningMixin:
+class LearningMixin(PredictorBase):
     """Historical price storage, self-learning, and persistence methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -630,8 +633,12 @@ class LearningMixin:
                 continue
 
             _LOGGER.info("Backfilling Nordpool data for %s", date_str)
-            consumption = await fetch_consumption_prognosis(target, self.region)
-            production = await fetch_production_prognosis(target, self.region)
+            consumption, _ = await fetch_consumption_prognosis(target, self.region)
+            production, _ = await fetch_production_prognosis(target, self.region)
+
+            # Throttle the backfill so we don't trip Nordpool's Cloudflare rate
+            # limiter (which returns 401/429 when hammered with rapid requests).
+            await asyncio.sleep(1.0)
 
             entries: list[dict] = []
             if consumption:
@@ -705,7 +712,7 @@ class LearningMixin:
                         int(hpo_n),
                         float(hpo_lr),
                     )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
 
             pred_count = data.get("prediction_count", 0)
@@ -722,8 +729,13 @@ class LearningMixin:
 
             # Backfill Nordpool data for all dates in price_history so
             # the next training cycle has real supply/demand features.
+            # Run in the background: the backfill issues many network calls
+            # and must never block Home Assistant startup.
             if self.price_history:
-                await self._backfill_nordpool_data()
+                self.hass.async_create_background_task(
+                    self._backfill_nordpool_data(),
+                    "open_spot_forecast_nordpool_backfill",
+                )
 
             # Catch-up replay: if learned samples are tiny compared to pending
             # predictions (e.g. after schema migration wiped error_metrics), replay

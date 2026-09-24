@@ -1,7 +1,7 @@
-# Claude Code Instructions for HSEM
+# Claude Code Instructions for Open Spot Forecast
 
 This document provides practical guidance for Claude Code (Claude-powered coding assistant) when
-working with the HSEM repository.
+working with the Open Spot Forecast (OSF) repository.
 
 **Note:** This is a quick reference guide. For comprehensive rules, constraints, and standards,
 please refer to `AGENTS.md`.
@@ -27,7 +27,7 @@ please refer to `AGENTS.md`.
 2. **Preserve Existing Behavior**
 
    - Do not refactor unrelated code
-   - Do not modify planner logic or safety features unless specifically requested
+   - Do not modify ML or storage logic unless specifically requested
    - Do not reformat entire directories unless required for tooling setup
    - Keep changes focused and minimal
 
@@ -48,25 +48,26 @@ please refer to `AGENTS.md`.
 
 When implementing a utility or helper function:
 
-1. **Search first**: Check if similar functionality exists in `utils/misc.py` or other utils modules
-2. **If used 2+ times**: The function MUST live in utils, NOT in multiple modules
-3. **Never duplicate**: Create the function in the appropriate utils module, then import it
+1. **Search first**: Check if similar functionality exists in `const.py`, `sensor_reader.py`, or
+   the `ml/` modules
+2. **If used 2+ times**: The function MUST live in a shared module, NOT in multiple modules
+3. **Never duplicate**: Create the function in the appropriate shared module, then import it
    everywhere
 4. **DRY Principle**: Do not repeat utility logic across multiple files
 
 **Example of WRONG approach (creates duplicates):**
 
-- Create `_convert_months_to_int()` in `flows/months.py`
-- Create `_convert_month_list_to_int()` in `working_mode_sensor.py`
+- Create `_convert_price_unit()` in `sensor.py`
+- Create `_convert_price_unit_v2()` in `binary_sensor.py`
 - ❌ Result: Two functions doing the same thing in different places
 
 **Example of CORRECT approach:**
 
-- Create `convert_months_to_int()` in `utils/misc.py` (centralized, public)
-- Import it in `flows/months.py`:
-  `from custom_components.hsem.utils.misc import convert_months_to_int`
-- Import it in `working_mode_sensor.py`:
-  `from custom_components.hsem.utils.misc import convert_months_to_int`
+- Create `convert_price_unit()` in `const.py` (centralized, public)
+- Import it in `sensor.py`:
+  `from custom_components.open_spot_forecast.const import convert_price_unit`
+- Import it in `binary_sensor.py`:
+  `from custom_components.open_spot_forecast.const import convert_price_unit`
 - ✅ Result: Single source of truth, easier to maintain
 
 **Common mistake to avoid:**
@@ -87,45 +88,43 @@ When implementing a utility or helper function:
 - Integer-valued comparisons (`== 0` on a sum of `int` weights) are fine; only float literals
   and float-typed variables are subject to this rule.
 
-## Planner Specification Compliance (Mandatory)
+## ML Specification Compliance (Mandatory)
 
-**Before touching any planner code**, read `docs/planner-spec.md` — it is the single source
-of truth for planner semantics.
+**Before touching any ML code**, read `docs/ml_documentation.md` — it is the single source
+of truth for the model, feature vector, and data flow. Also read `docs/self_learning.md` for
+self-learning/bias-correction changes and `docs/persistence.md` for storage changes.
 
 Rules:
 
-1. **Read the spec first** — applies to engine, cost function, SoC simulation, candidate
-   generation, slot population, and safety gates.
-2. **Verify consistency** — every change must satisfy the invariants listed under
-   _Invariants for tests_ in the spec (energy balance, SoC bounds, cost identity,
-   terminal-SoC accounting, safety gate behaviour).
-3. **Update the spec** when a change intentionally alters planner semantics. Spec and
+1. **Read the docs first** — applies to the model, feature vector, self-learning, bias
+   correction, confidence scoring, and storage schema.
+2. **Verify consistency** — every change must satisfy the documented invariants (20-feature
+   vector, 96-slot granularity, bias-correction EMA, solar-scaling factor, confidence floor).
+3. **Update the docs** when a change intentionally alters ML semantics. Docs and
    implementation must never diverge silently.
-4. **Add or update tests** covering the affected invariants for every planner change.
-5. **Definition of Done** for planner work: spec updated (if needed) + invariant tests passing.
+4. **Add or update tests** covering the affected invariants for every ML change.
+5. **Definition of Done** for ML work: docs updated (if needed) + invariant tests passing.
 
-Quick checklist before opening a planner PR:
+Quick checklist before opening an ML PR:
 
-- [ ] `docs/planner-spec.md` read and understood
-- [ ] Energy balance holds for every slot
-- [ ] SoC stays within configured bounds
-- [ ] `winner.cost == final_output.cost` (no post-selection mutation)
-- [ ] Terminal SoC affects cost (emptying the battery is not free)
-- [ ] No-action baseline includes normal PV/battery self-consumption
-- [ ] Read-only / degraded / dry-run gates block hardware writes
-- [ ] Spec updated if semantics changed
+- [ ] `docs/ml_documentation.md` read and understood
+- [ ] Feature vector stays at 20 canonical features
+- [ ] Slot granularity is 96 (15-min), never hourly (0-23)
+- [ ] Bias correction uses the EMA formula `0.9 * old + 0.1 * bias_ratio`
+- [ ] Solar scaling uses the EMA of `actual_power / solcast_estimate`
+- [ ] Training uses `weather_history` actuals; prediction uses live forecasts
+- [ ] Docs updated if semantics changed
 - [ ] Tests added or updated
 
 ## Translations (Mandatory)
 
-HSEM ships English, Danish, German, and Spanish
-(`custom_components/hsem/translations/{en,da,de,es}.json`). `en.json` is the
-source of truth. Any new or changed user-facing string (entity name,
-config/options flow label, selector option, error, service) must be added to
-**all four** files in the same PR — activate the `hsem-translation-sync` skill
-and run `./scripts/quality.sh translations` (or `python3 scripts/validate_translations.py`
-directly) before opening the PR; it must report 0 missing/stale/placeholder-mismatch
-keys. This check is also enforced by CI (`lint-and-test.yml`) and by `./scripts/quality.sh all`.
+OSF ships English and Danish (`custom_components/open_spot_forecast/translations/{en,da}.json`). `en.json` is
+the source of truth. Any new or changed user-facing string (entity name, config/options flow
+label, selector option, error, service) must be added to **both** files in the same PR —
+activate the `osf-translation-sync` skill and run `./scripts/quality.sh translations` (or
+`python3 scripts/validate_translations.py` directly) before opening the PR; it must report 0
+missing/stale/placeholder-mismatch keys. This check is also enforced by CI
+(`lint-and-test.yml`) and by `./scripts/quality.sh all`.
 
 ## Development Workflow
 
@@ -228,26 +227,26 @@ linting issues.**
 Always include type hints and docstrings:
 
 ```python
-def calculate_consumption_prediction(
-    historical_data: list[float],
+def calculate_price_prediction(
+    historical_prices: list[float],
     weights: dict[str, float],
 ) -> float:
     """
-    Calculate predicted consumption based on historical data and weights.
+    Calculate the predicted price based on historical prices and weights.
 
     Args:
-        historical_data: List of historical consumption values in kWh.
+        historical_prices: List of historical spot prices.
         weights: Dictionary mapping time windows to weight factors.
 
     Returns:
-        Predicted consumption value in kWh.
+        Predicted price value.
 
     Raises:
-        ValueError: If historical_data is empty or weights contain invalid values.
+        ValueError: If historical_prices is empty or weights contain invalid values.
     """
-    if not historical_data:
-        raise ValueError("historical_data cannot be empty")
-    return sum(val * weights.get(str(i), 0) for i, val in enumerate(historical_data))
+    if not historical_prices:
+        raise ValueError("historical_prices cannot be empty")
+    return sum(val * weights.get(str(i), 0) for i, val in enumerate(historical_prices))
 ```
 
 ## Python Version and Style
@@ -269,7 +268,7 @@ Write tests for all new functions and features:
 pytest tests/
 
 # Run with coverage
-pytest tests/ --cov=hsem --cov-report=html
+pytest tests/ --cov=custom_components --cov-report=html
 
 # Run specific test file
 pytest tests/test_module.py
@@ -297,8 +296,8 @@ atomic and focused ✅ Reference `AGENTS.md` for comprehensive rules
 ## What to Avoid
 
 ❌ Submitting a PR without running `./scripts/quality.sh all` first ❌ Ignoring lint warnings or errors
-❌ Using Python versions other than 3.14 ❌ Refactoring unrelated code ❌ Changing planner or safety
-features without explicit issue ❌ Reformatting code outside your changes ❌ Adding new dependencies
+❌ Using Python versions other than 3.14 ❌ Refactoring unrelated code ❌ Changing ML or storage
+logic without explicit issue ❌ Reformatting code outside your changes ❌ Adding new dependencies
 without justification ❌ Changing logging levels or sensitive output ❌ Modifying configuration
 without issue requirement ❌ Committing secrets, API keys, or credentials ❌ Merging PRs without
 explicit permission

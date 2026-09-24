@@ -3,9 +3,9 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hsem"
+name = "open-spot-forecast"
 version = "1.0.0"
-description = "Home Solar Energy Manager - Energy optimization for home battery systems"
+description = "Open Spot Forecast - Machine-learning electricity spot price forecasting for Home Assistant"
 readme = "README.md"
 license = {text = "AGPL-3.0"}
 requires-python = ">=3.14.2,<3.15"
@@ -103,7 +103,7 @@ keep-runtime-typing = true
 max-complexity = 25
 
 [tool.ruff.lint.isort]
-known-first-party = ["hsem", "custom_components"]
+known-first-party = ["open_spot_forecast", "custom_components"]
 combine-as-imports = true
 section-order = ["future", "standard-library", "third-party", "homeassistant", "first-party", "local-folder"]
 
@@ -137,6 +137,7 @@ markers = [
 
 [tool.mypy]
 python_version = "3.14"
+explicit_package_bases = true
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
@@ -144,8 +145,8 @@ disallow_incomplete_defs = true
 
 [tool.coverage.run]
 source = ["custom_components"]
-# Emit repo-relative paths (custom_components/hsem/x.py) rather than paths
-# relative to `source` (hsem/x.py).  Codecov matches report paths against the
+# Emit repo-relative paths (custom_components/open_spot_forecast/x.py) rather than paths
+# relative to `source` (open_spot_forecast/x.py).  Codecov matches report paths against the
 # repo tree, and the stripped form matches nothing.
 relative_files = true
 omit = [

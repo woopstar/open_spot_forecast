@@ -5,10 +5,14 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+from homeassistant.util import dt as dt_util
+
+from .base import PredictorBase
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class FeatureMixin:
+class FeatureMixin(PredictorBase):
     """Feature extraction and engineering methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
@@ -39,14 +43,14 @@ class FeatureMixin:
         # Fallback: use current wind speed from HA sensor (scalar)
         wind_speed = weather_data.get("wind_speed", 0)
         if isinstance(wind_speed, (int, float)) and wind_speed > 0:
-            wind_power = self._wind_power_curve(wind_speed)
+            wind_power_scalar = self._wind_power_curve(wind_speed)
             return {
                 "wind_speed_mean": float(wind_speed),
                 "wind_speed_max": float(wind_speed),
                 "wind_speed_std": 0.0,
-                "wind_power_mean": float(wind_power),
-                "wind_power_max": float(wind_power),
-                "wind_power_estimate": float(wind_power),
+                "wind_power_mean": float(wind_power_scalar),
+                "wind_power_max": float(wind_power_scalar),
+                "wind_power_estimate": float(wind_power_scalar),
                 "wind_direction": float(weather_data.get("wind_direction", 0)),
             }
 
@@ -143,9 +147,13 @@ class FeatureMixin:
         Predictions start from the next whole hour after now, or after
         known_data_end_time (whichever is later), to avoid predicting
         prices we already have confirmed data for.
+
+        Internal arithmetic is in UTC; the emitted ``start``/``end``
+        timestamps and time-of-day fields are converted to the local time
+        zone so they match the price source and HA's clock.
         """
         features = []
-        now = datetime.now()
+        now = dt_util.utcnow()
 
         # Start from the next whole hour
         next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
@@ -173,23 +181,23 @@ class FeatureMixin:
                 )
                 dt_end = dt + timedelta(minutes=interval_minutes)
 
-                # Attach timezone for ISO formatting (matches Stromligning format)
-                dt_tz = dt.replace(tzinfo=self.tz) if self.tz else dt
-                dt_end_tz = dt_end.replace(tzinfo=self.tz) if self.tz else dt_end
+                # Convert to local time for display and feature extraction
+                dt_local = dt_util.as_local(dt)
+                dt_end_local = dt_util.as_local(dt_end)
 
                 features.append(
                     {
-                        "start": dt_tz.isoformat(),
-                        "end": dt_end_tz.isoformat(),
-                        "hour": dt.hour,
-                        "minute": dt.minute,
-                        "day_of_week": dt.weekday(),
-                        "is_weekend": 1 if dt.weekday() >= 5 else 0,
-                        "month": dt.month,
-                        "hour_sin": float(np.sin(2 * np.pi * dt.hour / 24)),
-                        "hour_cos": float(np.cos(2 * np.pi * dt.hour / 24)),
-                        "dow_sin": float(np.sin(2 * np.pi * dt.weekday() / 7)),
-                        "dow_cos": float(np.cos(2 * np.pi * dt.weekday() / 7)),
+                        "start": dt_local.isoformat(),
+                        "end": dt_end_local.isoformat(),
+                        "hour": dt_local.hour,
+                        "minute": dt_local.minute,
+                        "day_of_week": dt_local.weekday(),
+                        "is_weekend": 1 if dt_local.weekday() >= 5 else 0,
+                        "month": dt_local.month,
+                        "hour_sin": float(np.sin(2 * np.pi * dt_local.hour / 24)),
+                        "hour_cos": float(np.cos(2 * np.pi * dt_local.hour / 24)),
+                        "dow_sin": float(np.sin(2 * np.pi * dt_local.weekday() / 7)),
+                        "dow_cos": float(np.cos(2 * np.pi * dt_local.weekday() / 7)),
                     }
                 )
 
@@ -274,15 +282,17 @@ class FeatureMixin:
             wind_off = 0.0
             wind_on = 0.0
 
-            if start and consumption_data:
-                hour_key = start[:13] if len(start) >= 13 else start
-                # Try exact match first, then hour-prefix match
-                consumption = consumption_data.get(
-                    start, consumption_data.get(hour_key + ":00:00Z", 0.0)
-                )
+            # Nordpool returns UTC timestamps; convert the local prediction
+            # start back to UTC so the lookups match.
+            start_dt = dt_util.parse_datetime(start) if start else None
+            utc_start = dt_util.as_utc(start_dt) if start_dt else None
 
-            if start and prod_by_ts:
-                prod = prod_by_ts.get(start)
+            if utc_start and consumption_data:
+                hour_key = utc_start.strftime("%Y-%m-%dT%H:00:00Z")
+                consumption = consumption_data.get(hour_key, 0.0)
+
+            if utc_start and prod_by_ts:
+                prod = prod_by_ts.get(utc_start.strftime("%Y-%m-%dT%H:%M:%SZ"))
                 if prod:
                     solar_gen = prod.get("solar", 0.0)
                     wind_off = prod.get("wind_offshore", 0.0)
@@ -324,7 +334,7 @@ class FeatureMixin:
             else:
                 try:
                     sanitized.append(float(val))
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     sanitized.append(0.0)
         return sanitized
 

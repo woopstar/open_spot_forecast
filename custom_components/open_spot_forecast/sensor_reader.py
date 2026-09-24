@@ -1,10 +1,12 @@
 """Sensor reader for Home Assistant integrations."""
 
+import contextlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,7 +41,7 @@ class SensorReader:
 
         try:
             return float(state.state)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             _LOGGER.debug("Sensor %s state '%s' is not numeric", entity_id, state.state)
             return None
 
@@ -72,7 +74,7 @@ class SensorReader:
 
         Falls back to using current price if no arrays found.
         """
-        result = {
+        result: dict[str, Any] = {
             "current_price": None,
             "today": [],
             "tomorrow": [],
@@ -92,7 +94,7 @@ class SensorReader:
         # Current price
         try:
             result["current_price"] = float(state.state)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             _LOGGER.debug("Stromligning sensor state is not numeric")
 
         # Log all available attributes for debugging
@@ -110,10 +112,8 @@ class SensorReader:
 
         if prices_attr and isinstance(prices_attr, list):
             # Parse the price array
-            from datetime import datetime, timedelta
-
-            now = datetime.now()
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            local_now = dt_util.as_local(dt_util.utcnow())
+            today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow_start = today_start + timedelta(days=1)
 
             for item in prices_attr:
@@ -125,27 +125,25 @@ class SensorReader:
 
                     if price is not None and timestamp is not None:
                         try:
-                            # Parse timestamp
+                            # Parse and normalize to local time for comparison
                             if isinstance(timestamp, str):
-                                dt = datetime.fromisoformat(
-                                    timestamp.replace("Z", "+00:00")
-                                )
-                                # Remove timezone info for comparison
-                                if dt.tzinfo is not None:
-                                    dt = dt.replace(tzinfo=None)
-                            else:
+                                dt = dt_util.parse_datetime(timestamp)
+                            elif isinstance(timestamp, datetime):
                                 dt = timestamp
-                                # Remove timezone info if present
-                                if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                                    dt = dt.replace(tzinfo=None)
+                            else:
+                                dt = None
+
+                            if dt is None:
+                                continue
+                            dt_local = dt_util.as_local(dt)
 
                             price_val = float(price)
 
                             # Categorize as today or tomorrow
-                            if today_start <= dt < tomorrow_start:
+                            if today_start <= dt_local < tomorrow_start:
                                 result["today"].append(price_val)
                                 result["raw_today"].append(item)
-                            elif dt >= tomorrow_start:
+                            elif dt_local >= tomorrow_start:
                                 result["tomorrow"].append(price_val)
                                 result["raw_tomorrow"].append(item)
 
@@ -166,9 +164,11 @@ class SensorReader:
                 result["tomorrow"] = [float(p) for p in tomorrow_data if p is not None]
                 _LOGGER.debug("Found tomorrow prices in 'tomorrow' attribute")
 
-        # If we still have no prices but have current price, use it as fallback
+        # If we still have no prices but have current price, use it as fallback.
+        # This is expected during the midnight rollover when the sensor clears
+        # its price arrays but still reports a current price, so log at debug.
         if not result["today"] and result["current_price"] is not None:
-            _LOGGER.warning(
+            _LOGGER.debug(
                 "Stromligning sensor has current price but no price arrays. "
                 "Using current price as fallback for today."
             )
@@ -190,7 +190,7 @@ class SensorReader:
 
         This sensor contains tomorrow's prices in the 'prices' attribute.
         """
-        result = {
+        result: dict[str, Any] = {
             "tomorrow": [],
             "raw_tomorrow": [],
             "available": False,
@@ -219,8 +219,6 @@ class SensorReader:
             _LOGGER.debug("Stromligning tomorrow sensor has no prices attribute")
             return result
 
-        from datetime import datetime
-
         for item in prices_attr:
             if isinstance(item, dict):
                 price = item.get("price") or item.get("value")
@@ -230,20 +228,6 @@ class SensorReader:
 
                 if price is not None and timestamp is not None:
                     try:
-                        # Parse timestamp
-                        if isinstance(timestamp, str):
-                            dt = datetime.fromisoformat(
-                                timestamp.replace("Z", "+00:00")
-                            )
-                            # Remove timezone info for comparison
-                            if dt.tzinfo is not None:
-                                dt = dt.replace(tzinfo=None)
-                        else:
-                            dt = timestamp
-                            # Remove timezone info if present
-                            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                                dt = dt.replace(tzinfo=None)
-
                         price_val = float(price)
                         result["tomorrow"].append(price_val)
                         result["raw_tomorrow"].append(item)
@@ -271,7 +255,7 @@ class SensorReader:
         Returns:
             Dictionary with weather data
         """
-        weather_data = {
+        weather_data: dict[str, Any] = {
             "wind_speed": None,
             "wind_direction": None,
             "solar_power": None,
@@ -334,10 +318,8 @@ class SensorReader:
             if temp_entity.startswith("weather."):
                 state = self.hass.states.get(temp_entity)
                 if state:
-                    try:
+                    with contextlib.suppress(ValueError, TypeError):
                         weather_data["temperature"] = float(state.state)
-                    except (ValueError, TypeError):
-                        pass
             else:
                 weather_data["temperature"] = self.get_sensor_state(temp_entity)
 
@@ -383,7 +365,7 @@ class SensorReader:
         Returns:
             Dictionary with solar forecast data
         """
-        result = {
+        result: dict[str, Any] = {
             "current_power": None,
             "estimate_today": None,
             "estimate10": None,
@@ -401,10 +383,8 @@ class SensorReader:
             return result
 
         # Current power (state value)
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             result["current_power"] = float(state.state)
-        except (ValueError, TypeError):
-            pass
 
         # Today's estimates
         result["estimate_today"] = state.attributes.get("estimate")
@@ -447,7 +427,7 @@ class SensorReader:
         Returns:
             Dictionary with weather data
         """
-        result = {
+        result: dict[str, Any] = {
             "temperature": None,
             "wind_speed": None,
             "wind_direction": None,

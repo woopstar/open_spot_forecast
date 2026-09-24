@@ -111,6 +111,6 @@ Open Spot Forecast
 Version: %s
 This is a custom integration
 If you have any issues, open an issue here:
-https://github.com/open-spot-forecast/open_spot_forecast/issues
+https://github.com/woopstar/open_spot_forecast/issues
 -------------------------------------------------------------------
 """
