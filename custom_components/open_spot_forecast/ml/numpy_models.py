@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+from homeassistant.util import dt as dt_util
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -401,7 +403,7 @@ class FeatureEngineer:
         """Create feature matrix from prices and weather data."""
         if timestamps is None:
             timestamps = [
-                datetime.now() + timedelta(hours=i) for i in range(len(prices))
+                dt_util.now() + timedelta(hours=i) for i in range(len(prices))
             ]
 
         features = []

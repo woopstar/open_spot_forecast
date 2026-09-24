@@ -24,8 +24,8 @@ _LOGGER = logging.getLogger(__name__)
 def lead_time_hours(slot_start: str, stored_at: str) -> float | None:
     """Return the hours between storing a prediction and the slot it targets.
 
-    Naive timestamps (``stored_at`` is written with ``datetime.now()``) are
-    interpreted in Home Assistant's local time zone.
+    Naive timestamps (``stored_at`` from before it was stored with its UTC
+    offset) are interpreted in Home Assistant's local time zone.
 
     Args:
         slot_start: ISO start of the predicted slot.

@@ -32,7 +32,7 @@ from .const import (
 )
 from .ml.predictor import SpotPricePredictor
 from .sensor_reader import SensorReader, async_read_weather_forecast
-from .time_slots import tomorrow_prices_complete
+from .time_slots import floor_to_slot, slot_index_in_day, tomorrow_prices_complete
 from .tomorrow_prices import TomorrowPriceChecker
 
 _LOGGER = logging.getLogger(__name__)
@@ -738,22 +738,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # lookup date must be today's: it is paired with today's price.
                 slot_time = dt_util.now()
 
-                # Determine the interval: 15-min Stromligning data has
-                # 4 entries per hour; hourly Nordpool data has 1
-                intervals_per_hour = 4 if len(current_prices) > 24 else 1
+                # Determine the interval: 15-min Stromligning data has 92-100
+                # entries per day; hourly data has 23-25
+                interval_minutes = 15 if len(current_prices) > 25 else 60
 
-                # Build the timestamp at the current interval boundary
-                learn_minute = (slot_time.minute // (60 // intervals_per_hour)) * (
-                    60 // intervals_per_hour
-                )
-                learn_dt = slot_time.replace(
-                    minute=learn_minute, second=0, microsecond=0
-                )
-
-                # Calculate the correct index into current_prices
-                learn_hour = slot_time.hour
-                price_index = learn_hour * intervals_per_hour + (
-                    learn_minute // (60 // intervals_per_hour)
+                # The current slot, and its position in today's prices counted
+                # from local midnight on the UTC timeline, so a 92- or 100-slot
+                # DST day is indexed correctly (not hour * 4 + minute // 15)
+                learn_dt = floor_to_slot(slot_time, interval_minutes)
+                price_index = slot_index_in_day(
+                    slot_time, interval_minutes=interval_minutes
                 )
 
                 # Get actual price for that interval

@@ -7,7 +7,7 @@ cannot shift the result.
 """
 
 from collections.abc import Sequence
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 
 from homeassistant.util import dt as dt_util
 
@@ -75,23 +75,93 @@ def first_prediction_slot(
     return start
 
 
-def slots_in_local_day(day: date, interval_minutes: int = SLOT_MINUTES) -> int:
+def local_midnight(day: date, tz: tzinfo | None = None) -> datetime:
+    """Return the start of the local calendar ``day``.
+
+    Args:
+        day: Local calendar date.
+        tz: Time zone; Home Assistant's time zone by default.
+
+    Returns:
+        Local midnight as a timezone-aware datetime in ``tz``.
+    """
+    return datetime.combine(day, time(), tzinfo=tz or dt_util.get_default_time_zone())
+
+
+def slots_in_local_day(
+    day: date, interval_minutes: int = SLOT_MINUTES, tz: tzinfo | None = None
+) -> int:
     """Return the number of slots in a local calendar day.
 
     96 for 15-minute slots on a normal day; 92 on the spring-forward day and
     100 on the fall-back day, since those days last 23 and 25 hours.
 
     Args:
-        day: Local calendar date, in Home Assistant's time zone.
+        day: Local calendar date.
         interval_minutes: Slot length in minutes (a divisor of 60).
+        tz: Time zone; Home Assistant's time zone by default.
 
     Returns:
         The number of slots between the day's local midnight and the next.
     """
     # Subtract in UTC: aware datetimes sharing a tzinfo subtract by wall clock
-    start = dt_util.start_of_local_day(day).astimezone(UTC)
-    end = dt_util.start_of_local_day(day + timedelta(days=1)).astimezone(UTC)
+    start = local_midnight(day, tz).astimezone(UTC)
+    end = local_midnight(day + timedelta(days=1), tz).astimezone(UTC)
     return (end - start) // timedelta(minutes=interval_minutes)
+
+
+def slot_start_in_day(
+    day: date,
+    index: int,
+    tz: tzinfo | None = None,
+    interval_minutes: int = SLOT_MINUTES,
+) -> datetime:
+    """Return the start of slot ``index`` of a local day, in local time.
+
+    Steps on the UTC timeline from local midnight, so every slot after a DST
+    change gets its real wall-clock time and offset: slot 8 of 2026-03-29 in
+    Europe/Copenhagen is 03:00+02:00, and slots 8 and 12 of 2026-10-25 are
+    both 02:00, at +02:00 and +01:00.
+
+    Args:
+        day: Local calendar date.
+        index: Slot position from local midnight (0-91/95/99 for 15 minutes).
+        tz: Time zone; Home Assistant's time zone by default.
+        interval_minutes: Slot length in minutes (a divisor of 60).
+
+    Returns:
+        The slot start as a timezone-aware datetime in ``tz``.
+    """
+    midnight = local_midnight(day, tz)
+    utc_start = midnight.astimezone(UTC) + index * timedelta(minutes=interval_minutes)
+    return utc_start.astimezone(midnight.tzinfo)
+
+
+def slot_index_in_day(
+    moment: datetime,
+    tz: tzinfo | None = None,
+    interval_minutes: int = SLOT_MINUTES,
+) -> int:
+    """Return the position of the slot containing ``moment`` in its local day.
+
+    The inverse of ``slot_start_in_day``: counted on the UTC timeline from
+    local midnight, so on DST days it indexes a 92- or 100-slot day correctly
+    instead of assuming ``hour * 4 + minute // 15``.
+
+    Args:
+        moment: Timezone-aware datetime.
+        tz: Time zone of the day; Home Assistant's time zone by default.
+        interval_minutes: Slot length in minutes (a divisor of 60).
+
+    Returns:
+        Slots between local midnight of ``moment``'s local date and its slot.
+    """
+    zone = tz or dt_util.get_default_time_zone()
+    midnight = local_midnight(moment.astimezone(zone).date(), zone)
+    elapsed = floor_to_slot(moment, interval_minutes).astimezone(
+        UTC
+    ) - midnight.astimezone(UTC)
+    return elapsed // timedelta(minutes=interval_minutes)
 
 
 def tomorrow_prices_complete(
