@@ -34,6 +34,10 @@ class _SpyModel:
     """Stands in for the price model and records the rows it receives."""
 
     def __init__(self) -> None:
+        # Hyperparameters _train_models copies into its holdout model
+        self.n_estimators = 10
+        self.learning_rate = 0.1
+        self.random_state = 42
         self.trees: list[object] = []
         self.fit_rows = np.empty((0, 0))
         self.predict_rows: list[np.ndarray] = []
@@ -161,7 +165,7 @@ def test_training_and_prediction_share_time_features(tmp_path: Path) -> None:
 def test_training_rows_come_from_build_feature_vector(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, built_rows: list[list[float]]
 ) -> None:
-    """_train_models fits on build_feature_vector rows (first 80 %)."""
+    """_train_models fits the live model on all build_feature_vector rows."""
     predictor = _predictor(tmp_path)
     predictor.price_history = [
         {"date": day, "prices": [float(i % 7) for i in range(96)]}
@@ -174,7 +178,7 @@ def test_training_rows_come_from_build_feature_vector(
     predictor._train_models([], [{"temperature": 7.5}])
 
     assert len(built_rows) == 192
-    np.testing.assert_array_equal(spy.fit_rows, np.array(built_rows[:153]))
+    np.testing.assert_array_equal(spy.fit_rows, np.array(built_rows))
     assert spy.fit_rows.shape[1] == len(FEATURE_NAMES)
 
 

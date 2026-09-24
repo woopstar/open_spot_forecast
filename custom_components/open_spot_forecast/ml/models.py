@@ -163,21 +163,30 @@ class ModelMixin(PredictorBase):
             X = np.array(X_list)
             y = np.array(y_list)
 
-            # Train/test split (80/20)
+            # Chronological train/test split (80/20), used only to measure
+            # holdout error with a copy of the model on the oldest 80 %
             split_idx = int(0.8 * len(X))
             X_train, X_test = X[:split_idx], X[split_idx:]
             y_train, y_test = y[:split_idx], y[split_idx:]
 
-            # Train price model
-            self.price_model.fit(X_train, y_train)
+            holdout_model = NumpyGradientBoosting(
+                n_estimators=self.price_model.n_estimators,
+                learning_rate=self.price_model.learning_rate,
+                random_state=self.price_model.random_state,
+            )
+            holdout_model.fit(X_train, y_train)
 
             # Evaluate
-            y_pred = self.price_model.predict(X_test)
+            y_pred = holdout_model.predict(X_test)
             mae = float(np.mean(np.abs(y_test - y_pred)))
             rmse = float(np.sqrt(np.mean((y_test - y_pred) ** 2)))
 
+            # The live model trains on all rows, so the most recent days
+            # (closest to what is being predicted) are part of it
+            self.price_model.fit(X, y)
+
             _LOGGER.info(
-                "ML model trained: MAE=%.2f, RMSE=%.2f, samples=%d, days=%d",
+                "ML model trained: holdout MAE=%.2f, RMSE=%.2f, samples=%d, days=%d",
                 mae,
                 rmse,
                 len(all_prices),
