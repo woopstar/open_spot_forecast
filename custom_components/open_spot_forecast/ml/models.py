@@ -8,6 +8,7 @@ import numpy as np
 
 from homeassistant.util import dt as dt_util
 
+from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 from .features import build_feature_vector
 from .numpy_models import NumpyGradientBoosting
@@ -447,24 +448,9 @@ class ModelMixin(PredictorBase):
             len(hourly_pattern),
         )
 
-        now = dt_util.utcnow()
-
-        # Start from the next whole hour
-        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-
-        # If we have known/confirmed prices, start after those end
-        if known_data_end_time is not None:
-            if known_data_end_time.minute > 0 or known_data_end_time.second > 0:
-                ceil_end = known_data_end_time.replace(
-                    minute=0, second=0, microsecond=0
-                ) + timedelta(hours=1)
-            else:
-                ceil_end = known_data_end_time.replace(
-                    minute=0, second=0, microsecond=0
-                )
-            start_time = max(next_hour, ceil_end)
-        else:
-            start_time = next_hour
+        start_time = first_prediction_slot(
+            dt_util.utcnow(), known_data_end_time, interval_minutes
+        )
 
         intervals_per_day = (24 * 60) // interval_minutes
 

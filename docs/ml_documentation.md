@@ -138,6 +138,15 @@ Hyperparameter optimization compares its candidates on the same chronological
 80/20 split, then replaces `price_model` with an unfitted model using the best
 parameters, which the next training fits on all rows.
 
+## Prediction Window
+
+Predictions start at the current 15-minute slot (at 10:05, the 10:00 slot).
+If the confirmed prices reach further, they start where the confirmed prices
+end instead (e.g. 12:30), so no confirmed slot is predicted and none is
+skipped. The ML path and the heuristic fallback both get this start from
+`first_prediction_slot()` in `time_slots.py`, which rounds on the UTC
+timeline so a DST change cannot shift it.
+
 ## Solar Scaling Factor
 
 A learned EMA ratio between Solcast's estimate and actual inverter output:
