@@ -2,10 +2,11 @@
 
 import contextlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -111,10 +112,8 @@ class SensorReader:
 
         if prices_attr and isinstance(prices_attr, list):
             # Parse the price array
-            from datetime import datetime, timedelta
-
-            now = datetime.now()
-            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            local_now = dt_util.as_local(dt_util.utcnow())
+            today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
             tomorrow_start = today_start + timedelta(days=1)
 
             for item in prices_attr:
@@ -126,27 +125,25 @@ class SensorReader:
 
                     if price is not None and timestamp is not None:
                         try:
-                            # Parse timestamp
+                            # Parse and normalize to local time for comparison
                             if isinstance(timestamp, str):
-                                dt = datetime.fromisoformat(
-                                    timestamp.replace("Z", "+00:00")
-                                )
-                                # Remove timezone info for comparison
-                                if dt.tzinfo is not None:
-                                    dt = dt.replace(tzinfo=None)
-                            else:
+                                dt = dt_util.parse_datetime(timestamp)
+                            elif isinstance(timestamp, datetime):
                                 dt = timestamp
-                                # Remove timezone info if present
-                                if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                                    dt = dt.replace(tzinfo=None)
+                            else:
+                                dt = None
+
+                            if dt is None:
+                                continue
+                            dt_local = dt_util.as_local(dt)
 
                             price_val = float(price)
 
                             # Categorize as today or tomorrow
-                            if today_start <= dt < tomorrow_start:
+                            if today_start <= dt_local < tomorrow_start:
                                 result["today"].append(price_val)
                                 result["raw_today"].append(item)
-                            elif dt >= tomorrow_start:
+                            elif dt_local >= tomorrow_start:
                                 result["tomorrow"].append(price_val)
                                 result["raw_tomorrow"].append(item)
 
@@ -222,8 +219,6 @@ class SensorReader:
             _LOGGER.debug("Stromligning tomorrow sensor has no prices attribute")
             return result
 
-        from datetime import datetime
-
         for item in prices_attr:
             if isinstance(item, dict):
                 price = item.get("price") or item.get("value")
@@ -233,20 +228,6 @@ class SensorReader:
 
                 if price is not None and timestamp is not None:
                     try:
-                        # Parse timestamp
-                        if isinstance(timestamp, str):
-                            dt = datetime.fromisoformat(
-                                timestamp.replace("Z", "+00:00")
-                            )
-                            # Remove timezone info for comparison
-                            if dt.tzinfo is not None:
-                                dt = dt.replace(tzinfo=None)
-                        else:
-                            dt = timestamp
-                            # Remove timezone info if present
-                            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
-                                dt = dt.replace(tzinfo=None)
-
                         price_val = float(price)
                         result["tomorrow"].append(price_val)
                         result["raw_tomorrow"].append(item)

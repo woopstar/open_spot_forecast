@@ -3,11 +3,11 @@
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import numpy as np
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .features import FeatureMixin
 from .learning import LearningMixin
@@ -27,10 +27,7 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin):
         """Initialize the predictor."""
         self.hass = hass
         self.region = region
-        try:
-            self.tz = ZoneInfo(tz_name)
-        except Exception:
-            self.tz = UTC
+        self.tz = dt_util.get_time_zone(tz_name) or UTC
         self.predictions = []
         self.confidence_scores = []
 

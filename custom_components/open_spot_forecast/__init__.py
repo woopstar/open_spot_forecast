@@ -10,7 +10,7 @@ from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.loader import async_get_integration
-from homeassistant.util import slugify as util_slugify
+from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .api import fetch_consumption_prognosis, fetch_production_prognosis
 from .const import (
@@ -42,8 +42,8 @@ def _extract_latest_known_timestamp(
 ) -> datetime | None:
     """Find the end time of the latest known price from raw sensor data.
 
-    Returns the timestamp after the last known interval, i.e. the point
-    from which we should start predicting.
+    Returns the timestamp after the last known interval (UTC-aware), i.e.
+    the point from which we should start predicting.
     """
     if not raw_data_list:
         return None
@@ -62,13 +62,16 @@ def _extract_latest_known_timestamp(
             continue
         try:
             if isinstance(ts, str):
-                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                dt = dt_util.parse_datetime(ts)
             elif isinstance(ts, datetime):
                 dt = ts
             else:
                 continue
-            if dt.tzinfo is not None:
-                dt = dt.replace(tzinfo=None)
+            if dt is None:
+                continue
+            # Normalize to UTC (naive timestamps are assumed to be in HA's
+            # local time zone) so comparisons are consistent.
+            dt = dt_util.as_utc(dt)
             if latest is None or dt > latest:
                 latest = dt
         except ValueError, TypeError:
@@ -710,8 +713,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             try:
                 # Learn from recent actual prices
                 # We look at prices from 24 hours ago (predictions made yesterday)
-                now = datetime.now()
-                yesterday = now - timedelta(hours=24)
+                now = dt_util.utcnow()
+                yesterday = dt_util.as_local(now) - timedelta(hours=24)
 
                 # Determine the interval: 15-min Stromligning data has
                 # 4 entries per hour; hourly Nordpool data has 1
@@ -735,9 +738,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 if len(current_prices) > price_index:
                     actual_price = current_prices[price_index]
 
-                    # Format timestamp with timezone to match prediction format
-                    if ml_predictor.tz:
-                        learn_dt = learn_dt.replace(tzinfo=ml_predictor.tz)
                     learn_timestamp = learn_dt.isoformat()
 
                     _LOGGER.info(
