@@ -114,6 +114,30 @@ wind_share = (wind_offshore + wind_onshore) / consumption
 | **Training**   | `weather_history` (actuals) | Not used (no historical NP data stored) | Learn real cause→effect |
 | **Prediction** | `weather.get_forecasts`     | Nordpool APIs (live)                    | Predict future price    |
 
+## Training and Validation Split
+
+`_train_models` builds one row per 15-minute slot of `price_history` (up to
+30 days), oldest first, and uses the rows twice:
+
+1. **Holdout validation.** A copy of the price model with the same
+   hyperparameters is fitted on the oldest 80 % of the rows and scored on the
+   newest 20 %. The holdout MAE and RMSE are logged
+   (`ML model trained: holdout MAE=…, RMSE=…`); the copy is then discarded.
+2. **Live model.** `price_model` is fitted on 100 % of the rows. The most
+   recent days are the most similar to the days being predicted, so they
+   must be part of the model: fitting on the oldest 80 % only would ignore
+   the newest ~6 of 30 days. The backtest's `current` row (see
+   [Backtesting](#backtesting)) also fits on its whole window.
+
+The split is chronological, never shuffled, so the holdout rows are always
+later than the rows the copy was fitted on, as in a real forecast. The extra
+fit roughly doubles training time. Like the rest of training, it runs in the
+executor.
+
+Hyperparameter optimization compares its candidates on the same chronological
+80/20 split, then replaces `price_model` with an unfitted model using the best
+parameters, which the next training fits on all rows.
+
 ## Solar Scaling Factor
 
 A learned EMA ratio between Solcast's estimate and actual inverter output:
@@ -212,9 +236,6 @@ pipeline:
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state), clamping negative predictions to 0, and
   hyperparameters restored from HPO are not applied.
-- **Full window.** `_train_models` fits on the oldest 80 % of its history and
-  holds out the newest 20 % for its logged MAE. The backtest fits every model
-  on the whole window.
 
 ### Running
 
