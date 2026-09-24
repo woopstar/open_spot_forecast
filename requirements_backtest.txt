@@ -1,0 +1,3 @@
+# Dev-only: optional LightGBM reference model for scripts/backtest.py.
+# Never add to manifest.json — LightGBM has no musllinux wheels (HA OS/Container).
+lightgbm==4.7.0

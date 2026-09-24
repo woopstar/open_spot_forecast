@@ -68,5 +68,6 @@ wc -l custom_components/open_spot_forecast/ml/*.py
 - [ ] All invariants verified
 - [ ] Docs updated if semantics changed
 - [ ] Tests added or updated
+- [ ] Model/feature changes: before/after `./scripts/quality.sh backtest` tables in the PR
 - [ ] Docs and implementation are consistent
 - [ ] Lint, typing, quality, and test checks pass

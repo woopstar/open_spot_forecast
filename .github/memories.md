@@ -63,6 +63,19 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 `FeatureMixin`, `ModelMixin`, and `LearningMixin`. Never re-implement feature extraction,
 model training, or self-learning outside `ml/`.
 
+Pure helpers shared by training, prediction and the dev backtest — never inline them:
+`build_feature_vector()` (model input row, column order `FEATURE_NAMES`) and
+`slot_time_features()` (per-slot time features) in `ml/features.py`, and
+`create_price_model()` (production GBM hyperparameters) in `ml/models.py`.
+
+### Model backtest
+
+`scripts/backtest.py` (dev-only, never shipped) is the rolling 1/2/3-day-ahead MAE/RMSE
+backtest: naive last-week baseline, current NumPy GBM, optional LightGBM reference
+(`requirements_backtest.txt`, never `manifest.json`). It imports the helpers above and
+enforces a strict horizon cutoff. Run `./scripts/quality.sh backtest` before and after any
+model or feature change; the baseline is in `docs/ml_documentation.md` → Backtesting.
+
 ### Learning storage
 
 `LearningStorage` in `ml/storage.py` is the single SQLite persistence layer. Never open a
@@ -75,8 +88,10 @@ Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tes
 
 ## Feature Vector (20 features)
 
-The canonical feature vector is defined in `docs/ml_documentation.md` and built by
-`FeatureMixin._combine_features()`:
+The canonical feature vector is defined in `docs/ml_documentation.md`. Per-slot feature
+dicts come from `FeatureMixin._combine_features()` (prediction) and
+`get_all_historical_prices()` + `_train_models()` (training); every model input row is then
+built by `build_feature_vector()` in `FEATURE_NAMES` order:
 
 | #   | Feature                | Source         |
 | --- | ---------------------- | -------------- |
