@@ -2,16 +2,48 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 
+from homeassistant.util import dt as dt_util
+
 from ..price_series import is_invalid_price_series
+from ..time_slots import slot_start_in_day
 from .base import PredictorBase
 from .features import slot_time_features
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def predictions_at_instant(
+    predictions: list[dict[str, Any]], moment: datetime
+) -> list[dict[str, Any]]:
+    """Keep the predictions whose ``start`` is the same instant as ``moment``.
+
+    Storage matches predictions on local date, hour and minute, which is
+    ambiguous in the repeated hour of a DST fall-back (02:15 happens twice).
+    Comparing UTC instants keeps only the right pass. A naive ``moment`` or
+    ``start`` carries no offset to compare, so nothing is filtered on it.
+
+    Args:
+        predictions: Rows from ``find_predictions_for_timestamp``.
+        moment: Start of the slot being learned from.
+
+    Returns:
+        The predictions for that exact slot.
+    """
+    if moment.tzinfo is None:
+        return predictions
+    # Compare in UTC: PEP 495 makes a fold=1 time unequal to other zones
+    target = moment.astimezone(UTC)
+    kept = []
+    for prediction in predictions:
+        start = dt_util.parse_datetime(str(prediction.get("start", "")))
+        if start is None or start.tzinfo is None or start.astimezone(UTC) == target:
+            kept.append(prediction)
+    return kept
 
 
 class LearningMixin(PredictorBase):
@@ -62,16 +94,24 @@ class LearningMixin(PredictorBase):
             intervals_per_hour = 4 if len(prices) > 24 else 1
             minutes_per_interval = 60 // intervals_per_hour
 
+            day = datetime.strptime(date_str, "%Y-%m-%d").date()
             for idx, actual_price in enumerate(prices):
                 if actual_price == 0:
                     continue
 
-                hour = idx // intervals_per_hour
-                minute = (idx % intervals_per_hour) * minutes_per_interval
+                # Real slot start: correct on DST days, and indexes past the
+                # day's end (tomorrow's prices stored with today's) land on
+                # the next date
+                slot_start = slot_start_in_day(day, idx, self.tz, minutes_per_interval)
+                hour = slot_start.hour
+                minute = slot_start.minute
 
                 # Find matching predictions for this slot
-                matching = self.storage.find_predictions_for_timestamp(
-                    date_str, hour, minute
+                matching = predictions_at_instant(
+                    self.storage.find_predictions_for_timestamp(
+                        slot_start.strftime("%Y-%m-%d"), hour, minute
+                    ),
+                    slot_start,
                 )
                 if not matching:
                     continue
@@ -151,7 +191,7 @@ class LearningMixin(PredictorBase):
             True if the prices were stored, False if they were rejected.
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = dt_util.now().strftime("%Y-%m-%d")
 
         if is_invalid_price_series(prices):
             _LOGGER.warning(
@@ -212,12 +252,16 @@ class LearningMixin(PredictorBase):
             except ValueError:
                 continue
 
-            # Generate features for this day
+            # Generate features for this day. Slot starts step on the UTC
+            # timeline from local midnight, so a 92- or 100-slot DST day gets
+            # the real wall-clock time and offset for every slot
             for interval, price in enumerate(prices):
-                dt = date + timedelta(minutes=interval * 15)
-
                 all_prices.append(price)
-                all_features.append(slot_time_features(dt.replace(tzinfo=self.tz)))
+                all_features.append(
+                    slot_time_features(
+                        slot_start_in_day(date.date(), interval, self.tz)
+                    )
+                )
 
         _LOGGER.info(
             "Retrieved %d historical prices from %d days",
@@ -250,7 +294,7 @@ class LearningMixin(PredictorBase):
         """
         try:
             dt = datetime.fromisoformat(timestamp)
-            stored_at = datetime.now().isoformat()
+            stored_at = dt_util.now().isoformat()
 
             self.storage.insert_prediction(
                 start=timestamp,
@@ -312,8 +356,11 @@ class LearningMixin(PredictorBase):
             target_slot = target_hour * 4 + target_minute // 15  # 0-95
 
             # Query SQLite for matching predictions
-            matching_predictions = self.storage.find_predictions_for_timestamp(
-                target_date, target_hour, target_minute
+            matching_predictions = predictions_at_instant(
+                self.storage.find_predictions_for_timestamp(
+                    target_date, target_hour, target_minute
+                ),
+                dt,
             )
 
             if not matching_predictions:

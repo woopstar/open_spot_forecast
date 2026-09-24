@@ -115,6 +115,28 @@ wind_share = (wind_offshore + wind_onshore) / consumption
 | **Training**   | `weather_history` (actuals) | Not used (no historical NP data stored) | Learn real cause→effect |
 | **Prediction** | `weather.get_forecasts`     | Nordpool APIs (live)                    | Predict future price    |
 
+## Slot Timestamps and DST
+
+A local day has 96 slots, but 92 on the spring-forward day (02:00-02:59 is
+skipped) and 100 on the fall-back day (02:00-02:59 happens twice). Slot times
+are therefore never built as `date + n × 15 min` in local wall-clock time:
+
+- **Training rows** (`get_all_historical_prices`): slot _n_ of a stored day
+  starts at local midnight converted to UTC plus _n_ × 15 min, converted back
+  to local time (`slot_start_in_day()` in `time_slots.py`). Every slot after
+  a DST change gets its real wall-clock time and UTC offset, so the time
+  features and the `weather_history` / Nordpool lookups line up.
+- **Self-learning**: the 15-minute update finds the current slot's price at
+  `slot_index_in_day(now)`, its position counted the same way from local
+  midnight (not `hour × 4 + minute // 15`). Predictions are matched to the
+  slot's UTC instant, so the two passes of the repeated fall-back hour learn
+  separately. The startup catch-up replay uses the same slot starts.
+- **Clock**: `ml/` reads the time with `dt_util.now()` (Home Assistant's time
+  zone), never the naive `datetime.now()`.
+
+The bias-correction and error-metric slots stay keyed by local time of day
+(0-95), so both passes of the repeated hour share their wall-clock slots.
+
 ## Training and Validation Split
 
 `_train_models` builds one row per 15-minute slot of `price_history` (up to
@@ -166,7 +188,8 @@ Confidence adapts based on actual prediction accuracy per 15-minute slot.
 **Phase 1 — Heuristic** (< 5 samples):
 
 ```
-base = 0.80 - wind_penalty - solar_penalty - weekend - days_ahead
+base = 0.80 - wind_penalty - solar_penalty - weekend - 0.05 × days_ahead
+days_ahead = whole days until the slot starts (0 for the current slot)
 Floor: 0.30
 ```
 

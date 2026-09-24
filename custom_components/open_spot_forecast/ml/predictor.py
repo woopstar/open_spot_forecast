@@ -252,7 +252,7 @@ class SpotPricePredictor(
 
     def get_predictions_for_day(self, day_offset: int = 0) -> list[dict]:
         """Get predictions for a specific day."""
-        target_date = datetime.now() + timedelta(days=day_offset)
+        target_date = dt_util.now() + timedelta(days=day_offset)
         target_str = target_date.strftime("%Y-%m-%d")
 
         return [

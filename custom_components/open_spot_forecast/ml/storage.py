@@ -426,7 +426,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
         Returns:
             Number of rows deleted.
         """
-        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        cutoff = (dt_util.now() - timedelta(days=max_age_days)).isoformat()
         with self._lock:
             conn = self._ensure_conn()
             cursor = conn.execute(
@@ -581,7 +581,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
 
     def delete_old_weather(self, max_age_days: int = 30) -> int:
         """Delete weather snapshots older than max_age_days (blocking)."""
-        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        cutoff = (dt_util.now() - timedelta(days=max_age_days)).isoformat()
         with self._lock:
             conn = self._ensure_conn()
             cursor = conn.execute(
@@ -682,7 +682,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin):
 
     def delete_old_nordpool(self, max_age_days: int = 30) -> int:
         """Delete old Nordpool prognoses (blocking)."""
-        cutoff = (datetime.now() - timedelta(days=max_age_days)).isoformat()
+        cutoff = (dt_util.now() - timedelta(days=max_age_days)).isoformat()
         with self._lock:
             conn = self._ensure_conn()
             cursor = conn.execute(

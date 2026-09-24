@@ -63,7 +63,7 @@ class RetrainMixin(PredictorBase):
             date: Date string (YYYY-MM-DD), defaults to today
         """
         if date is None:
-            date = datetime.now().strftime("%Y-%m-%d")
+            date = dt_util.now().strftime("%Y-%m-%d")
 
         previous = next(
             (e.get("prices") for e in self.price_history if e.get("date") == date),

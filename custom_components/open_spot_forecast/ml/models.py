@@ -583,7 +583,8 @@ class ModelMixin(PredictorBase):
         if start:
             try:
                 dt = datetime.fromisoformat(start)
-                days_ahead = (dt - datetime.now()).days
+                # Clamp: the current slot started in the past (.days == -1)
+                days_ahead = max(0, (dt - dt_util.now()).days)
                 confidence -= days_ahead * 0.05
             except ValueError, TypeError:
                 pass

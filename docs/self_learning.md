@@ -17,7 +17,10 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
       [Invalid Price Data](stromligning_integration.md#invalid-price-data))
       and this update does not learn
    b. Look up every stored prediction for the current slot (today's date,
-      same 15-minute slot), whatever forecast run made it
+      same 15-minute slot, same UTC instant), whatever forecast run made it.
+      The slot's price is found by its position from local midnight on the
+      UTC timeline, so 92- and 100-slot DST days are indexed correctly (see
+      [Slot Timestamps and DST](ml_documentation.md#slot-timestamps-and-dst))
    c. If found:
       - Calculate error: predicted_price - actual_price
       - Update per-slot error metrics (MAE, bias, sample count)
@@ -79,7 +82,8 @@ matched, every prediction's error is also bucketed by its lead time,
 | `day_4_plus` | 72 h+     |
 
 Predictions stored after their slot started (negative lead time) are not
-counted. Naive `stored_at` values are read in Home Assistant's time zone.
+counted. `stored_at` is written with its UTC offset (Home Assistant's time
+zone); naive values from older versions are read in Home Assistant's time zone.
 
 Per bucket, the error sums are added to the `lead_time_accuracy` table, one
 row per slot date (see [persistence](persistence.md)). MAE, RMSE and bias are

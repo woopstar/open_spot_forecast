@@ -31,14 +31,7 @@ from custom_components.open_spot_forecast.tomorrow_prices import (
 CPH = ZoneInfo("Europe/Copenhagen")
 MODULE = "custom_components.open_spot_forecast.tomorrow_prices"
 
-
-@pytest.fixture(autouse=True)
-def copenhagen_time_zone() -> Iterator[None]:
-    """Run every test with Home Assistant's time zone set to Europe/Copenhagen."""
-    previous = dt_util.get_default_time_zone()
-    dt_util.set_default_time_zone(CPH)
-    yield
-    dt_util.set_default_time_zone(previous)
+pytestmark = pytest.mark.usefixtures("copenhagen_time_zone")
 
 
 def _cph(year: int, month: int, day: int, hour: int = 0, minute: int = 0) -> datetime:

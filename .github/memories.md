@@ -23,7 +23,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
 | `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
 | `price_series.py`    | `is_invalid_price_series()` — rejects all-zero days and days with missing/non-finite prices       |
-| `time_slots.py`      | 15-min slot arithmetic (floor/ceil to a slot, first predicted slot), shared by component and ML   |
+| `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML    |
 | `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete |
 | `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                       |
 
@@ -145,7 +145,10 @@ correction and error metrics are keyed `0-95`. Never assume hourly (0-23) granul
 
 Slot boundary arithmetic lives in `time_slots.py`: `floor_to_slot()`, `ceil_to_slot()`,
 `first_prediction_slot()` (where predictions start), `slots_in_local_day()` (96, or 92/100 on
-DST days) and `tomorrow_prices_complete()` (the only "tomorrow is available" check). They round on the UTC timeline, so
+DST days), `tomorrow_prices_complete()` (the only "tomorrow is available" check), and
+`slot_start_in_day()` / `slot_index_in_day()` (slot n of a local day and back, stepped in UTC
+from local midnight). Never build slot times as `date + n * 15 min` or index a day's prices
+with `hour * 4 + minute // 15`, and never call naive `datetime.now()` — use `dt_util.now()`. They round on the UTC timeline, so
 never round with `dt.replace(minute=...)` or add minutes to a local datetime inline.
 
 ## Bias Correction Formula
