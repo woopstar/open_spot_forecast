@@ -14,6 +14,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import slugify as util_slugify
 
+from .accuracy_sensor import build_lead_time_accuracy_sensors
 from .const import (
     CONF_CURRENCY,
     CONF_PRECISION,
@@ -78,6 +79,10 @@ async def async_setup_entry(
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
     ]
+    if api_data.get("ml_predictor") is not None:
+        sensors.extend(
+            build_lead_time_accuracy_sensors(hass, entry, api_data, currency, precision)
+        )
 
     async_add_entities(sensors, True)
 

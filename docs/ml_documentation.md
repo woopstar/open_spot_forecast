@@ -114,11 +114,13 @@ confidence = max(0.10, 1.0 - (MAE / mean_actual))
 Every 15 minutes:
 
 1. Read current Stromligning price
-2. Look up prediction made 24h ago for this timestamp
+2. Look up every stored prediction for the current slot (all forecast runs)
 3. Calculate error, update per-slot metrics
 4. Update per-slot bias correction via EMA
 5. Compare stored forecast weather vs actual → forecast accuracy tracking
-6. Remove matched prediction from pending queue
+6. Remove matched predictions from pending queue
+7. Add each error to its lead-time bucket (day 1/2/3/4+) → rolling 30-day
+   MAE/RMSE per lead time (see [self-learning](self_learning.md))
 
 **96 slots** (15-min intervals), not 24 hours. Each slot has independent
 bias correction.

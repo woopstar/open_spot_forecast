@@ -34,12 +34,15 @@ and continuously improves accuracy via per-slot bias correction.
   actual inverter output
 - **Adaptive confidence** — heuristic confidence early on, switching to a
   learned confidence score once enough samples accumulate
+- **Live accuracy per lead time** — rolling 30-day MAE and RMSE of the
+  forecast 1, 2, 3 and 4+ days ahead, so you can see how far to trust it
 
 ### Sensors
 
 - Current price, today/tomorrow min/max/mean
 - ML prediction (7-day forecast) with per-slot confidence
 - Prediction confidence and learning metrics
+- Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
 - Binary sensors for tomorrow's price availability and ML model training status
 
 ### Data Sources

@@ -109,6 +109,19 @@ REGIONS = {
 PREDICTION_HOURS_OPTIONS = [12, 24, 36, 48, 60, 72]
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
+# Live forecast accuracy per lead time (slot start - time the prediction was
+# stored). Each bucket holds lead times below its upper bound in hours and above
+# the previous bucket's bound. The last bucket is open-ended because forecasts
+# reach 7 days past the end of the known prices.
+LEAD_TIME_BUCKETS: tuple[tuple[str, float], ...] = (
+    ("day_1", 24.0),
+    ("day_2", 48.0),
+    ("day_3", 72.0),
+    ("day_4_plus", float("inf")),
+)
+# Rolling window (days of slots) the per-bucket MAE/RMSE are computed over.
+LEAD_TIME_WINDOW_DAYS = 30
+
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
 

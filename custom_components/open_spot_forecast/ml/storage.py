@@ -11,10 +11,12 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
+from .accuracy_storage import LeadTimeAccuracyStorageMixin
+
 _LOGGER = logging.getLogger(__name__)
 
 
-class LearningStorage:
+class LearningStorage(LeadTimeAccuracyStorageMixin):
     """Handles persistence of learning data to a SQLite database.
 
     Uses a single persistent connection with WAL journal mode.
@@ -27,6 +29,7 @@ class LearningStorage:
       bias_correction — per-hour multiplicative correction factors
       price_history   — historical daily prices for model training
       meta            — key/value pairs (training_samples, is_trained)
+      lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 
     def __init__(self, hass: HomeAssistant, region: str):
@@ -311,6 +314,7 @@ class LearningStorage:
             )
             _LOGGER.info("Schema migration to v4 complete")
 
+        self._create_lead_time_accuracy_schema(conn)
         conn.commit()
 
     def __del__(self) -> None:
@@ -1131,6 +1135,7 @@ class LearningStorage:
                     DROP TABLE IF EXISTS bias_correction;
                     DROP TABLE IF EXISTS price_history;
                     DROP TABLE IF EXISTS volatility;
+                    DROP TABLE IF EXISTS lead_time_accuracy;
                     DROP TABLE IF EXISTS meta;
                     """
                 )
