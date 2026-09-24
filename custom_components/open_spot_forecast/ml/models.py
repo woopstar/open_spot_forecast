@@ -9,8 +9,19 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from .base import PredictorBase
+from .features import build_feature_vector
+from .numpy_models import NumpyGradientBoosting
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def create_price_model() -> NumpyGradientBoosting:
+    """Return an untrained price model with the default production hyperparameters.
+
+    Used by ``SpotPricePredictor`` and the dev backtest (``scripts/backtest.py``),
+    so both always evaluate the same model configuration.
+    """
+    return NumpyGradientBoosting(n_estimators=200, learning_rate=0.1, random_state=42)
 
 
 class ModelMixin(PredictorBase):
@@ -145,29 +156,7 @@ class ModelMixin(PredictorBase):
             y_list: list[float] = []
 
             for i, feature in enumerate(all_features):
-                feature_vector = [
-                    feature.get("hour", 0),
-                    feature.get("day_of_week", 0),
-                    feature.get("is_weekend", 0),
-                    feature.get("hour_sin", 0),
-                    feature.get("hour_cos", 0),
-                    feature.get("wind_speed_mean", 0),
-                    feature.get("wind_power_estimate", 0),
-                    feature.get("wind_direction", 0),
-                    feature.get("cloud_coverage", 0),
-                    feature.get("humidity", 50),
-                    feature.get("solar_radiation_mean", 0),
-                    feature.get("solar_power_estimate", 0),
-                    feature.get("price_mean", 0),
-                    feature.get("temperature", 15.0),
-                    feature.get("consumption_forecast", 0),
-                    feature.get("solar_generation", 0),
-                    feature.get("wind_offshore", 0),
-                    feature.get("wind_onshore", 0),
-                    feature.get("net_demand", 0),
-                    feature.get("wind_share", 0),
-                ]
-                feature_vector = self._sanitize_feature_vector(feature_vector)
+                feature_vector = build_feature_vector(feature)
                 X_list.append(feature_vector)
                 y_list.append(all_prices[i])
 
@@ -219,8 +208,6 @@ class ModelMixin(PredictorBase):
 
         Called periodically (once per week or after many new samples).
         """
-        from .numpy_models import NumpyGradientBoosting
-
         if len(self.price_history) < 7:
             _LOGGER.debug("Not enough history for hyperparameter opt (need 7 days)")
             return None
@@ -235,29 +222,7 @@ class ModelMixin(PredictorBase):
         X_list: list[list[float]] = []
         y_list: list[float] = []
         for i, feature in enumerate(all_features):
-            feature_vector = [
-                feature.get("hour", 0),
-                feature.get("day_of_week", 0),
-                feature.get("is_weekend", 0),
-                feature.get("hour_sin", 0),
-                feature.get("hour_cos", 0),
-                feature.get("wind_speed_mean", 0),
-                feature.get("wind_power_estimate", 0),
-                feature.get("wind_direction", 0),
-                feature.get("cloud_coverage", 0),
-                feature.get("humidity", 50),
-                feature.get("solar_radiation_mean", 0),
-                feature.get("solar_power_estimate", 0),
-                feature.get("price_mean", 0),
-                feature.get("temperature", 15.0),
-                feature.get("consumption_forecast", 0),
-                feature.get("solar_generation", 0),
-                feature.get("wind_offshore", 0),
-                feature.get("wind_onshore", 0),
-                feature.get("net_demand", 0),
-                feature.get("wind_share", 0),
-            ]
-            feature_vector = self._sanitize_feature_vector(feature_vector)
+            feature_vector = build_feature_vector(feature)
             X_list.append(feature_vector)
             y_list.append(all_prices[i])
 
@@ -349,29 +314,7 @@ class ModelMixin(PredictorBase):
             )
 
         for idx, feature in enumerate(features):
-            feature_vector = [
-                feature.get("hour", 0),
-                feature.get("day_of_week", 0),
-                feature.get("is_weekend", 0),
-                feature.get("hour_sin", 0),
-                feature.get("hour_cos", 0),
-                feature.get("wind_speed_mean", 0),
-                feature.get("wind_power_estimate", 0),
-                feature.get("wind_direction", 0),
-                feature.get("cloud_coverage", 0),
-                feature.get("humidity", 50),
-                feature.get("solar_radiation_mean", 0),
-                feature.get("solar_power_estimate", 0),
-                feature.get("price_mean", 0),
-                feature.get("temperature", 15.0),
-                feature.get("consumption_forecast", 0),
-                feature.get("solar_generation", 0),
-                feature.get("wind_offshore", 0),
-                feature.get("wind_onshore", 0),
-                feature.get("net_demand", 0),
-                feature.get("wind_share", 0),
-            ]
-            feature_vector = self._sanitize_feature_vector(feature_vector)
+            feature_vector = build_feature_vector(feature)
 
             # Log first few feature vectors
             if idx < 3:

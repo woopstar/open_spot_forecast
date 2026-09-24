@@ -65,8 +65,5 @@ class PredictorBase:
     ) -> None:
         raise NotImplementedError
 
-    def _sanitize_feature_vector(self, feature_vector: list) -> list:
-        raise NotImplementedError
-
     def _update_bias_correction(self, slot: int) -> None:
         raise NotImplementedError

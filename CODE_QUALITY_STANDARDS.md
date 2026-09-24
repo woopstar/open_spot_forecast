@@ -243,6 +243,21 @@ Run it manually with:
 
 This executes `SKYLOS_GREP_BUDGET=120 skylos custom_components -a`, which scans `custom_components/` for dead code, security issues, secrets, quality regressions, and common AI-code mistakes. The `custom_components` path is passed explicitly because Skylos does not handle the repo root (`.`) correctly in this workspace, and `-a` enables the full all-checks scan rather than the default dead-code-only scan. Findings are informational while the project tunes baselines and ignores.
 
+## Model Backtest (ML changes)
+
+`scripts/backtest.py` is a dev-only rolling backtest that reports 1/2/3-day-ahead MAE/RMSE
+for the naive baseline, the current NumPy GBM and an optional LightGBM reference. It is
+**not** part of the `all` gate (it downloads prices and retrains daily over a year); its
+offline tests in `tests/test_backtest.py` run with the normal suite.
+
+```bash
+pip install -r requirements_backtest.txt   # optional: LightGBM reference row
+./scripts/quality.sh backtest --region DK1 --window-days 180
+```
+
+Run it before and after any change to the model or feature vector and put both tables in the
+PR. Methodology and the recorded baseline live in `docs/ml_documentation.md` → Backtesting.
+
 ## Common Ruff Violations and Fixes
 
 ### E501: Line Too Long

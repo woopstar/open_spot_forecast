@@ -69,6 +69,8 @@ Commands:
   format-check  Verify ruff format, ruff lint and prettier without writing (used by CI)
   translations  Validate en/da/de/es translation files stay in sync
   skylos    Run Skylos static analysis (experimental, not in 'all')
+  backtest  Rolling 1/2/3-day-ahead model backtest (dev-only, network, not in 'all');
+            extra args go to scripts/backtest.py, e.g. backtest --window-days 30
   test      Run tests with pytest and coverage
   coverage-floor  Assert every module meets the 95% per-module coverage floor
   all       Run lint, typing, quality, translations, and test in sequence
@@ -104,6 +106,12 @@ case "${1:-}" in
         ;;
     skylos)
         SKYLOS_GREP_BUDGET=120 run skylos custom_components -a
+        ;;
+    backtest)
+        # Not in 'all': it downloads prices and retrains daily over a year.
+        # tests/test_backtest.py is the fast offline smoke test that CI runs.
+        # Called directly (not via rtk) so the report table prints verbatim.
+        python -m scripts.backtest "${@:2}"
         ;;
     coverage-floor)
         run python3 scripts/check_coverage_floor.py

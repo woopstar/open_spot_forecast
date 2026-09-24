@@ -104,9 +104,12 @@ hourly (0-23) granularity.
 
 ### Feature Vector — 20 Features
 
-The canonical feature vector is defined in `docs/ml_documentation.md` and built
-by `FeatureMixin._combine_features()`. Adding/removing a feature is a model
-change — see the `osf-ml-change` skill.
+The canonical feature vector is defined in `docs/ml_documentation.md`. Model
+input rows are built by `build_feature_vector()` (column order `FEATURE_NAMES`)
+and time features by `slot_time_features()`, both in `ml/features.py`; the
+production model comes from `create_price_model()` in `ml/models.py`. Never
+inline a feature list. Adding/removing a feature is a model change — see the
+`osf-ml-change` skill.
 
 ### Bias Correction Formula
 
