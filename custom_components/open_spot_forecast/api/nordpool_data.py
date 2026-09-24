@@ -8,29 +8,15 @@ from typing import cast
 import aiohttp
 from aiohttp import ClientTimeout
 
-_LOGGER = logging.getLogger(__name__)
-
-NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
-
-# Nordpool's dataportal API sits behind Cloudflare bot protection. A browser-like
-# User-Agent avoids being flagged as a script, which surfaces as HTTP 401/403.
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+from ..const import (
+    MAX_RETRIES,
+    NORDPOOL_API,
+    RETRY_BASE_DELAY,
+    RETRYABLE_STATUS,
+    USER_AGENT,
 )
 
-# Status codes that indicate a transient failure worth retrying with backoff.
-# 429 (rate limit) and 5xx (server errors) may resolve on retry. 401/403 are
-# deliberately excluded: they signal an auth/permission/bot-block failure that
-# will not succeed on retry, and retrying them with backoff previously stalled
-# startup for minutes when the Nordpool API refused our requests.
-_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
-
-# Maximum retry attempts (in addition to the initial request).
-_MAX_RETRIES = 3
-
-# Initial backoff delay in seconds; doubles on each retry (1s, 2s, 4s).
-_RETRY_BASE_DELAY = 1.0
+_LOGGER = logging.getLogger(__name__)
 
 
 async def _get_json(url: str, label: str) -> dict | None:
@@ -44,20 +30,20 @@ async def _get_json(url: str, label: str) -> dict | None:
         Parsed JSON body on success, or None if all attempts fail.
     """
     headers = {"User-Agent": USER_AGENT}
-    for attempt in range(_MAX_RETRIES + 1):
+    for attempt in range(MAX_RETRIES + 1):
         try:
             async with aiohttp.ClientSession(headers=headers) as session:  # noqa: SIM117
                 async with session.get(url, timeout=ClientTimeout(total=30)) as resp:
                     if resp.status == 200:
                         return cast(dict, await resp.json())
-                    if resp.status in _RETRYABLE_STATUS and attempt < _MAX_RETRIES:
-                        delay = _RETRY_BASE_DELAY * (2**attempt)
+                    if resp.status in RETRYABLE_STATUS and attempt < MAX_RETRIES:
+                        delay = RETRY_BASE_DELAY * (2**attempt)
                         _LOGGER.warning(
                             "%s API returned %d (attempt %d/%d), retrying in %.1fs",
                             label,
                             resp.status,
                             attempt + 1,
-                            _MAX_RETRIES + 1,
+                            MAX_RETRIES + 1,
                             delay,
                         )
                         await asyncio.sleep(delay)
@@ -65,8 +51,8 @@ async def _get_json(url: str, label: str) -> dict | None:
                     _LOGGER.warning("%s API returned %d", label, resp.status)
                     return None
         except Exception as err:
-            if attempt < _MAX_RETRIES:
-                delay = _RETRY_BASE_DELAY * (2**attempt)
+            if attempt < MAX_RETRIES:
+                delay = RETRY_BASE_DELAY * (2**attempt)
                 _LOGGER.warning(
                     "%s API request failed (%s), retrying in %.1fs",
                     label,

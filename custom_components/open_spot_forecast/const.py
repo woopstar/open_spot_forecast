@@ -109,6 +109,29 @@ REGIONS = {
 PREDICTION_HOURS_OPTIONS = [12, 24, 36, 48, 60, 72]
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
+# Nordpool dataportal API (consumption and production prognoses)
+NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
+
+# Nordpool's dataportal API sits behind Cloudflare bot protection. A browser-like
+# User-Agent avoids being flagged as a script, which surfaces as HTTP 401/403.
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+)
+
+# Status codes that indicate a transient failure worth retrying with backoff.
+# 429 (rate limit) and 5xx (server errors) may resolve on retry. 401/403 are
+# deliberately excluded: they signal an auth/permission/bot-block failure that
+# will not succeed on retry, and retrying them with backoff previously stalled
+# startup for minutes when the Nordpool API refused our requests.
+RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+
+# Maximum retry attempts (in addition to the initial request).
+MAX_RETRIES = 3
+
+# Initial backoff delay in seconds; doubles on each retry (1s, 2s, 4s).
+RETRY_BASE_DELAY = 1.0
+
 # Price conversion
 PRICE_IN = {"kWh": 1000, "MWh": 1, "Wh": 1000000}
 
