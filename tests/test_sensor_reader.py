@@ -1,9 +1,12 @@
 """Tests for the SensorReader module."""
 
+import logging
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+
+from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.sensor_reader import (
     SensorReader,
@@ -158,7 +161,7 @@ class TestReadStromligningSensor:
             {
                 "sensor.strom": _state(
                     "3.0",
-                    {"today": [1.0, None, 2.0], "tomorrow": [4.0, 5.0]},
+                    {"today": [1.0, 2.0], "tomorrow": [4.0, 5.0]},
                 )
             }
         )
@@ -250,6 +253,91 @@ class TestReadStromligningTomorrowSensor:
         assert result["available"] is True
         assert result["tomorrow"] == [1.0, 2.0, 3.0, 4.0, 5.0]
         assert len(result["raw_tomorrow"]) == 5
+
+
+def _day_items(prices: list[float], day_offset: int = 0) -> list[dict]:
+    """Return 15-minute price items for a local day (0 = today, 1 = tomorrow)."""
+    start = dt_util.start_of_local_day() + timedelta(days=day_offset)
+    return [
+        {"price": price, "start": (start + timedelta(minutes=15 * i)).isoformat()}
+        for i, price in enumerate(prices)
+    ]
+
+
+class TestRejectInvalidPriceDays:
+    """All-zero or incomplete days are dropped at the source (issue #21)."""
+
+    def test_all_zero_today_is_rejected_and_valid_tomorrow_kept(self, caplog):
+        """An all-zero today reads as "no data"; tomorrow is judged on its own."""
+        items = _day_items([0.0] * 96) + _day_items([0.5] * 96, day_offset=1)
+        reader = _make_reader({"sensor.strom": _state("0.0", {"prices": items})})
+
+        result = reader.read_stromligning_sensor("sensor.strom")
+
+        assert result["today"] == []
+        assert result["raw_today"] == []
+        assert result["tomorrow"] == pytest.approx([0.5] * 96)
+        assert len(result["raw_tomorrow"]) == 96
+        assert "Ignoring today's prices from sensor.strom" in caplog.text
+
+    def test_zero_and_negative_prices_are_kept(self):
+        """Some zero or negative prices are valid, and a 0 price is not dropped."""
+        prices = [0.0, -0.12, 0.35, 0.0]
+        reader = _make_reader(
+            {"sensor.strom": _state("0.35", {"prices": _day_items(prices)})}
+        )
+
+        result = reader.read_stromligning_sensor("sensor.strom")
+
+        assert result["today"] == pytest.approx(prices)
+        assert len(result["raw_today"]) == 4
+
+    def test_rejection_warns_once_per_streak(self, caplog):
+        """Repeated invalid reads warn once, and again after valid data."""
+        zero = _state("0.0", {"prices": _day_items([0.0] * 96)})
+        good = _state("1.0", {"prices": _day_items([1.0] * 96)})
+        states = {"sensor.strom": zero}
+        reader = _make_reader(states)
+
+        with caplog.at_level(logging.DEBUG):
+            reader.read_stromligning_sensor("sensor.strom")
+            reader.read_stromligning_sensor("sensor.strom")
+            states["sensor.strom"] = good
+            reader.read_stromligning_sensor("sensor.strom")
+            states["sensor.strom"] = zero
+            reader.read_stromligning_sensor("sensor.strom")
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+        assert len(warnings) == 2
+
+    def test_missing_value_in_today_attribute_rejects_the_day(self):
+        """A None slot invalidates the day instead of shifting later slots."""
+        reader = _make_reader(
+            {"sensor.strom": _state("3.0", {"today": [1.0, None, 2.0]})}
+        )
+
+        result = reader.read_stromligning_sensor("sensor.strom")
+
+        assert result["today"] == []
+
+    def test_zero_current_price_fallback_is_rejected(self):
+        """The current-price fallback is rejected when that price is 0."""
+        reader = _make_reader({"sensor.strom": _state("0", {})})
+
+        result = reader.read_stromligning_sensor("sensor.strom")
+
+        assert result["current_price"] == pytest.approx(0.0)
+        assert result["today"] == []
+
+    def test_all_zero_tomorrow_sensor_is_rejected(self):
+        """The tomorrow sensor's all-zero prices read as "not published yet"."""
+        items = _day_items([0.0] * 96, day_offset=1)
+        reader = _make_reader({"sensor.tomorrow": _state("on", {"prices": items})})
+
+        result = reader.read_stromligning_tomorrow_sensor("sensor.tomorrow")
+
+        assert result["tomorrow"] == []
+        assert result["raw_tomorrow"] == []
 
 
 class TestReadWeatherSensors:

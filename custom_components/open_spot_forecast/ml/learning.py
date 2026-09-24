@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from ..price_series import is_invalid_price_series
 from .base import PredictorBase
 from .features import slot_time_features
 
@@ -136,15 +137,27 @@ class LearningMixin(PredictorBase):
         )
         return total_learned
 
-    def store_daily_prices(self, prices: list[float], date: str | None = None) -> None:
+    def store_daily_prices(self, prices: list[float], date: str | None = None) -> bool:
         """Store today's prices for historical training data.
+
+        An invalid day (all zero, or with missing values) is not stored, so
+        good prices already stored for that date are kept.
 
         Args:
             prices: List of prices for the day (96 intervals for 15-min data)
             date: Date string (YYYY-MM-DD), defaults to today
+
+        Returns:
+            True if the prices were stored, False if they were rejected.
         """
         if date is None:
             date = datetime.now().strftime("%Y-%m-%d")
+
+        if is_invalid_price_series(prices):
+            _LOGGER.warning(
+                "Not storing prices for %s: all zero or with missing values", date
+            )
+            return False
 
         # Check if we already have this date
         for entry in self.price_history:
@@ -153,7 +166,7 @@ class LearningMixin(PredictorBase):
                 _LOGGER.debug(
                     "Updated price history for %s (%d prices)", date, len(prices)
                 )
-                return
+                return True
 
         # Add new entry
         self.price_history.append(
@@ -173,6 +186,7 @@ class LearningMixin(PredictorBase):
             len(prices),
             len(self.price_history),
         )
+        return True
 
     def get_all_historical_prices(self) -> tuple[list[float], list[dict]]:
         """Get all historical prices and their corresponding features.

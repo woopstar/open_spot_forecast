@@ -18,6 +18,10 @@ All learning data is stored in a single SQLite database:
 | `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error |
 
+`price_history` never stores an invalid day (all zero, or with missing or
+non-finite values; see `is_invalid_price_series()` in `price_series.py`), and
+an invalid day never overwrites prices already stored for that date.
+
 `lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every
 startup, so existing databases gain it without a versioned migration. Rows
 older than the 30-day rolling window are pruned whenever the metrics are
