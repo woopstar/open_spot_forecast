@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from custom_components.open_spot_forecast.api.nordpool_data import (
-    USER_AGENT,
     fetch_consumption_prognosis,
     fetch_production_prognosis,
 )
+from custom_components.open_spot_forecast.const import USER_AGENT
 
 
 def _response(status: int, payload: dict) -> MagicMock:
