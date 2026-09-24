@@ -103,6 +103,8 @@ class LearningMixin(PredictorBase):
 
                     total_learned += 1
 
+                self.record_lead_time_accuracy(matching, actual_price)
+
                 # Update bias correction after processing this slot
                 self._update_bias_correction(slot)
 
@@ -278,6 +280,7 @@ class LearningMixin(PredictorBase):
         2. Calculates the error (predicted vs actual)
         3. Updates bias correction factors for this 15-min slot
         4. Adapts the model based on recent errors
+        5. Records each error in its lead-time bucket
 
         Args:
             timestamp: ISO format timestamp of the actual price
@@ -389,6 +392,8 @@ class LearningMixin(PredictorBase):
             # Remove ALL matched predictions from SQLite (by id)
             for p in matching_predictions:
                 self.storage.remove_prediction(p["id"])
+
+            self.record_lead_time_accuracy(matching_predictions, actual_price)
 
             # --- Update per-slot volatility (EMA of MAE) ---
             mae = float(np.mean(metrics["abs_errors"]))
@@ -558,6 +563,7 @@ class LearningMixin(PredictorBase):
         """
         self.error_metrics = {}
         self.bias_correction = {}
+        self.lead_time_accuracy = {}
 
         # Clear storage file
         await self.storage.async_clear_storage()

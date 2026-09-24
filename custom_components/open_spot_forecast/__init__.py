@@ -252,6 +252,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         ml_predictor = SpotPricePredictor(hass, region, tz_name)
         # Load learning data asynchronously
         await ml_predictor._load_learning_data()
+        await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)
 
     # Store API data
     api_data = {
@@ -711,25 +712,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # --- Self-learning: compare past predictions with actual prices ---
         if ml_predictor and current_prices:
             try:
-                # Learn from recent actual prices
-                # We look at prices from 24 hours ago (predictions made yesterday)
-                now = dt_util.utcnow()
-                yesterday = dt_util.as_local(now) - timedelta(hours=24)
+                # Today's confirmed prices include the current slot, so match
+                # every stored prediction for it, whatever its lead time. The
+                # lookup date must be today's: it is paired with today's price.
+                slot_time = dt_util.now()
 
                 # Determine the interval: 15-min Stromligning data has
                 # 4 entries per hour; hourly Nordpool data has 1
                 intervals_per_hour = 4 if len(current_prices) > 24 else 1
 
                 # Build the timestamp at the current interval boundary
-                learn_minute = (yesterday.minute // (60 // intervals_per_hour)) * (
+                learn_minute = (slot_time.minute // (60 // intervals_per_hour)) * (
                     60 // intervals_per_hour
                 )
-                learn_dt = yesterday.replace(
+                learn_dt = slot_time.replace(
                     minute=learn_minute, second=0, microsecond=0
                 )
 
                 # Calculate the correct index into current_prices
-                learn_hour = yesterday.hour
+                learn_hour = slot_time.hour
                 price_index = learn_hour * intervals_per_hour + (
                     learn_minute // (60 // intervals_per_hour)
                 )

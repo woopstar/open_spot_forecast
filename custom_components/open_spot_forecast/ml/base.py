@@ -45,6 +45,7 @@ class PredictorBase:
     price_history: list[dict[str, Any]]
     max_history_days: int
     storage: LearningStorage
+    lead_time_accuracy: dict[str, dict[str, float | int]]
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
@@ -66,4 +67,9 @@ class PredictorBase:
         raise NotImplementedError
 
     def _update_bias_correction(self, slot: int) -> None:
+        raise NotImplementedError
+
+    def record_lead_time_accuracy(
+        self, predictions: list[dict[str, Any]], actual_price: float
+    ) -> None:
         raise NotImplementedError
