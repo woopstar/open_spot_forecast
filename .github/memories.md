@@ -22,6 +22,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                          |
 | `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
 | `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
+| `price_series.py`    | `is_invalid_price_series()` — rejects all-zero days and days with missing/non-finite prices       |
 | `time_slots.py`      | 15-min slot arithmetic (floor/ceil to a slot, first predicted slot), shared by component and ML   |
 | `__init__.py`        | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
 
@@ -61,6 +62,10 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 `hass.states.get(...)` directly in platform or ML code. Methods:
 `read_stromligning_sensor`, `read_stromligning_tomorrow_sensor`, `read_weather_sensors`,
 `read_solcast_sensor`, `read_met_weather`.
+
+Price days are validated with `is_invalid_price_series()` (`price_series.py`): the
+Stromligning readers drop an all-zero day or one with missing values, and
+`store_daily_prices` / `predict` refuse one. Never add an inline "all prices are 0" check.
 
 ### ML predictor
 

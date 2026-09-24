@@ -55,7 +55,8 @@ class RetrainMixin(PredictorBase):
 
         A new date bumps the HPO counter (persisted in meta). A new date or
         changed prices mark the price history as updated, which triggers a
-        retrain on this forecast run.
+        retrain on this forecast run. Invalid prices (see store_daily_prices)
+        are not stored and change nothing.
 
         Args:
             prices: Known prices for the day (today, plus tomorrow once published)
@@ -68,7 +69,8 @@ class RetrainMixin(PredictorBase):
             (e.get("prices") for e in self.price_history if e.get("date") == date),
             None,
         )
-        self.store_daily_prices(prices, date)
+        if not self.store_daily_prices(prices, date):
+            return
 
         if previous is None:
             self._set_hpo_counter(self._hpo_counter + 1)

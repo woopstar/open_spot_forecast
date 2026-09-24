@@ -12,7 +12,10 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    → Stored in predictions table with timestamp, price, confidence
 
 2. Every 15 minutes:
-   a. Read current Stromligning price (actual confirmed price)
+   a. Read current Stromligning price (actual confirmed price). If today's
+      prices are all zero or have missing values, they are dropped (see
+      [Invalid Price Data](stromligning_integration.md#invalid-price-data))
+      and this update does not learn
    b. Look up every stored prediction for the current slot (today's date,
       same 15-minute slot), whatever forecast run made it
    c. If found:

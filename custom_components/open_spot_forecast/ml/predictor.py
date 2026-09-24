@@ -10,6 +10,7 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from ..price_series import is_invalid_price_series
 from .features import FeatureMixin
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
@@ -137,11 +138,14 @@ class SpotPricePredictor(
                 self.confidence_scores = []
                 return
 
-            # Check for all-zero prices
-            if all(price == 0 for price in historical_prices):
+            # All-zero or incomplete prices come from a failing source: don't
+            # store, train or predict on them, keep the previous predictions
+            if is_invalid_price_series(historical_prices):
                 _LOGGER.warning(
-                    "All historical prices are 0, predictions may be unreliable"
+                    "Known prices are all zero or have missing values, "
+                    "keeping the previous predictions"
                 )
+                return
 
             # Extract features from weather data
             wind_features = self._extract_wind_features(weather_data)

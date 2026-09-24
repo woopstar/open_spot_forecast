@@ -8,7 +8,18 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .price_series import is_invalid_price_series
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _item_price(item: dict) -> Any:
+    """Return a price item's ``price`` (or ``value``), keeping a legitimate 0.
+
+    ``item.get("price") or item.get("value")`` would drop a 0 price.
+    """
+    price = item.get("price")
+    return item.get("value") if price is None else price
 
 
 class SensorReader:
@@ -17,6 +28,35 @@ class SensorReader:
     def __init__(self, hass: HomeAssistant):
         """Initialize sensor reader."""
         self.hass = hass
+        # "<entity_id>:<day>" keys whose last read was rejected, to warn once
+        self._rejected_days: set[str] = set()
+
+    def _reject_invalid_day(self, result: dict, day: str, entity_id: str) -> None:
+        """Empty ``result[day]`` and its raw items if the day's prices are invalid.
+
+        An empty day reads as "no data", so callers keep their previous
+        prices and nothing is stored, trained on or learned from.
+
+        Args:
+            result: Reader result holding ``<day>`` and ``raw_<day>`` lists.
+            day: ``"today"`` or ``"tomorrow"``.
+            entity_id: Source entity, for logging.
+        """
+        key = f"{entity_id}:{day}"
+        if not is_invalid_price_series(result[day]):
+            self._rejected_days.discard(key)
+            return
+        log = _LOGGER.debug if key in self._rejected_days else _LOGGER.warning
+        log(
+            "Ignoring %s's prices from %s: all zero or with missing values "
+            "(%d intervals); keeping the previous prices",
+            day,
+            entity_id,
+            len(result[day]),
+        )
+        self._rejected_days.add(key)
+        result[day] = []
+        result[f"raw_{day}"] = []
 
     def get_sensor_state(self, entity_id: str) -> float | None:
         """Get current state of a sensor as float.
@@ -118,7 +158,7 @@ class SensorReader:
 
             for item in prices_attr:
                 if isinstance(item, dict):
-                    price = item.get("price") or item.get("value")
+                    price = _item_price(item)
                     timestamp = (
                         item.get("timestamp") or item.get("time") or item.get("start")
                     )
@@ -155,13 +195,19 @@ class SensorReader:
         if not result["today"] and "today" in state.attributes:
             today_data = state.attributes["today"]
             if isinstance(today_data, list):
-                result["today"] = [float(p) for p in today_data if p is not None]
+                # Keep None: a missing slot invalidates the day rather than
+                # silently shifting every later slot
+                result["today"] = [None if p is None else float(p) for p in today_data]
                 _LOGGER.debug("Found today prices in 'today' attribute")
 
         if not result["tomorrow"] and "tomorrow" in state.attributes:
             tomorrow_data = state.attributes["tomorrow"]
             if isinstance(tomorrow_data, list):
-                result["tomorrow"] = [float(p) for p in tomorrow_data if p is not None]
+                # Keep None: a missing slot invalidates the day rather than
+                # silently shifting every later slot
+                result["tomorrow"] = [
+                    None if p is None else float(p) for p in tomorrow_data
+                ]
                 _LOGGER.debug("Found tomorrow prices in 'tomorrow' attribute")
 
         # If we still have no prices but have current price, use it as fallback.
@@ -173,6 +219,9 @@ class SensorReader:
                 "Using current price as fallback for today."
             )
             result["today"] = [result["current_price"]]
+
+        for day in ("today", "tomorrow"):
+            self._reject_invalid_day(result, day, entity_id)
 
         _LOGGER.info(
             "Read Stromligning sensor %s: current=%.4f kr/kWh, "
@@ -221,7 +270,7 @@ class SensorReader:
 
         for item in prices_attr:
             if isinstance(item, dict):
-                price = item.get("price") or item.get("value")
+                price = _item_price(item)
                 timestamp = (
                     item.get("timestamp") or item.get("time") or item.get("start")
                 )
@@ -233,6 +282,8 @@ class SensorReader:
                         result["raw_tomorrow"].append(item)
                     except (ValueError, TypeError) as e:
                         _LOGGER.debug("Error parsing tomorrow price item: %s", e)
+
+        self._reject_invalid_day(result, "tomorrow", entity_id)
 
         _LOGGER.info(
             "Read Stromligning tomorrow sensor %s: %d intervals",

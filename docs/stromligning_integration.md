@@ -155,6 +155,25 @@ def read_stromligning_sensor(self, entity_id: str) -> dict:
     return result
 ```
 
+### Invalid Price Data
+
+A price source that is failing (for example right after a Home Assistant
+restart, or during an API hiccup) often reports 0 for every slot. The reader
+checks each day's prices with `is_invalid_price_series()` (`price_series.py`)
+and drops a day that is:
+
+- all zero, or
+- missing a value (`None`) or containing a non-finite value (NaN, inf).
+
+A dropped day reads as "no data": Open Spot Forecast keeps its previous
+prices for that day, and nothing is stored, trained on or learned from.
+A warning is logged once per streak of bad reads, then at debug level until
+the sensor reports valid prices again. If the sensor has no valid prices at
+startup, it is read again on every 15-minute update.
+
+Some zero or negative prices are normal (for example on windy, sunny days)
+and keep a day valid. A price of exactly 0 is kept as a price, not skipped.
+
 ### Priority Logic
 
 ```python

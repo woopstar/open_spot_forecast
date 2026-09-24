@@ -320,8 +320,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     len(stromligning_data["tomorrow"]),
                 )
             else:
-                _LOGGER.warning("Stromligning sensor has no data")
-                stromligning_sensor = None
+                # Keep reading the sensor: after a restart it can be missing or
+                # report invalid (all-zero) prices until its source recovers
+                _LOGGER.warning("Stromligning sensor has no valid prices yet")
 
         # No price sources — just use empty data
         if not stromligning_sensor:

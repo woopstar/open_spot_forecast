@@ -52,7 +52,7 @@ class PredictorBase:
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
-    def store_daily_prices(self, prices: list[float], date: str | None = None) -> None:
+    def store_daily_prices(self, prices: list[float], date: str | None = None) -> bool:
         raise NotImplementedError
 
     def get_all_historical_prices(self) -> tuple[list[float], list[dict]]:
