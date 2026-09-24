@@ -35,8 +35,8 @@ _LOGGER = logging.getLogger(__name__)
 
 # Cap the number of predictions exposed as entity attributes. The full 7-day
 # forecast (672 slots) blows past Home Assistant's 16 KB attribute limit and
-# slows down state writes, so we only surface the next 24 hours (96 slots).
-_MAX_PREDICTIONS_IN_ATTRIBUTES = 96
+# slows down state writes, so we only surface the next 48 hours (192 slots).
+_MAX_PREDICTIONS_IN_ATTRIBUTES = 192
 
 
 async def async_setup_entry(
@@ -564,7 +564,7 @@ class MLPredictionSensor(SensorEntity):
         attrs: dict[str, Any] = {}
         if ml_predictor:
             # Convert predictions to include unit of measurement. Only surface
-            # the next 24 hours to stay under HA's 16 KB attribute limit.
+            # the next 48 hours to stay under HA's 16 KB attribute limit.
             predictions_with_unit = []
             for pred in ml_predictor.predictions[:_MAX_PREDICTIONS_IN_ATTRIBUTES]:
                 price = pred.get("price")
