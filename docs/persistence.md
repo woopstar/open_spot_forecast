@@ -8,14 +8,20 @@ All learning data is stored in a single SQLite database:
 
 ## Schema
 
-| Table             | Key                         | Content                                                                      |
-| ----------------- | --------------------------- | ---------------------------------------------------------------------------- |
-| `predictions`     | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                   |
-| `error_metrics`   | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals) |
-| `bias_correction` | `hour` (0-95)               | Per-slot multiplicative correction factors                                   |
-| `price_history`   | `date` (YYYY-MM-DD)         | Daily price arrays (96 values per day)                                       |
-| `weather_history` | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                |
-| `meta`            | `key`                       | Training state, schema version, HPO params and `hpo_counter`                 |
+| Table                | Key                         | Content                                                                                              |
+| -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                           |
+| `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                         |
+| `bias_correction`    | `hour` (0-95)               | Per-slot multiplicative correction factors                                                           |
+| `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays (96 values per day)                                                               |
+| `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                                        |
+| `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
+| `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error |
+
+`lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every
+startup, so existing databases gain it without a versioned migration. Rows
+older than the 30-day rolling window are pruned whenever the metrics are
+refreshed. The table is dropped and recreated by `clear_all()`.
 
 ## Connection Management
 
@@ -41,10 +47,11 @@ The `meta` table tracks `schema_version` so migrations only run once.
 ```
 Predictions stored ──→ predictions table (individual INSERTs)
          │
-         │  ~24 hours later
+         │  when the predicted slot arrives
          ▼
 Self-learning matches prediction → error_metrics updated
          │                         bias_correction updated
+         │                         lead_time_accuracy sums added (committed)
          │                         prediction removed from table
          │
 Every 6 hours ──→ save_all() flushes error_metrics, bias_correction,

@@ -5,6 +5,9 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
+from custom_components.open_spot_forecast.accuracy_sensor import (
+    LeadTimeAccuracySensor,
+)
 from custom_components.open_spot_forecast.const import DOMAIN, PRICE_IN
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
@@ -72,8 +75,8 @@ ALL_SENSOR_CLASSES = [
 
 
 @pytest.mark.asyncio
-async def test_async_setup_entry_creates_ten_sensors():
-    """async_setup_entry registers exactly ten sensors."""
+async def test_async_setup_entry_adds_accuracy_sensors_with_ml():
+    """With ML enabled, the ten sensors are followed by eight accuracy sensors."""
     hass = Mock()
     entry = MagicMock()
     entry.entry_id = "test"
@@ -93,14 +96,18 @@ async def test_async_setup_entry_creates_ten_sensors():
     async_add_entities.assert_called_once()
     sensors, update = async_add_entities.call_args[0]
     assert update is True
-    assert len(sensors) == 10
+    assert len(sensors) == 18
     assert isinstance(sensors[0], SpotPriceSensor)
-    assert isinstance(sensors[-1], LearningMetricsSensor)
+    assert isinstance(sensors[9], LearningMetricsSensor)
+    assert all(isinstance(s, LeadTimeAccuracySensor) for s in sensors[10:])
 
 
 @pytest.mark.asyncio
 async def test_async_setup_entry_uses_defaults_when_config_missing():
-    """async_setup_entry falls back to constants when config keys are absent."""
+    """async_setup_entry falls back to constants when config keys are absent.
+
+    Without an ML predictor, no accuracy sensors are created.
+    """
     hass = Mock()
     entry = MagicMock()
     entry.entry_id = "test"

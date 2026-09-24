@@ -75,7 +75,8 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 Every 15 min ──→ Read Stromligning prices
              │   Read weather snapshot → store in weather_history
              │   Read tomorrow prices if available
-             │   Self-learning: compare 24h-old predictions vs actual
+             │   Self-learning: compare all predictions for the current
+             │   slot vs actual, per-lead-time MAE/RMSE (day 1/2/3/4+)
              │   Tomorrow's prices just appeared → run the ~13:xx refresh now
              │
 Every 6 hours → Read weather forecast (weather.get_forecasts)

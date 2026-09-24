@@ -1,7 +1,8 @@
 """Feature engineering for the spot price predictor."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 
@@ -10,6 +11,94 @@ from homeassistant.util import dt as dt_util
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
+
+# The canonical 20-feature model input, in column order (docs/ml_documentation.md).
+FEATURE_NAMES: tuple[str, ...] = (
+    "hour",
+    "day_of_week",
+    "is_weekend",
+    "hour_sin",
+    "hour_cos",
+    "wind_speed_mean",
+    "wind_power_estimate",
+    "wind_direction",
+    "cloud_coverage",
+    "humidity",
+    "solar_radiation_mean",
+    "solar_power_estimate",
+    "price_mean",
+    "temperature",
+    "consumption_forecast",
+    "solar_generation",
+    "wind_offshore",
+    "wind_onshore",
+    "net_demand",
+    "wind_share",
+)
+
+# Value for a feature missing from the feature dict; unlisted features default to 0.
+_FEATURE_DEFAULTS: dict[str, float] = {"humidity": 50.0, "temperature": 15.0}
+
+
+def _to_float(value: Any) -> float:
+    """Coerce a feature value to float, mapping None and non-numerics to 0.0."""
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except ValueError, TypeError:
+        return 0.0
+
+
+def build_feature_vector(feature: dict[str, Any]) -> list[float]:
+    """Return the model input row for one slot's feature dict.
+
+    Training, prediction, hyperparameter search and the dev backtest
+    (``scripts/backtest.py``) all build rows here, so ``FEATURE_NAMES`` is
+    the single source of truth for the column order.
+
+    Args:
+        feature: Feature dict for one slot, as produced by
+            ``slot_time_features`` plus weather/price/Nordpool keys.
+
+    Returns:
+        20 floats in ``FEATURE_NAMES`` order.
+    """
+    return [
+        _to_float(feature.get(name, _FEATURE_DEFAULTS.get(name, 0)))
+        for name in FEATURE_NAMES
+    ]
+
+
+def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str, Any]:
+    """Return the time features for the slot beginning at ``start``.
+
+    Args:
+        start: Timezone-aware slot start in the price region's local time.
+        interval_minutes: Slot length; ``end`` is computed in UTC so a slot
+            spanning a DST change still lasts ``interval_minutes``.
+
+    Returns:
+        Feature dict with ``start``/``end`` ISO strings and the time-of-day
+        and day-of-week features used by the model.
+    """
+    end = (start.astimezone(UTC) + timedelta(minutes=interval_minutes)).astimezone(
+        start.tzinfo
+    )
+    weekday = start.weekday()
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "hour": start.hour,
+        "minute": start.minute,
+        "day_of_week": weekday,
+        "is_weekend": 1 if weekday >= 5 else 0,
+        "month": start.month,
+        "hour_sin": float(np.sin(2 * np.pi * start.hour / 24)),
+        "hour_cos": float(np.cos(2 * np.pi * start.hour / 24)),
+        "dow_sin": float(np.sin(2 * np.pi * weekday / 7)),
+        "dow_cos": float(np.cos(2 * np.pi * weekday / 7)),
+    }
 
 
 class FeatureMixin(PredictorBase):
@@ -179,26 +268,10 @@ class FeatureMixin(PredictorBase):
                 dt = start_time + timedelta(
                     days=day, minutes=interval * interval_minutes
                 )
-                dt_end = dt + timedelta(minutes=interval_minutes)
 
                 # Convert to local time for display and feature extraction
-                dt_local = dt_util.as_local(dt)
-                dt_end_local = dt_util.as_local(dt_end)
-
                 features.append(
-                    {
-                        "start": dt_local.isoformat(),
-                        "end": dt_end_local.isoformat(),
-                        "hour": dt_local.hour,
-                        "minute": dt_local.minute,
-                        "day_of_week": dt_local.weekday(),
-                        "is_weekend": 1 if dt_local.weekday() >= 5 else 0,
-                        "month": dt_local.month,
-                        "hour_sin": float(np.sin(2 * np.pi * dt_local.hour / 24)),
-                        "hour_cos": float(np.cos(2 * np.pi * dt_local.hour / 24)),
-                        "dow_sin": float(np.sin(2 * np.pi * dt_local.weekday() / 7)),
-                        "dow_cos": float(np.cos(2 * np.pi * dt_local.weekday() / 7)),
-                    }
+                    slot_time_features(dt_util.as_local(dt), interval_minutes)
                 )
 
         return features
@@ -322,21 +395,6 @@ class FeatureMixin(PredictorBase):
             combined.append(feature)
 
         return combined
-
-    def _sanitize_feature_vector(self, feature_vector: list) -> list:
-        """Ensure all values in feature vector are numeric (not None)."""
-        sanitized = []
-        for val in feature_vector:
-            if val is None:
-                sanitized.append(0.0)
-            elif isinstance(val, (int, float)):
-                sanitized.append(float(val))
-            else:
-                try:
-                    sanitized.append(float(val))
-                except ValueError, TypeError:
-                    sanitized.append(0.0)
-        return sanitized
 
     def _wind_power_curve(self, wind_speed: float) -> float:
         """Simplified wind turbine power curve."""

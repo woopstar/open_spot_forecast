@@ -11,16 +11,19 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .features import FeatureMixin
+from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
-from .models import ModelMixin
-from .numpy_models import NumpyGradientBoosting, NumpyRandomForest
+from .models import ModelMixin, create_price_model
+from .numpy_models import NumpyRandomForest
 from .retraining import RetrainMixin
 from .storage import LearningStorage
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin, RetrainMixin):
+class SpotPricePredictor(
+    FeatureMixin, ModelMixin, LearningMixin, LeadTimeMixin, RetrainMixin
+):
     """ML-based spot price predictor using weather and historical price data."""
 
     def __init__(
@@ -40,9 +43,7 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin, RetrainMixin):
         self.solar_model = NumpyRandomForest(
             n_estimators=100, max_depth=10, random_state=42
         )
-        self.price_model = NumpyGradientBoosting(
-            n_estimators=200, learning_rate=0.1, random_state=42
-        )
+        self.price_model = create_price_model()
 
         # Feature scalers (simple numpy-based scaling)
         self.wind_scaler = {"mean": 0, "std": 1}
@@ -74,6 +75,8 @@ class SpotPricePredictor(FeatureMixin, ModelMixin, LearningMixin, RetrainMixin):
         self.learning_rate = 0.1  # Adaptive learning rate
         self.price_history = []  # Store historical prices for multi-day training
         self.max_history_days = 30  # Keep 30 days of history
+        # Live MAE/RMSE per lead-time bucket (see lead_time.py)
+        self.lead_time_accuracy: dict[str, dict[str, float | int]] = {}
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)

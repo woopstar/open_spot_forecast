@@ -57,5 +57,33 @@
         }
       }
     }
+  },
+  "entity": {
+    "sensor": {
+      "forecast_mae_day_1": {
+        "name": "Prognose-MAE dag 1"
+      },
+      "forecast_rmse_day_1": {
+        "name": "Prognose-RMSE dag 1"
+      },
+      "forecast_mae_day_2": {
+        "name": "Prognose-MAE dag 2"
+      },
+      "forecast_rmse_day_2": {
+        "name": "Prognose-RMSE dag 2"
+      },
+      "forecast_mae_day_3": {
+        "name": "Prognose-MAE dag 3"
+      },
+      "forecast_rmse_day_3": {
+        "name": "Prognose-RMSE dag 3"
+      },
+      "forecast_mae_day_4_plus": {
+        "name": "Prognose-MAE dag 4+"
+      },
+      "forecast_rmse_day_4_plus": {
+        "name": "Prognose-RMSE dag 4+"
+      }
+    }
   }
 }

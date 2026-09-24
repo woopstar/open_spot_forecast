@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from .base import PredictorBase
+from .features import slot_time_features
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -101,6 +102,8 @@ class LearningMixin(PredictorBase):
                     metrics["count"] += 1
 
                     total_learned += 1
+
+                self.record_lead_time_accuracy(matching, actual_price)
 
                 # Update bias correction after processing this slot
                 self._update_bias_correction(slot)
@@ -199,25 +202,8 @@ class LearningMixin(PredictorBase):
             for interval, price in enumerate(prices):
                 dt = date + timedelta(minutes=interval * 15)
 
-                dt_end = dt + timedelta(minutes=15)
-                dt_tz = dt.replace(tzinfo=self.tz) if self.tz else dt
-                dt_end_tz = dt_end.replace(tzinfo=self.tz) if self.tz else dt_end
-
-                feature = {
-                    "start": dt_tz.isoformat(),
-                    "end": dt_end_tz.isoformat(),
-                    "hour": dt.hour,
-                    "day_of_week": dt.weekday(),
-                    "is_weekend": 1 if dt.weekday() >= 5 else 0,
-                    "month": dt.month,
-                    "hour_sin": float(np.sin(2 * np.pi * dt.hour / 24)),
-                    "hour_cos": float(np.cos(2 * np.pi * dt.hour / 24)),
-                    "dow_sin": float(np.sin(2 * np.pi * dt.weekday() / 7)),
-                    "dow_cos": float(np.cos(2 * np.pi * dt.weekday() / 7)),
-                }
-
                 all_prices.append(price)
-                all_features.append(feature)
+                all_features.append(slot_time_features(dt.replace(tzinfo=self.tz)))
 
         _LOGGER.info(
             "Retrieved %d historical prices from %d days",
@@ -294,6 +280,7 @@ class LearningMixin(PredictorBase):
         2. Calculates the error (predicted vs actual)
         3. Updates bias correction factors for this 15-min slot
         4. Adapts the model based on recent errors
+        5. Records each error in its lead-time bucket
 
         Args:
             timestamp: ISO format timestamp of the actual price
@@ -405,6 +392,8 @@ class LearningMixin(PredictorBase):
             # Remove ALL matched predictions from SQLite (by id)
             for p in matching_predictions:
                 self.storage.remove_prediction(p["id"])
+
+            self.record_lead_time_accuracy(matching_predictions, actual_price)
 
             # --- Update per-slot volatility (EMA of MAE) ---
             mae = float(np.mean(metrics["abs_errors"]))
@@ -574,6 +563,7 @@ class LearningMixin(PredictorBase):
         """
         self.error_metrics = {}
         self.bias_correction = {}
+        self.lead_time_accuracy = {}
 
         # Clear storage file
         await self.storage.async_clear_storage()

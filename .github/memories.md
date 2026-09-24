@@ -14,26 +14,29 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### Component layer (`custom_components/open_spot_forecast/`)
 
-| File               | Responsibility                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------------- |
-| `const.py`         | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                      |
-| `config_flow.py`   | Two-step config flow (basic settings → sensor configuration) + options flow                       |
-| `sensor.py`        | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics) |
-| `binary_sensor.py` | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
-| `sensor_reader.py` | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
-| `__init__.py`      | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
+| File                 | Responsibility                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------- |
+| `const.py`           | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                      |
+| `config_flow.py`     | Two-step config flow (basic settings → sensor configuration) + options flow                       |
+| `sensor.py`          | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics) |
+| `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                          |
+| `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
+| `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
+| `__init__.py`        | Setup, update cycle (15-min / 6-hour / daily / midnight), ML wiring                               |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File              | Responsibility                                                                  |
-| ----------------- | ------------------------------------------------------------------------------- |
-| `predictor.py`    | `SpotPricePredictor` — composes the Feature, Model, Learning and Retrain mixins |
-| `features.py`     | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)     |
-| `models.py`       | `ModelMixin` — training + prediction                                            |
-| `learning.py`     | `LearningMixin` — self-learning, bias correction, error metrics                 |
-| `retraining.py`   | `RetrainMixin` — retrain when training data changed, HPO cadence                |
-| `numpy_models.py` | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                |
-| `storage.py`      | `LearningStorage` — SQLite persistence                                          |
+| File                  | Responsibility                                                                                                     |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `LeadTimeMixin` + `RetrainMixin` |
+| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                        |
+| `models.py`           | `ModelMixin` — training + prediction                                                                               |
+| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                    |
+| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                   |
+| `storage.py`          | `LearningStorage` — SQLite persistence                                                                             |
+| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                          |
+| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                   |
+| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -61,8 +64,8 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 ### ML predictor
 
 `SpotPricePredictor` in `ml/predictor.py` is the single ML predictor. It composes
-`FeatureMixin`, `ModelMixin`, `LearningMixin`, and `RetrainMixin`. Never re-implement feature
-extraction, model training, or self-learning outside `ml/`.
+`FeatureMixin`, `ModelMixin`, `LearningMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
+feature extraction, model training, or self-learning outside `ml/`.
 
 ### Retraining
 
@@ -71,6 +74,19 @@ via `record_training_prices()` and retrains only if `needs_retraining()` (untrai
 `last_data_update > last_trained_at`). New training-data writes must move
 `LearningStorage.last_data_write` (or `_prices_updated_at` for prices), or they will never
 reach the model. HPO runs once per 7 new price days (`hpo_counter` in `meta`).
+
+Pure helpers shared by training, prediction and the dev backtest — never inline them:
+`build_feature_vector()` (model input row, column order `FEATURE_NAMES`) and
+`slot_time_features()` (per-slot time features) in `ml/features.py`, and
+`create_price_model()` (production GBM hyperparameters) in `ml/models.py`.
+
+### Model backtest
+
+`scripts/backtest.py` (dev-only, never shipped) is the rolling 1/2/3-day-ahead MAE/RMSE
+backtest: naive last-week baseline, current NumPy GBM, optional LightGBM reference
+(`requirements_backtest.txt`, never `manifest.json`). It imports the helpers above and
+enforces a strict horizon cutoff. Run `./scripts/quality.sh backtest` before and after any
+model or feature change; the baseline is in `docs/ml_documentation.md` → Backtesting.
 
 ### Learning storage
 
@@ -84,8 +100,10 @@ Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tes
 
 ## Feature Vector (20 features)
 
-The canonical feature vector is defined in `docs/ml_documentation.md` and built by
-`FeatureMixin._combine_features()`:
+The canonical feature vector is defined in `docs/ml_documentation.md`. Per-slot feature
+dicts come from `FeatureMixin._combine_features()` (prediction) and
+`get_all_historical_prices()` + `_train_models()` (training); every model input row is then
+built by `build_feature_vector()` in `FEATURE_NAMES` order:
 
 | #   | Feature                | Source         |
 | --- | ---------------------- | -------------- |
@@ -152,14 +170,15 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table             | Key                  | Content                                 |
-| ----------------- | -------------------- | --------------------------------------- |
-| `predictions`     | `id` (autoincrement) | Pending predictions awaiting comparison |
-| `error_metrics`   | `hour` (0-95)        | Per-slot error arrays                   |
-| `bias_correction` | `hour` (0-95)        | Per-slot correction factors             |
-| `price_history`   | `date` (YYYY-MM-DD)  | Daily price arrays (96 values/day)      |
-| `weather_history` | `timestamp` (ISO)    | 15-min weather snapshots                |
-| `meta`            | `key`                | Training state, schema version          |
+| Table                | Key                  | Content                                          |
+| -------------------- | -------------------- | ------------------------------------------------ |
+| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison          |
+| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                            |
+| `bias_correction`    | `hour` (0-95)        | Per-slot correction factors                      |
+| `price_history`      | `date` (YYYY-MM-DD)  | Daily price arrays (96 values/day)               |
+| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                         |
+| `meta`               | `key`                | Training state, schema version                   |
+| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days) |
 
 Migrations are versioned in `meta.schema_version` and run once at startup. The legacy JSON
 format (`open_spot_forecast_DK1_learning.json`) is auto-migrated on first startup.
