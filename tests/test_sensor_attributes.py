@@ -44,8 +44,10 @@ def test_spot_price_attributes_omit_raw_arrays():
     assert "raw_tomorrow" not in attrs
 
 
-def _ml_sensor(api_data: dict) -> MLPredictionSensor:
-    return MLPredictionSensor(MagicMock(), _entry(), api_data, "DKK", 0.25, 2, "kWh")
+def _ml_sensor(api_data: dict, prediction_hours: int = 48) -> MLPredictionSensor:
+    return MLPredictionSensor(
+        MagicMock(), _entry(), api_data, "DKK", 0.25, 2, "kWh", prediction_hours
+    )
 
 
 def _predictions(count: int) -> list[dict]:
@@ -79,6 +81,18 @@ def test_ml_prediction_attributes_truncate_predictions():
 
     assert len(attrs["predictions"]) == 192
     assert attrs["total_predictions"] == 200
+
+
+def test_ml_prediction_attributes_configurable_hours():
+    """The prediction window follows the configured hours in 12-hour steps."""
+    for hours, expected_slots in [(12, 48), (24, 96), (36, 144), (72, 288)]:
+        predictor = MagicMock()
+        predictor.predictions = _predictions(300)
+        predictor.get_prediction_stats.return_value = {}
+
+        sensor = _ml_sensor({"ml_predictor": predictor}, prediction_hours=hours)
+
+        assert len(sensor.extra_state_attributes["predictions"]) == expected_slots
 
 
 def test_learning_metrics_cached_across_properties():

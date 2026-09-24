@@ -24,7 +24,8 @@
           "solar_forecast_sensor": "Solprognose Sensor",
           "temperature_sensor": "Temperatur Sensor",
           "dmi_api_key": "DMI API Nøgle (alternativ vejrdatakilde)",
-          "enable_ml_prediction": "Aktiver ML Forudsigelser"
+          "enable_ml_prediction": "Aktiver ML Forudsigelser",
+          "prediction_hours": "Forudsigelsestimer (12 til 72)"
         }
       }
     },
@@ -42,6 +43,7 @@
         "description": "Konfigurer avancerede indstillinger for spotpris prognoser",
         "data": {
           "enable_ml_prediction": "Aktiver ML Prisforudsigelser",
+          "prediction_hours": "Forudsigelsestimer (12 til 72)",
           "dmi_api_key": "DMI API Nøgle (til vejrdata)",
           "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
           "nordpool_sensor": "Nordpool Sensor (spotpriser)",
