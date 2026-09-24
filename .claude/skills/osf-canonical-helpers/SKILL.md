@@ -109,6 +109,9 @@ hourly (0-23) granularity.
 
 Round to slot boundaries with `floor_to_slot()` / `ceil_to_slot()` and get the
 first predicted slot from `first_prediction_slot()`, all in `time_slots.py`.
+Count a local day's slots with `slots_in_local_day()` (92/96/100) and decide
+whether tomorrow's prices are available with `tomorrow_prices_complete()` —
+never compare a price-list length with a literal such as 23 or 96.
 They work on the UTC timeline, so they stay correct across DST changes.
 
 ### Feature Vector — 20 Features

@@ -52,32 +52,32 @@ async def test_async_setup_entry_adds_two_sensors():
 
 
 def test_tomorrow_available_sensor_is_on():
-    """The sensor reports on when tomorrow's prices are available."""
-    sensor = TomorrowAvailableSensor(_hass(), _entry(), {"tomorrow_available": True})
+    """The sensor reports on when all of tomorrow's 96 slots are known."""
+    sensor = TomorrowAvailableSensor(_hass(), _entry(), {"prices_tomorrow": [1.0] * 96})
     assert sensor.is_on is True
 
 
 def test_tomorrow_available_sensor_is_off():
-    """The sensor reports off when tomorrow's prices are not available."""
-    sensor = TomorrowAvailableSensor(_hass(), _entry(), {"tomorrow_available": False})
-    assert sensor.is_on is False
+    """Missing or partial prices (the old >= 23 threshold) are not available."""
+    partial = TomorrowAvailableSensor(
+        _hass(), _entry(), {"prices_tomorrow": [1.0] * 23}
+    )
+    assert partial.is_on is False
 
     sensor_missing = TomorrowAvailableSensor(_hass(), _entry(), {})
     assert sensor_missing.is_on is False
 
 
-def test_tomorrow_available_sensor_attributes_empty():
-    """Without a nordpool object no extra attributes are exposed."""
-    sensor = TomorrowAvailableSensor(_hass(), _entry(), {})
-    assert sensor.extra_state_attributes == {}
+def test_tomorrow_available_sensor_attributes():
+    """Attributes show tomorrow's price count against a full day's slots."""
+    sensor = TomorrowAvailableSensor(_hass(), _entry(), {"prices_tomorrow": [1.0] * 40})
+    assert sensor.extra_state_attributes == {
+        "tomorrow_prices_count": 40,
+        "tomorrow_slots_expected": 96,
+    }
 
-
-def test_tomorrow_available_sensor_attributes_with_nordpool():
-    """A nordpool object exposes the count of tomorrow's prices."""
-    nordpool = MagicMock()
-    nordpool.tomorrow = [1.0, 2.0, 3.0]
-    sensor = TomorrowAvailableSensor(_hass(), _entry(), {"nordpool": nordpool})
-    assert sensor.extra_state_attributes == {"tomorrow_prices_count": 3}
+    empty = TomorrowAvailableSensor(_hass(), _entry(), {})
+    assert empty.extra_state_attributes["tomorrow_prices_count"] == 0
 
 
 def test_tomorrow_available_sensor_identity():
