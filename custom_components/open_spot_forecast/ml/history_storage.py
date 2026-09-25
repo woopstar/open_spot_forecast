@@ -9,27 +9,29 @@ Python (``ml/training_inputs.py``), instead of one query per training row.
 Weather snapshots are keyed by their UTC slot start (``utc_slot_key``);
 Nordpool rows by the UTC hour Nordpool publishes. The single-row lookups and
 the pruning compare timestamps as SQLite julian days on both sides, so a row
-and a query only have to be the same instant, not the same string.
+and a query only have to be the same instant, not the same string. Window
+bounds are computed in Python and compared with ``julianday()`` of the stored
+key, so a row exactly on a bound is always inside (#46).
 """
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..time_slots import UTC_KEY_FORMAT, parse_utc, utc_slot_key
+from ..time_slots import UTC_KEY_FORMAT, floor_to_slot, parse_utc, utc_slot_key
 from .storage_base import StorageMixinBase
 
-# Julian-day window around a looked-up timestamp
-_WEATHER_WINDOW_DAYS = 30 / (24 * 60)  # 30 minutes
-_NORDPOOL_WINDOW_DAYS = 1 / 24  # 1 hour
+# How far from a looked-up time a weather snapshot may be (inclusive)
+_WEATHER_WINDOW = timedelta(minutes=30)
+# Nordpool publishes one prognosis row per hour
+_NORDPOOL_ROW_MINUTES = 60
 
 
-def _utc_key(timestamp: str) -> str | None:
-    """Return an ISO timestamp as the UTC key format, or None if it does not parse."""
-    moment = parse_utc(timestamp)
-    return moment.strftime(UTC_KEY_FORMAT) if moment is not None else None
+def _utc_key(moment: datetime) -> str:
+    """Return a UTC datetime in the stored key format."""
+    return moment.strftime(UTC_KEY_FORMAT)
 
 
 def _utc_cutoff(max_age_days: int) -> str:
@@ -78,12 +80,16 @@ class HistoryStorageMixin(StorageMixinBase):
     def find_weather_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
         """Find the snapshot closest to a timestamp, within 30 minutes (blocking).
 
+        A slot's own snapshot is 0 minutes from its start, so it wins over
+        its neighbours; a missing slot falls back to a snapshot at most 30
+        minutes away, and nothing further.
+
         Args:
             timestamp: ISO timestamp, with any UTC offset (naive = Home
                 Assistant local time).
         """
-        key = _utc_key(timestamp)
-        if key is None:
+        moment = parse_utc(timestamp)
+        if moment is None:
             return None
         with self._lock:
             conn = self._ensure_conn()
@@ -91,10 +97,14 @@ class HistoryStorageMixin(StorageMixinBase):
                 """SELECT temperature, wind_speed, wind_direction,
                           cloud_coverage, humidity, solar_power
                    FROM weather_history
-                   WHERE ABS(julianday(timestamp) - julianday(?)) <= ?
+                   WHERE julianday(timestamp) BETWEEN julianday(?) AND julianday(?)
                    ORDER BY ABS(julianday(timestamp) - julianday(?))
                    LIMIT 1""",
-                (key, _WEATHER_WINDOW_DAYS, key),
+                (
+                    _utc_key(moment - _WEATHER_WINDOW),
+                    _utc_key(moment + _WEATHER_WINDOW),
+                    _utc_key(moment),
+                ),
             ).fetchone()
 
         if row is None:
@@ -179,24 +189,33 @@ class HistoryStorageMixin(StorageMixinBase):
             conn.commit()
 
     def find_nordpool_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
-        """Find the prognosis closest to a timestamp, within an hour (blocking).
+        """Find the prognosis for a timestamp's UTC hour (blocking).
+
+        The same row training uses for every slot of the hour
+        (``TrainingInputs``): the first stored in the hour, never a
+        neighbouring hour's.
 
         Args:
             timestamp: ISO timestamp, with any UTC offset (naive = Home
                 Assistant local time).
         """
-        key = _utc_key(timestamp)
-        if key is None:
+        moment = parse_utc(timestamp)
+        if moment is None:
             return None
+        hour = floor_to_slot(moment, _NORDPOOL_ROW_MINUTES)
         with self._lock:
             conn = self._ensure_conn()
             row = conn.execute(
                 """SELECT consumption, solar, wind_offshore, wind_onshore
                    FROM nordpool_prognoses
-                   WHERE ABS(julianday(timestamp) - julianday(?)) <= ?
-                   ORDER BY ABS(julianday(timestamp) - julianday(?))
+                   WHERE julianday(timestamp) >= julianday(?)
+                     AND julianday(timestamp) < julianday(?)
+                   ORDER BY julianday(timestamp)
                    LIMIT 1""",
-                (key, _NORDPOOL_WINDOW_DAYS, key),
+                (
+                    _utc_key(hour),
+                    _utc_key(hour + timedelta(minutes=_NORDPOOL_ROW_MINUTES)),
+                ),
             ).fetchone()
 
         if row is None:

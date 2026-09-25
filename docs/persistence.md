@@ -91,15 +91,28 @@ A weather snapshot is keyed by the UTC start of its 15-minute slot,
 snapshot taken at 10:00:01 local (CEST) is `2026-09-24T08:00:00Z`. Nordpool
 rows keep the UTC timestamps Nordpool publishes (`…Z`, one per hour).
 
-`find_weather_for_timestamp` (±30 minutes) and `find_nordpool_for_timestamp`
-(±1 hour) accept any ISO timestamp (naive = Home Assistant local time),
-normalize it to UTC and compare it with the stored rows as SQLite julian
-days, and so does the pruning. Before #59 they compared the stored
-strings with SQLite `datetime()` results (UTC with a space separator), which
-never matched a row on the same date: self-learning never recorded the
+`find_weather_for_timestamp` and `find_nordpool_for_timestamp` accept any ISO
+timestamp (naive = Home Assistant local time) and normalize it to UTC:
+
+- **Weather**: the snapshot closest to the timestamp, at most 30 minutes away
+  (inclusive). A slot's own snapshot is 0 minutes from its start, so it wins
+  over its neighbours; a slot without one falls back to a snapshot within 30
+  minutes, even across midnight, and never further.
+- **Nordpool**: the row of the timestamp's UTC hour (the first stored in the
+  hour), the row training uses for all four slots of the hour. A missing hour
+  returns None, not a neighbouring hour's row.
+
+Window bounds are computed in Python and compared with the stored keys as
+SQLite julian days on both sides, as is the pruning cutoff, so a row
+exactly on a bound is always inside. Before #59 the lookups compared the
+stored strings with SQLite `datetime()` results (UTC with a space separator),
+which never matched a row on the same date: self-learning never recorded the
 forecast weather error, and the Nordpool backfill re-fetched every stored day
-at each startup. Training was not affected: it matches both tables on the UTC
-epoch in Python (`TrainingInputs`).
+at each startup. Until #46 the weather window was a float distance in julian
+days, so rounding decided whether a snapshot exactly 30 minutes away was
+found, and the Nordpool lookup took the nearest row within an hour, the next
+hour's for every :45 slot. Training was not affected: it matches both tables
+on the UTC epoch in Python (`TrainingInputs`).
 
 The v7 migration rewrites the snapshots stored before: naive timestamps (as
 written before #17) are read as Home Assistant local time, one in the
