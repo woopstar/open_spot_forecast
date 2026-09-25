@@ -290,6 +290,14 @@ skipped. The ML path and the heuristic fallback both get this start from
 `first_prediction_slot()` in `time_slots.py`, which rounds on the UTC
 timeline so a DST change cannot shift it.
 
+The `Price Forecast (ML)` sensor's state is the prediction for the slot that
+contains now (`start <= now < end`, compared in UTC so the repeated hour on
+the DST fall-back day picks the right slot), or the first future slot when
+the predictions start later. Its `state_slot_start` attribute is that slot's
+start. The state is unknown if every prediction is in the past, rather than
+showing a stale slot. The sensor is polled, so the state moves to the next
+slot within Home Assistant's polling interval.
+
 ## Solar Scaling Factor
 
 A learned EMA ratio between Solcast's estimate for today and the actual

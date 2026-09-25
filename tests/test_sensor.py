@@ -1,9 +1,11 @@
 """Tests for the Open Spot Forecast sensor platform."""
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import MagicMock, Mock
 
 import pytest
+
+from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.accuracy_sensor import (
     LeadTimeAccuracySensor,
@@ -390,7 +392,7 @@ def _prediction(start, price, confidence=0.8):
 
 def test_ml_prediction_native_value_future():
     """The next future prediction is selected."""
-    future = datetime.now() + timedelta(hours=1)
+    future = dt_util.now() + timedelta(hours=1)
     predictor = MagicMock()
     predictor.predictions = [_prediction(future, 100.0)]
     sensor = MLPredictionSensor(
@@ -406,9 +408,9 @@ def test_ml_prediction_native_value_future():
     assert sensor.native_value == pytest.approx(100.0 * (1 + VAT))
 
 
-def test_ml_prediction_native_value_falls_back_to_first():
-    """When no future prediction exists, the first prediction is used."""
-    past = datetime.now() - timedelta(hours=1)
+def test_ml_prediction_native_value_is_none_when_every_prediction_is_past():
+    """A stale forecast is not shown as the current price (#56)."""
+    past = dt_util.now() - timedelta(hours=1)
     predictor = MagicMock()
     predictor.predictions = [_prediction(past, 80.0)]
     sensor = MLPredictionSensor(
@@ -421,14 +423,15 @@ def test_ml_prediction_native_value_falls_back_to_first():
         PRICE_TYPE,
     )
 
-    assert sensor.native_value == pytest.approx(80.0 * (1 + VAT))
+    assert sensor.native_value is None
 
 
-def test_ml_prediction_native_value_invalid_timestamp_falls_back():
-    """An unparseable timestamp is skipped, then first prediction is used."""
+def test_ml_prediction_native_value_skips_an_invalid_timestamp():
+    """An unparseable timestamp is skipped; the next usable prediction is used."""
     predictor = MagicMock()
     predictor.predictions = [
-        {"start": "not-a-date", "end": "x", "price": 60.0, "confidence": 0.6}
+        {"start": "not-a-date", "end": "x", "price": 60.0, "confidence": 0.6},
+        _prediction(dt_util.now() + timedelta(hours=1), 65.0),
     ]
     sensor = MLPredictionSensor(
         _hass(),
@@ -440,11 +443,11 @@ def test_ml_prediction_native_value_invalid_timestamp_falls_back():
         PRICE_TYPE,
     )
 
-    assert sensor.native_value == pytest.approx(60.0 * (1 + VAT))
+    assert sensor.native_value == pytest.approx(65.0 * (1 + VAT))
 
 
-def test_ml_prediction_native_value_missing_start_falls_back():
-    """A prediction with no start timestamp is skipped, then first is used."""
+def test_ml_prediction_native_value_missing_start_is_skipped():
+    """A prediction with no start timestamp is never the state."""
     predictor = MagicMock()
     predictor.predictions = [
         {"start": None, "end": None, "price": 70.0, "confidence": 0.5}
@@ -459,12 +462,12 @@ def test_ml_prediction_native_value_missing_start_falls_back():
         PRICE_TYPE,
     )
 
-    assert sensor.native_value == pytest.approx(70.0 * (1 + VAT))
+    assert sensor.native_value is None
 
 
 def test_ml_prediction_native_value_price_none():
     """A future prediction with no price yields None."""
-    future = datetime.now() + timedelta(hours=1)
+    future = dt_util.now() + timedelta(hours=1)
     predictor = MagicMock()
     predictor.predictions = [_prediction(future, None)]
     sensor = MLPredictionSensor(
@@ -509,8 +512,8 @@ def test_ml_prediction_extra_attributes_full():
     """Predictions and stats are exposed with unit conversion."""
     predictor = MagicMock()
     predictor.predictions = [
-        _prediction(datetime.now() + timedelta(hours=1), 100.0, 0.8),
-        _prediction(datetime.now() + timedelta(hours=2), 200.0, 0.9),
+        _prediction(dt_util.now() + timedelta(hours=1), 100.0, 0.8),
+        _prediction(dt_util.now() + timedelta(hours=2), 200.0, 0.9),
     ]
     predictor.get_prediction_stats.return_value = {
         "min_price": 100.0,
@@ -554,7 +557,7 @@ def test_ml_prediction_extra_attributes_full():
 def test_ml_prediction_extra_attributes_empty_stats():
     """Empty stats omit the forecast_* attributes."""
     predictor = MagicMock()
-    predictor.predictions = [_prediction(datetime.now() + timedelta(hours=1), 100.0)]
+    predictor.predictions = [_prediction(dt_util.now() + timedelta(hours=1), 100.0)]
     predictor.get_prediction_stats.return_value = {}
     sensor = MLPredictionSensor(
         _hass(),
@@ -579,8 +582,8 @@ def test_ml_prediction_extra_attributes_skips_missing_price():
     """Predictions without a price are skipped in the attribute list."""
     predictor = MagicMock()
     predictor.predictions = [
-        _prediction(datetime.now() + timedelta(hours=1), None),
-        _prediction(datetime.now() + timedelta(hours=2), 100.0),
+        _prediction(dt_util.now() + timedelta(hours=1), None),
+        _prediction(dt_util.now() + timedelta(hours=2), 100.0),
     ]
     predictor.get_prediction_stats.return_value = {}
     sensor = MLPredictionSensor(
