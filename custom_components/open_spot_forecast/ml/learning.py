@@ -393,8 +393,14 @@ class LearningMixin(PredictorBase):
         """Get comprehensive learning and error metrics.
 
         Returns:
-            Dictionary with learning statistics and error metrics
+            Dictionary with learning statistics and error metrics, plus the
+            latest training's ``holdout_mae``, ``holdout_rmse`` and
+            ``holdout_trained_at`` (None before a successful training)
         """
+        return self._comparison_metrics() | self.holdout_metrics()
+
+    def _comparison_metrics(self) -> dict[str, Any]:
+        """Return the self-learning metrics of predictions compared to actuals."""
         pending = self.storage.count_predictions()
 
         if not self.error_metrics:
@@ -645,6 +651,7 @@ class LearningMixin(PredictorBase):
             self.solar_scale = data.get("solar_scale", 1.0)
             self._solar_scale_samples = data.get("solar_scale_samples", 0)
             self._restore_hpo_counter(data)
+            self._restore_holdout_metrics(data)
 
             # Restore optimized hyperparameters if available. Results saved
             # without hpo_max_depth were tuned for the old depth-1 stumps and

@@ -243,7 +243,12 @@ The bias-correction and error-metric slots stay keyed by local time of day
 1. **Holdout validation.** A copy of the price model with the same
    hyperparameters is fitted on the oldest 80 % of the rows and scored on the
    newest 20 %. The holdout MAE and RMSE are logged
-   (`ML model trained: holdout MAE=…, RMSE=…`); the copy is then discarded.
+   (`ML model trained: holdout MAE=…, RMSE=…`) and kept with the training
+   time in `meta` (`holdout_mae`, `holdout_rmse`, `holdout_trained_at`), so
+   the learning-metrics sensor shows them across restarts (see
+   [Self-Learning](self_learning.md#metrics-available)); the copy is then
+   discarded. A failed training deletes them, so they never describe a model
+   that is not in use.
 2. **Live model.** `price_model` is fitted on 100 % of the rows. The most
    recent days are the most similar to the days being predicted, so they
    must be part of the model: fitting on the oldest 80 % only would ignore

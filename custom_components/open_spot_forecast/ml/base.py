@@ -43,6 +43,10 @@ class PredictorBase:
     last_trained_at: datetime | None
     _prices_updated_at: datetime | None
     _hpo_counter: int
+    # Last successful training's holdout error (None before one)
+    holdout_mae: float | None
+    holdout_rmse: float | None
+    holdout_trained_at: datetime | None
     error_metrics: dict[int, dict[str, Any]]
     bias_correction: dict[int, float]
     volatility_mae: dict[int, float]
@@ -91,4 +95,10 @@ class PredictorBase:
         raise NotImplementedError
 
     def _restore_hpo_counter(self, data: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def holdout_metrics(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _restore_holdout_metrics(self, data: dict[str, Any]) -> None:
         raise NotImplementedError

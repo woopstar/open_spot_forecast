@@ -145,6 +145,13 @@ class LearningStateStorageMixin(StorageMixinBase):
                 )
             conn.commit()
 
+    def delete_meta_keys(self, keys: tuple[str, ...]) -> None:
+        """Delete key/value pairs from the meta table (blocking)."""
+        with self._lock:
+            conn = self._ensure_conn()
+            conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
+            conn.commit()
+
     def load_meta_dict(self) -> dict[str, str]:
         """Load all meta key/value pairs as strings (blocking)."""
         with self._lock:

@@ -15,12 +15,18 @@ All learning data is stored in a single SQLite database:
 | `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                      |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing |
 | `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), stored with UTC offset               |
-| `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                            |
+| `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter` and the latest holdout metrics                |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error    |
 
 `price_history` never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
 an invalid day never overwrites prices already stored for that date.
+
+`meta` holds the latest successful training's holdout error: `holdout_mae`
+and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
+`holdout_trained_at` (UTC ISO). They are written after every successful
+training, deleted after a failed one, and restored at startup. `meta` is a
+key/value table, so this needs no schema change.
 
 `lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every
 startup, so existing databases gain it without a versioned migration. Rows

@@ -783,4 +783,8 @@ class LearningMetricsSensor(SensorEntity):
             attrs["bias_corrections"] = metrics.get("bias_corrections")
             attrs["pending_predictions"] = metrics.get("pending_predictions")
             attrs["hourly_metrics"] = metrics.get("hourly_metrics")
+            # Holdout error of the latest training (None before one)
+            attrs["holdout_mae"] = metrics.get("holdout_mae")
+            attrs["holdout_rmse"] = metrics.get("holdout_rmse")
+            attrs["holdout_trained_at"] = metrics.get("holdout_trained_at")
         return attrs
