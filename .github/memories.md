@@ -14,18 +14,19 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### Component layer (`custom_components/open_spot_forecast/`)
 
-| File                 | Responsibility                                                                                    |
-| -------------------- | ------------------------------------------------------------------------------------------------- |
-| `const.py`           | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                      |
-| `config_flow.py`     | Two-step config flow (basic settings → sensor configuration) + options flow                       |
-| `sensor.py`          | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics) |
-| `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                          |
-| `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
-| `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
-| `price_series.py`    | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`     |
-| `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML    |
-| `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete |
-| `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                       |
+| File                 | Responsibility                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------ |
+| `const.py`           | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                           |
+| `config_flow.py`     | Two-step config flow (basic settings → sensor configuration) + options flow                            |
+| `sensor.py`          | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)      |
+| `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                               |
+| `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                      |
+| `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                    |
+| `price_series.py`    | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`          |
+| `spot_prices.py`     | `ml_price_inputs()` (the model's raw spot prices + where they end), `extract_latest_known_timestamp()` |
+| `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML         |
+| `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete      |
+| `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                            |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
@@ -63,8 +64,14 @@ config key, region name, or price-unit factor elsewhere.
 
 All external entity reads go through `SensorReader` in `sensor_reader.py`. Never call
 `hass.states.get(...)` directly in platform or ML code. Methods:
-`read_stromligning_sensor`, `read_stromligning_tomorrow_sensor`, `read_weather_sensors`,
+`read_stromligning_sensor`, `read_stromligning_tomorrow_sensor`, `read_spot_prices`, `read_weather_sensors`,
 `read_solcast_sensor`, `read_met_weather`.
+
+**The ML model's prices are the raw day-ahead spot price excl. VAT and tariffs** (#16),
+from `read_spot_prices()` (Stromligning's `spotprice_ex_vat` sensors) via `ml_price_inputs()`:
+training target, self-learning actual and prediction. Stromligning's all-in consumer price
+is display-only; never feed it to the model. VAT is added once, in `MLPredictionSensor`
+(`_with_vat`); never add tariffs or VAT in `ml/`.
 
 A day's prices are one value per 15-min slot from local midnight (92/96/100), `None` for a
 slot missing in the source: the readers place items by their own timestamps with
@@ -199,18 +206,20 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                  | Content                                           |
-| -------------------- | -------------------- | ------------------------------------------------- |
-| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison           |
-| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                             |
-| `bias_correction`    | `hour` (0-95)        | Per-slot additive bias offsets (schema v5)        |
-| `price_history`      | `date` (YYYY-MM-DD)  | Daily price arrays (92/96/100 slots, `null` gaps) |
-| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                          |
-| `meta`               | `key`                | Training state, schema version                    |
-| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days)  |
+| Table                | Key                  | Content                                                         |
+| -------------------- | -------------------- | --------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison                         |
+| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                                           |
+| `bias_correction`    | `hour` (0-95)        | Per-slot additive bias offsets (schema v5)                      |
+| `price_history`      | `date` (YYYY-MM-DD)  | Daily raw spot prices, excl. VAT (92/96/100 slots, `null` gaps) |
+| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                                        |
+| `meta`               | `key`                | Training state, schema version                                  |
+| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days)                |
 
-Migrations are versioned in `meta.schema_version` and run once at startup. The legacy JSON
-format (`open_spot_forecast_DK1_learning.json`) is auto-migrated on first startup.
+Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
+multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning
+data (`ml/spot_migration.py`). The legacy JSON format
+(`open_spot_forecast_DK1_learning.json`) only contributes its training state.
 
 ## File Size Rules
 

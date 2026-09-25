@@ -291,7 +291,7 @@ def test_upgrade_resets_multiplicative_factors_once(
     with caplog.at_level(logging.INFO):
         upgraded = LearningStorage(_hass(tmp_path), "DK1")
     assert _stored_bias(upgraded) == {}
-    assert _schema_version(db_path) == ADDITIVE_BIAS_SCHEMA_VERSION
+    assert _schema_version(db_path) >= ADDITIVE_BIAS_SCHEMA_VERSION
     assert "reset 2 multiplicative factors" in caplog.text
 
     upgraded.save_all({"bias_correction": {SLOT: 0.07}})
@@ -306,7 +306,7 @@ def test_upgrade_resets_multiplicative_factors_once(
 def test_new_database_starts_at_the_additive_schema(tmp_path: Path) -> None:
     storage = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        assert _schema_version(storage.db_path) == ADDITIVE_BIAS_SCHEMA_VERSION
+        assert _schema_version(storage.db_path) >= ADDITIVE_BIAS_SCHEMA_VERSION
     finally:
         storage.close()
 

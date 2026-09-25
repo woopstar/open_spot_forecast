@@ -364,6 +364,39 @@ class SensorReader:
 
         return result
 
+    def read_spot_prices(
+        self, entity_id: str | None, tomorrow_entity_id: str | None
+    ) -> dict:
+        """Read the raw day-ahead spot price, excl. VAT and tariffs (#16).
+
+        The ML model trains on and predicts this series; VAT is applied once,
+        in the sensor layer. Stromligning's spot sensors
+        (``sensor.stromligning_spotprice_ex_vat`` and
+        ``binary_sensor.stromligning_tomorrow_spotprice_ex_vat``) use the same
+        ``prices`` attribute as its price sensors, so the same parsing applies.
+
+        Args:
+            entity_id: Today's spot price sensor.
+            tomorrow_entity_id: Tomorrow's spot price binary sensor.
+
+        Returns:
+            Dict with ``today``/``tomorrow`` (one price per 15-min slot, None
+            for a missing slot) and ``raw_today``/``raw_tomorrow`` items.
+        """
+        today = self.read_stromligning_sensor(entity_id) if entity_id else {}
+        result: dict[str, Any] = {
+            "today": today.get("today", []),
+            "tomorrow": today.get("tomorrow", []),
+            "raw_today": today.get("raw_today", []),
+            "raw_tomorrow": today.get("raw_tomorrow", []),
+        }
+        if tomorrow_entity_id:
+            tomorrow = self.read_stromligning_tomorrow_sensor(tomorrow_entity_id)
+            if tomorrow["available"] and tomorrow["tomorrow"]:
+                result["tomorrow"] = tomorrow["tomorrow"]
+                result["raw_tomorrow"] = tomorrow["raw_tomorrow"]
+        return result
+
     def read_weather_sensors(self, config: dict) -> dict:
         """Read weather data from configured sensors.
 

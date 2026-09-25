@@ -175,6 +175,9 @@ class SpotPriceSensor(SensorEntity):
             attrs["today_prices"] = stromligning_data.get("today", [])
             attrs["tomorrow_prices"] = stromligning_data.get("tomorrow", [])
             attrs["price_source"] = "stromligning"
+            # The state is Stromligning's all-in consumer price
+            attrs["includes_vat"] = True
+            attrs["includes_tariffs"] = True
         else:
             # Fall back to Nordpool
             nordpool = self.api_data.get("nordpool")
@@ -511,7 +514,12 @@ class TomorrowMeanSensor(SensorEntity):
 
 
 class MLPredictionSensor(SensorEntity):
-    """Sensor for ML-based price predictions (replaces Carnot)."""
+    """Sensor for ML-based price predictions (replaces Carnot).
+
+    The model predicts the raw spot price excl. VAT and tariffs (#16). VAT is
+    applied here, exactly once, to the state and to every price attribute;
+    tariffs are not included.
+    """
 
     _attr_has_entity_name = True
     _attr_device_class = SensorDeviceClass.MONETARY
@@ -585,9 +593,12 @@ class MLPredictionSensor(SensorEntity):
 
                 price = next_pred.get("price")
                 if price is not None:
-                    # Prices are already in kr/kWh, just apply VAT
-                    return float(round(price * (1 + self.vat), self.precision))
+                    return self._with_vat(price)
         return None
+
+    def _with_vat(self, spot_price: float) -> float:
+        """Return a predicted spot price (currency/kWh excl. VAT) with VAT added."""
+        return float(round(spot_price * (1 + self.vat), self.precision))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -600,32 +611,26 @@ class MLPredictionSensor(SensorEntity):
             for pred in ml_predictor.predictions[: self._max_predictions]:
                 price = pred.get("price")
                 if price is not None:
-                    # Prices are already in kr/kWh, just apply VAT
                     predictions_with_unit.append(
                         {
                             "start": pred.get("start"),
                             "end": pred.get("end"),
-                            "price": round(price * (1 + self.vat), self.precision),
+                            "price": self._with_vat(price),
                             "unit": f"{self.currency}/{self.price_type}",
                             "confidence": pred.get("confidence"),
                         }
                     )
             attrs["predictions"] = predictions_with_unit
+            # Every price above and below: spot price + VAT, no tariffs
+            attrs["includes_vat"] = True
+            attrs["includes_tariffs"] = False
+            attrs["vat"] = self.vat
             stats = ml_predictor.get_prediction_stats()
             if stats:
-                # Convert stats to proper unit
-                conversion_factor = (
-                    1 / PRICE_IN.get(self.price_type, 1000) * (1 + self.vat)
-                )
-                attrs["forecast_min"] = round(
-                    stats.get("min_price", 0) * conversion_factor, self.precision
-                )
-                attrs["forecast_max"] = round(
-                    stats.get("max_price", 0) * conversion_factor, self.precision
-                )
-                attrs["forecast_mean"] = round(
-                    stats.get("mean_price", 0) * conversion_factor, self.precision
-                )
+                # Predictions are already in currency/kWh: only VAT is added
+                attrs["forecast_min"] = self._with_vat(stats.get("min_price", 0))
+                attrs["forecast_max"] = self._with_vat(stats.get("max_price", 0))
+                attrs["forecast_mean"] = self._with_vat(stats.get("mean_price", 0))
                 attrs["unit"] = f"{self.currency}/{self.price_type}"
                 attrs["mean_confidence"] = stats.get("mean_confidence")
                 attrs["total_predictions"] = stats.get("total_predictions")

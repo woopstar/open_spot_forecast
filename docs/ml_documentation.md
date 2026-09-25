@@ -158,17 +158,17 @@ prediction:
 
 ## Data Sources
 
-| Source                        | Type                | Resolution   | Used for                                               |
-| ----------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
-| `sensor.stromligning_*`       | Confirmed prices    | 15-min       | Price history, self-learning target                    |
-| `weather.get_forecasts`       | Weather forecast    | Hourly       | Prediction: per-slot wind (m/s), temp, cloud, humidity |
-| `weather.forecast_*` (state)  | Current weather     | Every 15 min | `weather_history` snapshots (training)                 |
-| `Nordpool Consumption API`    | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |
-| `Nordpool Production API`     | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases         |
-| `sensor.solcast_*`            | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)          |
-| `sensor.power_inverter_*`     | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
-| `weather_history` (SQLite)    | Actual weather      | 15-min       | Training inputs                                        |
-| `nordpool_prognoses` (SQLite) | Stored prognoses    | Hourly       | Training inputs                                        |
+| Source                                              | Type                | Resolution   | Used for                                               |
+| --------------------------------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
+| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min       | Training target, self-learning actuals (excl. VAT)     |
+| `weather.get_forecasts`                             | Weather forecast    | Hourly       | Prediction: per-slot wind (m/s), temp, cloud, humidity |
+| `weather.forecast_*` (state)                        | Current weather     | Every 15 min | `weather_history` snapshots (training)                 |
+| `Nordpool Consumption API`                          | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |
+| `Nordpool Production API`                           | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases         |
+| `sensor.solcast_*`                                  | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)          |
+| `sensor.power_inverter_*`                           | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
+| `weather_history` (SQLite)                          | Actual weather      | 15-min       | Training inputs                                        |
+| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                        |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -259,6 +259,21 @@ Hyperparameter optimization compares its candidates on the same chronological
 80/20 split, then replaces `price_model` with an unfitted model using the best
 parameters, which the next training fits on all rows.
 
+## Target: Raw Spot Price, VAT at Output
+
+The model is trained on, learns from and predicts the **raw day-ahead spot
+price excl. VAT and tariffs**, in currency/kWh (#16), read from Stromligning's
+spot price sensors (`read_spot_prices()`; see
+[Stromligning Integration](stromligning_integration.md#overview)).
+`price_history`, stored predictions, error metrics and bias offsets are all in
+that unit. Tariffs are time-of-use and seasonal; in the target they would be
+learned as if they were market behaviour. The consumer price (tariffs, fees
+and VAT included) is only displayed.
+
+VAT is applied once, at output: the `Price Forecast (ML)` sensor adds the
+configured VAT to its state and to every price attribute, and says so with
+`includes_vat: true`, `includes_tariffs: false`. Tariffs at output are #39.
+
 ## Negative Prices
 
 DK1 and DK2 regularly clear below zero on windy or sunny days. Nothing in the
@@ -322,7 +337,7 @@ exactly zero falls back to the heuristic.
 
 Every 15 minutes:
 
-1. Read current Stromligning price
+1. Read the current raw spot price (excl. VAT)
 2. Look up every stored prediction for the current slot (all forecast runs)
 3. Calculate error, update per-slot metrics
 4. Update the slot's additive bias offset via EMA (see

@@ -234,6 +234,7 @@ async def test_setup_polls_until_tomorrow_is_complete_and_cancels_on_unload(
     }
     reader = Mock()
     reader.read_stromligning_sensor.return_value = reading(full_day[:23])
+    reader.read_spot_prices.return_value = reading(full_day[:23])
     reader.read_weather_sensors.return_value = {"temperature": 12.0}
     ml_predictor = Mock()
     ml_predictor._load_learning_data = AsyncMock()
@@ -262,6 +263,7 @@ async def test_setup_polls_until_tomorrow_is_complete_and_cancels_on_unload(
 
         # Published in full: available, and the forecast refreshes once
         reader.read_stromligning_sensor.return_value = reading(full_day)
+        reader.read_spot_prices.return_value = reading(full_day)
         await scheduler.action(dt_util.utcnow())
         assert api_data["tomorrow_available"] is True
         entry.async_create_background_task.assert_called_once()

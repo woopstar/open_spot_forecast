@@ -22,6 +22,15 @@ CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 CONF_STROMLIGNING_SENSOR = "stromligning_sensor"
 CONF_STROMLIGNING_TOMORROW_SENSOR = "stromligning_tomorrow_sensor"
 
+# Raw day-ahead spot price, excl. VAT and tariffs: the ML model's training and
+# prediction target (#16). VAT is applied once, in the sensor layer.
+CONF_SPOT_PRICE_SENSOR = "spot_price_sensor"
+CONF_SPOT_PRICE_TOMORROW_SENSOR = "spot_price_tomorrow_sensor"
+DEFAULT_SPOT_PRICE_SENSOR = "sensor.stromligning_spotprice_ex_vat"
+DEFAULT_SPOT_PRICE_TOMORROW_SENSOR = (
+    "binary_sensor.stromligning_tomorrow_spotprice_ex_vat"
+)
+
 # Defaults
 DEFAULT_NAME = "Open Spot Forecast"
 DEFAULT_REGION = "DK1"

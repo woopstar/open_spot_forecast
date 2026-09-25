@@ -533,7 +533,8 @@ def test_ml_prediction_extra_attributes_full():
 
     attrs = sensor.extra_state_attributes
 
-    conversion = 1 / PRICE_IN[PRICE_TYPE] * (1 + VAT)
+    # Predictions are raw spot prices in currency/kWh: VAT is added once
+    conversion = 1 + VAT
     assert len(attrs["predictions"]) == 2
     assert attrs["predictions"][0]["price"] == round(100.0 * (1 + VAT), PRECISION)
     assert attrs["predictions"][0]["unit"] == "DKK/kWh"
@@ -542,6 +543,8 @@ def test_ml_prediction_extra_attributes_full():
     assert attrs["forecast_max"] == round(200.0 * conversion, PRECISION)
     assert attrs["forecast_mean"] == round(150.0 * conversion, PRECISION)
     assert attrs["unit"] == "DKK/kWh"
+    assert attrs["includes_vat"] is True
+    assert attrs["includes_tariffs"] is False
     assert attrs["mean_confidence"] == 0.85
     assert attrs["total_predictions"] == 2
     assert attrs["is_ml_model"] is True

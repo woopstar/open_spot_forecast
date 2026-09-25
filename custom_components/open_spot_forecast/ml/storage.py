@@ -15,6 +15,7 @@ from homeassistant.util import dt as dt_util
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
 from .bias_storage import migrate_bias_to_additive
 from .history_storage import HistoryStorageMixin
+from .spot_migration import migrate_to_spot_prices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,8 +73,9 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
         """Auto-migrate data from legacy JSON file if the DB is empty.
 
         Called once during __init__. If the predictions table is empty
-        and the old JSON learning file exists, imports all data and
-        deletes the JSON file.
+        and the old JSON learning file exists, imports its training state
+        and renames the JSON file. Its prices, predictions, error metrics and
+        bias factors are not imported (see migrate_to_spot_prices).
 
         Returns:
             True if migration was performed, False otherwise.
@@ -94,11 +96,13 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
             with open(self._json_path, encoding="utf-8") as f:
                 data = json.load(f)
 
-            predictions = data.get("prediction_history", [])
-            error_metrics = data.get("error_metrics", {})
-            # Legacy factors are multiplicative; bias offsets are additive (#15)
+            # Legacy prices, predictions and errors are consumer prices; the
+            # model learns the raw spot price (#16). Legacy bias factors are
+            # multiplicative; bias offsets are additive (#15). None is imported.
+            predictions: list = []
+            error_metrics: dict = {}
             bias_correction: dict = {}
-            price_history = data.get("price_history", [])
+            price_history: list = []
             training_samples = data.get("training_samples", 0)
             is_trained = data.get("is_trained", False)
 
@@ -323,6 +327,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
 
         migrate_bias_to_additive(conn)
         self._create_lead_time_accuracy_schema(conn)
+        migrate_to_spot_prices(conn)
         conn.commit()
 
     def __del__(self) -> None:

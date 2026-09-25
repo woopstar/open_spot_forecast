@@ -15,6 +15,7 @@ from custom_components.open_spot_forecast import async_setup_entry
 from custom_components.open_spot_forecast.const import (
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
+    CONF_SPOT_PRICE_SENSOR,
     CONF_STROMLIGNING_SENSOR,
     CONF_TEMPERATURE_SENSOR,
     DOMAIN,
@@ -125,7 +126,8 @@ def test_predict_on_all_zero_prices_keeps_previous_predictions(
 async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
     """End to end: the 15-minute update never learns from an all-zero day.
 
-    A real SensorReader reads a mocked Stromligning state. While it reports
+    A real SensorReader reads mocked Stromligning states: the consumer price
+    (displayed) and the raw spot price (learned from, #16). While they report
     all zeros, today's prices stay as they were and self-learning is skipped;
     good prices are learned from, and a later all-zero read keeps them.
     """
@@ -141,6 +143,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
     good = [1.0 + slot / 100 for slot in range(96)]
     states = {
         "sensor.strom": strom_state([0.0] * 96),
+        "sensor.spot": strom_state([0.0] * 96),
         "sensor.outdoor_temperature": Mock(state="12.0", attributes={}),
     }
 
@@ -159,6 +162,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
         CONF_REGION: "DK1",
         CONF_ENABLE_ML_PREDICTION: True,
         CONF_STROMLIGNING_SENSOR: "sensor.strom",
+        CONF_SPOT_PRICE_SENSOR: "sensor.spot",
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }
     ml_predictor = Mock()
@@ -189,11 +193,13 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
         ml_predictor.learn_from_actual_price.assert_not_called()
 
         states["sensor.strom"] = strom_state(good)
+        states["sensor.spot"] = strom_state(good)
         await callbacks["new_quarter"](datetime.now())
         assert api_data["prices_today"] == pytest.approx(good)
         assert ml_predictor.learn_from_actual_price.call_count == 1
 
         states["sensor.strom"] = strom_state([0.0] * 96)
+        states["sensor.spot"] = strom_state([0.0] * 96)
         await callbacks["new_quarter"](datetime.now())
         assert api_data["prices_today"] == pytest.approx(good)
         assert ml_predictor.learn_from_actual_price.call_count == 1

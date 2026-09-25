@@ -8,16 +8,18 @@ external API calls, no duplicate data fetching. Here's what's needed:
 | Entity                                  | Integration                                           | Purpose                               |
 | --------------------------------------- | ----------------------------------------------------- | ------------------------------------- |
 | `sensor.stromligning_current_price_vat` | [Stromligning](https://github.com/MTrab/stromligning) | Confirmed consumer prices (96/day)    |
+| `sensor.stromligning_spotprice_ex_vat`  | Stromligning                                          | Raw spot price excl. VAT: ML target   |
 | `weather.forecast_mellemlokken_23`      | Built-in Met.no                                       | Current weather + 48h hourly forecast |
 
 ## Recommended
 
-| Entity                                              | Integration                                             | Purpose                                |
-| --------------------------------------------------- | ------------------------------------------------------- | -------------------------------------- |
-| `binary_sensor.stromligning_tomorrow_spotprice_vat` | Stromligning                                            | Tomorrow's prices when available       |
-| `sensor.solcast_pv_forecast_forecast_today`         | [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Solar generation forecast              |
-| `sensor.power_inverter_input_total`                 | Your inverter                                           | Actual solar production (for training) |
-| `sensor.metroair_330_outdoor_temperature`           | MyUplink/Met.no                                         | Actual temperature (for training)      |
+| Entity                                                 | Integration                                             | Purpose                                |
+| ------------------------------------------------------ | ------------------------------------------------------- | -------------------------------------- |
+| `binary_sensor.stromligning_tomorrow_spotprice_vat`    | Stromligning                                            | Tomorrow's prices when available       |
+| `binary_sensor.stromligning_tomorrow_spotprice_ex_vat` | Stromligning                                            | Tomorrow's raw spot price (ML)         |
+| `sensor.solcast_pv_forecast_forecast_today`            | [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Solar generation forecast              |
+| `sensor.power_inverter_input_total`                    | Your inverter                                           | Actual solar production (for training) |
+| `sensor.metroair_330_outdoor_temperature`              | MyUplink/Met.no                                         | Actual temperature (for training)      |
 
 ## Weather Entity
 
@@ -45,8 +47,11 @@ input is Nordpool's per-slot solar prognosis instead (see
 ## Stromligning
 
 The primary price source. Provides 96 consumer-price intervals per day
-(includes tariffs, fees, VAT) at 15-minute resolution. This is what you
-actually pay — not the raw Nordpool spot price.
+(includes tariffs, fees, VAT) at 15-minute resolution, which the price
+sensors display. Its spot price sensors (`spotprice_ex_vat`, today and
+tomorrow) provide the raw day-ahead spot price excl. VAT, which the ML model
+learns and predicts; the forecast sensor adds VAT once. See
+[Stromligning Integration](stromligning_integration.md#overview).
 
 The integration also reads the tomorrow availability binary sensor to know
 when tomorrow's confirmed prices are published (~13:00 CET). From 13:00 local

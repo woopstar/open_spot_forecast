@@ -12,7 +12,8 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    → Stored in predictions table with timestamp, price, confidence
 
 2. Every 15 minutes:
-   a. Read current Stromligning price (actual confirmed price). If today's
+   a. Read the current raw spot price excl. VAT (the model's target; see
+      [Target](ml_documentation.md#target-raw-spot-price-vat-at-output)). If today's
       prices are all zero, they are dropped (see
       [Invalid Price Data](stromligning_integration.md#invalid-price-data))
       and this update does not learn; neither does it when the current slot
@@ -115,7 +116,7 @@ catch-up replay feeds them too, and `reset_learning()` clears them.
 
 They are exposed as diagnostic sensors, one MAE and one RMSE sensor per
 bucket (e.g. `sensor.open_spot_forecast_dk1_forecast_mae_day_1`). Values are
-in the unit of the confirmed prices the model learns from (currency/kWh).
+in the unit the model learns: raw spot price excl. VAT (currency/kWh).
 Attributes: `samples`, `bias` (mean signed error; positive = overpredicting)
 and `window_days`.
 
