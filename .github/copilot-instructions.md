@@ -131,7 +131,7 @@ When asked to solve a GitHub issue, always follow these steps in order:
 - Never hard-code a numeric value that an entity reports — always source from the live HA entity.
 - If a value is needed but not yet wired into OSF, add it through the full stack:
   `const.py` → `config_flow.py` → **`translations/en.json`** (and `da.json`, both `config`
-  and `options` steps) → `sensor_reader.py` → `__init__.py`
+  and `options` steps) → `sensor_reader.py` → `updater.py`
 - **Always check `docs/using_existing_sensors.md` first** for the verified list of available
   HA entities before searching an upstream integration repo or guessing an entity ID.
 - See `AGENTS.md` → **Sensor Wiring Rule** for the full wiring protocol.

@@ -26,7 +26,7 @@ searching an upstream integration when an entity is not yet listed there.
 ## Step 2: If the Entity Is Already Wired
 
 Re-use it. The entity should already flow through `const.py` → `config_flow.py`
-→ `sensor_reader.py` → `__init__.py`.
+→ `sensor_reader.py` → `updater.py`.
 
 ## Step 3: If the Entity Is New — Wire It Through the Full Stack
 
@@ -43,8 +43,9 @@ Add it through the **full stack in this exact order**:
    with `en.json` (see `osf-translation-sync`).
 5. **`sensor_reader.py`** — Add a `read_*` method on `SensorReader` that reads
    the entity state/attributes and returns a normalized dict.
-6. **`__init__.py`** — Read the value during the update cycle and pass it into
-   the `weather_data` dict consumed by `SpotPricePredictor.predict()`.
+6. **`updater.py`** — Add the entity to `SensorEntities` (and `sensor_config()`),
+   read the value in `ForecastUpdater._read_weather()` and pass it into the
+   `weather_data` dict consumed by `SpotPricePredictor.predict()`.
 
 ## Step 4: If the Entity Feeds the ML Feature Vector
 

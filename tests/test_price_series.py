@@ -180,10 +180,12 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
     with (
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
-        patch(f"{module}._fetch_nordpool_prognoses", new=AsyncMock(return_value=[])),
+        patch(
+            f"{module}.updater.fetch_nordpool_prognoses", new=AsyncMock(return_value=[])
+        ),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
         patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time"),
-        patch(f"{module}.async_dispatcher_send"),
+        patch(f"{module}.updater.async_dispatcher_send"),
     ):
         assert await async_setup_entry(hass, entry) is True
         api_data = hass.data[DOMAIN]["test"]

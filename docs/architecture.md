@@ -95,6 +95,14 @@ From 13:00 ──→ Re-read prices every ~5 min until tomorrow is complete
 Midnight ────→ Rotate tomorrow → today
 ```
 
+Every path is a method of `ForecastUpdater` (`updater.py`): `new_quarter`,
+`update_forecasts`, `check_tomorrow_prices` (via `TomorrowPriceChecker`) and
+`new_day`; `async_setup_entry` builds the updater, runs its initial fetch and
+registers these callbacks. Setup, the tomorrow-price refresh and the 6-hourly
+update run the same forecast pipeline, `ForecastUpdater.run_forecast()`:
+weather sensors and forecast → Nordpool prognoses (stored for training) →
+known-data end → predict → save.
+
 ## Model: Single Price Predictor
 
 The system uses **one model** — a Gradient Boosting regressor that takes 17
