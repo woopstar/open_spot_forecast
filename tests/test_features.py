@@ -34,13 +34,13 @@ class _SpyModel:
     """Stands in for the price model and records the rows it receives."""
 
     def __init__(self) -> None:
-        # Hyperparameters _train_models copies into its holdout model
-        self.n_estimators = 10
-        self.learning_rate = 0.1
-        self.random_state = 42
         self.trees: list[object] = []
         self.fit_rows = np.empty((0, 0))
         self.predict_rows: list[np.ndarray] = []
+
+    def get_params(self) -> dict[str, int | float]:
+        """Hyperparameters _train_models copies into its holdout model."""
+        return {"n_estimators": 10, "learning_rate": 0.1, "random_state": 42}
 
     def fit(self, X: np.ndarray, y: np.ndarray) -> None:
         self.fit_rows = np.asarray(X)
@@ -202,10 +202,11 @@ def test_prediction_rows_come_from_build_feature_vector(
 
 
 def test_create_price_model_uses_documented_hyperparameters(tmp_path: Path) -> None:
-    """The production price model is a fresh 200-tree GBM, lr 0.1, seed 42."""
+    """The production price model is a fresh 200-tree GBM, lr 0.05, depth 3, seed 42."""
     model = create_price_model()
 
-    assert (model.n_estimators, model.learning_rate) == (200, pytest.approx(0.1))
+    assert (model.n_estimators, model.learning_rate) == (200, pytest.approx(0.05))
+    assert (model.max_depth, model.min_samples_leaf) == (3, 100)
     assert model.random_state == 42
     assert model.trees == []
     assert _predictor(tmp_path).price_model.n_estimators == 200

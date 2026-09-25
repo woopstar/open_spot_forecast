@@ -109,7 +109,7 @@ Features (14):
    price_mean, temperature]
                     │
                     ▼
-          GradientBoosting (200 trees)
+  GradientBoosting (200 depth-limited trees)
                     │
                     ▼
                Spot Price (DKK/kWh)

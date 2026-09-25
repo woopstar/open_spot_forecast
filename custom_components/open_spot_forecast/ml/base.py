@@ -16,7 +16,8 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .numpy_models import NumpyGradientBoosting, NumpyRandomForest
+from .gbm import NumpyGradientBoosting
+from .numpy_models import NumpyRandomForest
 from .storage import LearningStorage
 
 

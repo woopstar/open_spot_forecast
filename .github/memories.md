@@ -36,7 +36,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `models.py`           | `ModelMixin` — training + prediction                                                                                                |
 | `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
 | `catch_up.py`         | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
-| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                                    |
+| `gbm.py`              | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)               |
+| `numpy_models.py`     | `NumpyRandomForest` and other legacy pure NumPy models                                                                              |
 | `storage.py`          | `LearningStorage` — SQLite persistence                                                                                              |
 | `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
 | `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
@@ -90,7 +91,9 @@ reach the model. HPO runs once per 7 new price days (`hpo_counter` in `meta`).
 Pure helpers shared by training, prediction and the dev backtest — never inline them:
 `build_feature_vector()` (model input row, column order `FEATURE_NAMES`) and
 `slot_time_features()` (per-slot time features) in `ml/features.py`, and
-`create_price_model()` (production GBM hyperparameters) in `ml/models.py`.
+`create_price_model()` (production GBM hyperparameters, also used by HPO) in `ml/models.py`.
+The price model handles NaN inputs natively (each split learns where missing values go),
+so a missing feature can reach it as NaN instead of an invented value.
 
 ### Model backtest
 

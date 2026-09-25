@@ -3,17 +3,60 @@
 ## Model
 
 A single **Gradient Boosting** regressor predicts the spot price from 20
-features. Implemented in pure NumPy (`numpy_models.py`) — no scikit-learn
-dependency.
+features. It is a histogram-based GBM in the style of LightGBM, implemented
+in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
+scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
+dependencies: neither has musllinux wheels, and Home Assistant OS and
+Container are Alpine (musl) based.
 
 ```
-GradientBoosting(
-    n_estimators = 200
-    learning_rate = 0.1
-    max_depth = 5          (decision stumps)
-    random_state = 42
+NumpyGradientBoosting(          create_price_model() in ml/models.py
+    n_estimators      = 200     boosting rounds (trees)
+    learning_rate     = 0.05    shrinkage per tree
+    max_depth         = 3       splits from the root to any leaf
+    max_leaves        = 31      leaves per tree (max_depth 3 allows 8)
+    min_samples_leaf  = 100     training rows per leaf (about one day of slots)
+    l2_regularization = 1.0     λ on leaf values
+    random_state      = 42      (the fit is deterministic)
 )
 ```
+
+These values were chosen with the [backtest](#backtesting): with the current
+inputs, deeper or less regularized trees (e.g. `max_depth` 6,
+`learning_rate` 0.1, `min_samples_leaf` 20) fit the noise of single
+weekday/slot cells and lose about 0.05 ct/kWh 1d MAE on a 30-day window.
+Hyperparameter optimization can raise `max_depth` per installation.
+
+How it is fitted (squared loss; each tree fits the residuals of the trees
+before it):
+
+1. **Binning.** Each feature is binned once per fit into at most 255 bins: one
+   bin per distinct value when there are at most 255 of them (the time
+   features), otherwise quantile bins (`np.quantile`, assigned with
+   `np.searchsorted`). Missing values (NaN) get a dedicated extra bin.
+2. **Split finding.** For every node, one `np.bincount` over the node's rows
+   gives the residual sum and row count of every (feature, bin). Cumulative
+   sums score every bin boundary of every feature at once, with the gain
+   `G_L²/(n_L+λ) + G_R²/(n_R+λ) − G²/(n+λ)`. There is no loop over unique
+   values. Only the smaller child of a split is histogrammed; the larger
+   child's histogram is the parent's minus the smaller one's.
+3. **Tree growth.** Trees grow leaf-wise: the leaf with the largest gain is
+   split next, until the tree has `max_leaves` leaves, no leaf may deeper
+   than `max_depth`, or no split keeps `min_samples_leaf` rows on both sides
+   and reduces the loss. Leaf value = `learning_rate × G / (n + λ)`.
+   Depth > 1 lets the model learn interactions (e.g. low wind **and** evening
+   peak → price spike) that a sum of single-split trees cannot.
+4. **Missing values.** Each split is scored twice, with the NaN rows sent left
+   and right, and keeps the better direction as the node's default. A split
+   whose node had no NaN rows sends NaN to the child with more training rows.
+   NaN is never replaced by 0 inside the model.
+
+A full fit on 180 days × 96 slots × 40 features (17,280 rows, 200 trees)
+takes 0.6 s with the production hyperparameters and 1.1 s with `max_depth`
+6 / 31 leaves / `min_samples_leaf` 20 (one aarch64 core, NumPy 2.5). The
+old stump model searched every unique value of every feature and would need
+hours for the same fit. Prediction walks all rows through each tree at once,
+so `_generate_predictions` predicts every slot of a forecast in one call.
 
 ## Retraining
 
@@ -42,10 +85,17 @@ serialized so two retrains never overlap.
 Trained trees are kept in memory only, so the first forecast after a restart
 always retrains from the persisted history.
 
-**Hyperparameter optimization** (a grid search over `n_estimators` and
-`learning_rate`) runs once per 7 new days of price data. The day counter is
+**Hyperparameter optimization** (a grid search over `n_estimators` ∈ {100,
+200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2} and `max_depth` ∈ {2, 3, 4, 6})
+runs once per 7 new days of price data. Each (`learning_rate`, `max_depth`)
+pair is fitted once with 300 trees, and `staged_predict` scores it after 100,
+200 and 300 trees, so the 36 candidates cost 12 fits. The day counter is
 persisted as `hpo_counter` in the `meta` table, so it survives restarts. After
 optimization the model is refitted with the best parameters in the same run.
+The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
+`hpo_max_depth` in `meta` and restored at startup; parameters stored without
+`hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
+until the next optimization.
 
 ## Feature Vector (20 features)
 
@@ -287,14 +337,17 @@ and after every model or feature change, and put both tables in the PR.
 ### Baseline
 
 DK1, 365 daily origins from 2025-09-21 to 2026-09-20, retrained daily. MAE
-and RMSE in EUR ct/kWh. Recorded 2026-09-24 with `lightgbm==4.7.0`.
+and RMSE in EUR ct/kWh. Recorded 2026-09-25 with `lightgbm==4.7.0`, after the
+histogram GBM (#14). The `stumps (before #14)` row is the depth-1 model it
+replaced, recorded 2026-09-24.
 
 **180-day window** (EpexPredictor's setting and the target of #24):
 
 | Model                       | 1d MAE | 1d RMSE | 2d MAE | 2d RMSE | 3d MAE | 3d RMSE |
 | --------------------------- | -----: | ------: | -----: | ------: | -----: | ------: |
 | naive (same slot last week) |   3.91 |    5.73 |   3.95 |    5.82 |   3.95 |    5.83 |
-| current (NumPy GBM)         |   3.74 |    5.13 |   3.76 |    5.15 |   3.79 |    5.21 |
+| stumps (before #14)         |   3.74 |    5.13 |   3.76 |    5.15 |   3.79 |    5.21 |
+| current (NumPy GBM)         |   3.73 |    5.09 |   3.75 |    5.10 |   3.79 |    5.17 |
 | lightgbm (reference)        |   3.74 |    5.10 |   3.75 |    5.10 |   3.79 |    5.17 |
 
 **30-day window** (production keeps `max_history_days = 30`):
@@ -302,15 +355,24 @@ and RMSE in EUR ct/kWh. Recorded 2026-09-24 with `lightgbm==4.7.0`.
 | Model                       | 1d MAE | 1d RMSE | 2d MAE | 2d RMSE | 3d MAE | 3d RMSE |
 | --------------------------- | -----: | ------: | -----: | ------: | -----: | ------: |
 | naive (same slot last week) |   3.91 |    5.73 |   3.95 |    5.82 |   3.95 |    5.83 |
-| current (NumPy GBM)         |   3.27 |    4.57 |   3.32 |    4.65 |   3.34 |    4.69 |
+| stumps (before #14)         |   3.27 |    4.57 |   3.32 |    4.65 |   3.34 |    4.69 |
+| current (NumPy GBM)         |   3.27 |    4.62 |   3.30 |    4.67 |   3.31 |    4.70 |
 | lightgbm (reference)        |   3.32 |    4.70 |   3.33 |    4.72 |   3.34 |    4.76 |
 
 What the numbers say:
 
 - **The learner is not the bottleneck yet.** On the same (time-only) rows,
-  the NumPy GBM is within 0.05 ct/kWh of LightGBM at every horizon with a
-  180-day window, and slightly better with a 30-day window. Replacing the
-  stumps (#14) will matter once informative inputs exist, not before.
+  the histogram GBM is level with LightGBM with a 180-day window and 0.03 to
+  0.05 ct/kWh better with a 30-day window. With LightGBM-like tree settings
+  (`max_depth` 6, 31 leaves, `min_samples_leaf` 20, 200 trees at learning
+  rate 0.1) it reproduced the LightGBM row to two decimals at both windows,
+  including LightGBM's weaker 30-day result.
+- **Deeper trees barely help time-only inputs.** Hour and weekday effects are
+  close to additive, so the stumps were already a good fit. The depth-3
+  trees match them at 1d MAE, gain up to 0.03 ct/kWh at 2d/3d, and trade a
+  slightly higher 30-day 1d RMSE (4.62 vs 4.57) for a lower 180-day one.
+  Depth matters once informative inputs (#17, #22, #23) create interactions
+  such as low wind **and** evening peak.
 - **A longer window hurts a time-only model.** Its only way to follow the
   price level is recency, so 30 days beats 180 days by about 13 % MAE. A
   180-day window (#24) should land together with or after the weather inputs

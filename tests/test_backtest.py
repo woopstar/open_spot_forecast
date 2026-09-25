@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pytest
 
-from custom_components.open_spot_forecast.ml.numpy_models import NumpyGradientBoosting
+from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
+from custom_components.open_spot_forecast.ml.models import create_price_model
 from scripts import backtest
 from scripts.backtest import (
     SLOT_SECONDS,
@@ -343,7 +344,7 @@ def test_current_model_uses_the_production_factory_by_default():
     """The backtest's current model is the integration's configured GBM."""
     model = CurrentModel(TZ).model_factory()
 
-    assert (model.n_estimators, model.learning_rate) == (200, pytest.approx(0.1))
+    assert model.get_params() == create_price_model().get_params()
 
 
 def test_current_model_learns_the_daily_shape():
