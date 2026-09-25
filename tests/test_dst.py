@@ -193,7 +193,14 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }
     reader = Mock()
+    # Consumer prices (displayed) differ from the spot prices the model learns
     reader.read_stromligning_sensor.return_value = {
+        "today": [price * 3 for price in today],
+        "tomorrow": [],
+        "raw_today": [],
+        "raw_tomorrow": [],
+    }
+    reader.read_spot_prices.return_value = {
         "today": today,
         "tomorrow": [],
         "raw_today": [],

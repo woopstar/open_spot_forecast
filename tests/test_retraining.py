@@ -23,6 +23,9 @@ from custom_components.open_spot_forecast.ml.retraining import HPO_INTERVAL_DAYS
 
 TODAY = [1.0 + (slot % 24) / 10 for slot in range(96)]
 TOMORROW = [2.0 + (slot % 24) / 10 for slot in range(96)]
+# Raw spot prices excl. VAT and tariffs: what the model sees (#16)
+SPOT_TODAY = [0.4 + (slot % 24) / 100 for slot in range(96)]
+SPOT_TOMORROW = [0.6 + (slot % 24) / 100 for slot in range(96)]
 
 
 class _Clock:
@@ -355,6 +358,16 @@ def _stromligning(tomorrow: list[float]) -> dict[str, Any]:
     return {"today": TODAY, "tomorrow": tomorrow, "raw_today": [], "raw_tomorrow": []}
 
 
+def _spot(tomorrow: list[float]) -> dict[str, Any]:
+    """Spot price reading with today's (and maybe tomorrow's) raw spot prices."""
+    return {
+        "today": SPOT_TODAY,
+        "tomorrow": tomorrow,
+        "raw_today": [],
+        "raw_tomorrow": [],
+    }
+
+
 def _tomorrow_sensor(tomorrow: list[float]) -> dict[str, Any]:
     """Stromligning tomorrow-sensor reading."""
     return {"available": bool(tomorrow), "tomorrow": tomorrow, "raw_tomorrow": []}
@@ -380,6 +393,7 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
     reader = Mock()
     reader.read_stromligning_sensor.return_value = _stromligning([])
     reader.read_stromligning_tomorrow_sensor.return_value = _tomorrow_sensor([])
+    reader.read_spot_prices.return_value = _spot([])
     reader.read_weather_sensors.return_value = {"temperature": 12.0}
 
     ml_predictor = Mock()
@@ -416,6 +430,7 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
         reader.read_stromligning_tomorrow_sensor.return_value = _tomorrow_sensor(
             TOMORROW
         )
+        reader.read_spot_prices.return_value = _spot(SPOT_TOMORROW)
         await callbacks["new_quarter"](datetime.now())
         entry.async_create_background_task.assert_called_once()
         _hass_arg, refresh, name = entry.async_create_background_task.call_args.args
@@ -423,7 +438,8 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
 
         await refresh
         assert ml_predictor.predict.call_count == 2
-        assert ml_predictor.predict.call_args.args[1] == TODAY + TOMORROW
+        # The model gets the raw spot prices, never the consumer prices
+        assert ml_predictor.predict.call_args.args[1] == SPOT_TODAY + SPOT_TOMORROW
 
         # Already known on the next quarter: no second refresh
         await callbacks["new_quarter"](datetime.now())

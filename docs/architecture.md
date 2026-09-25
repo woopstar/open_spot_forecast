@@ -11,7 +11,8 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 
 | Source                                      | Type                             | Used for                                         |
 | ------------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `sensor.stromligning_current_price_vat`     | Confirmed prices (96/day)        | Price history, self-learning target              |
+| `sensor.stromligning_current_price_vat`     | Confirmed consumer prices        | Displayed prices (all-in)                        |
+| `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction  |
 | `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                      |
 | `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud               |
 | `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction |
@@ -72,7 +73,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 ## Data Flow
 
 ```
-Every 15 min ──→ Read Stromligning prices
+Every 15 min ──→ Read Stromligning prices (consumer, and raw spot for the model)
              │   Read weather snapshot → store in weather_history
              │   Read tomorrow prices if available
              │   Self-learning: compare all predictions for the current

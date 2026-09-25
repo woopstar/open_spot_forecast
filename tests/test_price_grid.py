@@ -228,7 +228,14 @@ async def test_quarter_update_skips_a_missing_slot(
     if missing:
         today[index] = None
     reader = Mock()
+    # Consumer prices are displayed; the model learns the spot prices
     reader.read_stromligning_sensor.return_value = {
+        "today": [1.0] * 96,
+        "tomorrow": [],
+        "raw_today": [],
+        "raw_tomorrow": [],
+    }
+    reader.read_spot_prices.return_value = {
         "today": today,
         "tomorrow": [],
         "raw_today": [],

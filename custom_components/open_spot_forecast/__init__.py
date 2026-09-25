@@ -18,11 +18,15 @@ from .const import (
     CONF_REGION,
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
+    CONF_SPOT_PRICE_SENSOR,
+    CONF_SPOT_PRICE_TOMORROW_SENSOR,
     CONF_STROMLIGNING_SENSOR,
     CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
+    DEFAULT_SPOT_PRICE_SENSOR,
+    DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     DOMAIN,
     PLATFORMS,
     REGIONS,
@@ -32,56 +36,11 @@ from .const import (
 )
 from .ml.predictor import SpotPricePredictor
 from .sensor_reader import SensorReader, async_read_weather_forecast
+from .spot_prices import ml_price_inputs
 from .time_slots import floor_to_slot, slot_index_in_day, tomorrow_prices_complete
 from .tomorrow_prices import TomorrowPriceChecker
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _extract_latest_known_timestamp(
-    raw_data_list: list, interval_minutes: int = 15
-) -> datetime | None:
-    """Find the end time of the latest known price from raw sensor data.
-
-    Returns the timestamp after the last known interval (UTC-aware), i.e.
-    the point from which we should start predicting.
-    """
-    if not raw_data_list:
-        return None
-
-    latest = None
-    for item in raw_data_list:
-        if not isinstance(item, dict):
-            continue
-        ts = (
-            item.get("timestamp")
-            or item.get("time")
-            or item.get("start")
-            or item.get("end")
-        )
-        if ts is None:
-            continue
-        try:
-            if isinstance(ts, str):
-                dt = dt_util.parse_datetime(ts)
-            elif isinstance(ts, datetime):
-                dt = ts
-            else:
-                continue
-            if dt is None:
-                continue
-            # Normalize to UTC (naive timestamps are assumed to be in HA's
-            # local time zone) so comparisons are consistent.
-            dt = dt_util.as_utc(dt)
-            if latest is None or dt > latest:
-                latest = dt
-        except ValueError, TypeError:
-            continue
-
-    if latest is not None:
-        # Return the start of the next interval after known data
-        return latest + timedelta(minutes=interval_minutes)
-    return None
 
 
 async def _fetch_nordpool_prognoses(
@@ -215,6 +174,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_STROMLIGNING_TOMORROW_SENSOR,
         entry.data.get(CONF_STROMLIGNING_TOMORROW_SENSOR),
     )
+    # Raw spot price excl. VAT and tariffs: what the ML model learns (#16)
+    spot_price_sensor = entry.options.get(
+        CONF_SPOT_PRICE_SENSOR,
+        entry.data.get(CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR),
+    )
+    spot_price_tomorrow_sensor = entry.options.get(
+        CONF_SPOT_PRICE_TOMORROW_SENSOR,
+        entry.data.get(
+            CONF_SPOT_PRICE_TOMORROW_SENSOR, DEFAULT_SPOT_PRICE_TOMORROW_SENSOR
+        ),
+    )
     wind_speed_sensor = entry.options.get(
         CONF_WIND_SPEED_SENSOR, entry.data.get(CONF_WIND_SPEED_SENSOR)
     )
@@ -232,10 +202,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     _LOGGER.info(
-        "Sensor configuration: stromligning=%s, stromligning_tomorrow=%s, wind_speed=%s, "
-        "wind_direction=%s, solar_power=%s, solar_forecast=%s, temperature=%s",
+        "Sensor configuration: stromligning=%s, stromligning_tomorrow=%s, spot=%s, "
+        "spot_tomorrow=%s, wind_speed=%s, wind_direction=%s, solar_power=%s, "
+        "solar_forecast=%s, temperature=%s",
         stromligning_sensor,
         stromligning_tomorrow_sensor,
+        spot_price_sensor,
+        spot_price_tomorrow_sensor,
         wind_speed_sensor,
         wind_direction_sensor,
         solar_power_sensor,
@@ -278,6 +251,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     }
 
     hass.data[DOMAIN][entry.entry_id] = api_data
+
+    def read_spot_prices() -> None:
+        """Read the raw spot price (the ML model's prices) into api_data."""
+        if ml_predictor:
+            api_data["spot_data"] = sensor_reader.read_spot_prices(
+                spot_price_sensor, spot_price_tomorrow_sensor
+            )
 
     def update_tomorrow_available() -> bool:
         """Recompute tomorrow_available; return True if tomorrow just became complete."""
@@ -353,6 +333,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Set tomorrow availability flag
         update_tomorrow_available()
 
+        read_spot_prices()
+        if ml_predictor and not api_data["spot_data"]["today"]:
+            _LOGGER.warning(
+                "Spot price sensor %s has no prices: the ML forecast needs the raw "
+                "spot price excl. VAT (Stromligning's spotprice_ex_vat sensor)",
+                spot_price_sensor,
+            )
+
         # Read weather data from sensors or DMI API
         weather_data = {}
         if any(
@@ -402,19 +390,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
 
         if ml_predictor and weather_data:
-            # Combine today and tomorrow prices for historical data
-            all_known_prices = list(api_data["prices_today"])
-            if api_data["prices_tomorrow"]:
-                all_known_prices.extend(api_data["prices_tomorrow"])
-
-            # Determine where known data ends (so we don't predict confirmed prices)
-            known_data_end_time = None
-            price_source_data = api_data.get("stromligning_data")
-            if price_source_data:
-                raw_combined = list(price_source_data.get("raw_today", [])) + list(
-                    price_source_data.get("raw_tomorrow", [])
-                )
-                known_data_end_time = _extract_latest_known_timestamp(raw_combined)
+            # The model's prices: raw spot excl. VAT, today then tomorrow, and
+            # where they end (predictions start there)
+            all_known_prices, known_data_end_time = ml_price_inputs(
+                api_data.get("spot_data")
+            )
 
             _LOGGER.info(
                 "Running ML predictions with %d price samples (known data ends at %s)",
@@ -473,6 +453,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 api_data["price_source"] = "stromligning"
                 _LOGGER.debug("Updated prices from Stromligning")
 
+        read_spot_prices()
+
     async def refresh_forecast() -> None:
         """Re-read the prices and re-run the forecast (the model retrains on new data)."""
         read_stromligning_prices()
@@ -521,19 +503,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
 
             if weather_data:
-                # Combine today and tomorrow prices for historical data
-                all_known_prices = list(api_data["prices_today"])
-                if api_data["prices_tomorrow"]:
-                    all_known_prices.extend(api_data["prices_tomorrow"])
-
-                # Determine where known data ends
-                known_data_end_time = None
-                price_source_data = api_data.get("stromligning_data")
-                if price_source_data:
-                    raw_combined = list(price_source_data.get("raw_today", [])) + list(
-                        price_source_data.get("raw_tomorrow", [])
-                    )
-                    known_data_end_time = _extract_latest_known_timestamp(raw_combined)
+                # The model's prices: raw spot excl. VAT, today then tomorrow, and
+                # where they end (predictions start there)
+                all_known_prices, known_data_end_time = ml_price_inputs(
+                    api_data.get("spot_data")
+                )
 
                 await hass.async_add_executor_job(
                     ml_predictor.predict,
@@ -616,19 +590,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if weather_data:
                 _LOGGER.info("Running ML predictions with updated weather data")
 
-                # Combine today and tomorrow prices for historical data
-                all_known_prices = list(api_data["prices_today"])
-                if api_data["prices_tomorrow"]:
-                    all_known_prices.extend(api_data["prices_tomorrow"])
-
-                # Determine where known data ends
-                known_data_end_time = None
-                price_source_data = api_data.get("stromligning_data")
-                if price_source_data:
-                    raw_combined = list(price_source_data.get("raw_today", [])) + list(
-                        price_source_data.get("raw_tomorrow", [])
-                    )
-                    known_data_end_time = _extract_latest_known_timestamp(raw_combined)
+                # The model's prices: raw spot excl. VAT, today then tomorrow, and
+                # where they end (predictions start there)
+                all_known_prices, known_data_end_time = ml_price_inputs(
+                    api_data.get("spot_data")
+                )
 
                 await hass.async_add_executor_job(
                     ml_predictor.predict,
@@ -672,14 +638,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             api_data["prices_tomorrow"] = []
             api_data["tomorrow_available"] = False
 
+        read_spot_prices()
+
         async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
 
     async def new_quarter(_now):
         """Update every 15 minutes and perform self-learning."""
         _LOGGER.info("15-minute update triggered for self-learning")
 
-        # Read current prices once (used for both tomorrow check and learning)
-        current_prices: list[float] = []
+        # Read the consumer prices (displayed; also the tomorrow check)
         if stromligning_sensor:
             stromligning_data = sensor_reader.read_stromligning_sensor(
                 stromligning_sensor
@@ -698,13 +665,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     api_data["prices_tomorrow"] = tomorrow_data["tomorrow"]
 
             _LOGGER.debug(
-                "Read %d prices from Stromligning for learning", len(current_prices)
+                "Read %d consumer prices from Stromligning", len(current_prices)
             )
-        else:
-            current_prices = api_data["prices_today"]
-            _LOGGER.debug("Using %d cached prices for learning", len(current_prices))
 
         tomorrow_arrived = update_tomorrow_available()
+
+        # The model learns from the raw spot price, never the consumer price
+        read_spot_prices()
+        spot_today: list[float | None] = (api_data.get("spot_data") or {}).get(
+            "today", []
+        )
 
         # --- Collect weather snapshot for historical training ---
         if ml_predictor and wind_speed_sensor:
@@ -731,22 +701,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.debug("Failed to store weather snapshot: %s", err)
 
         # --- Self-learning: compare past predictions with actual prices ---
-        if ml_predictor and current_prices:
+        if ml_predictor and spot_today:
             try:
                 # Today's confirmed prices include the current slot, so match
                 # every stored prediction for it, whatever its lead time. The
                 # lookup date must be today's: it is paired with today's price.
                 slot_time = dt_util.now()
 
-                # Today's prices are one value per 15-minute slot from local
+                # Today's spot prices are one value per 15-minute slot from local
                 # midnight (the reader aligns them by timestamp), so the
                 # current slot's price is at its position on that grid
                 learn_dt = floor_to_slot(slot_time)
                 price_index = slot_index_in_day(slot_time)
                 actual_price = (
-                    current_prices[price_index]
-                    if price_index < len(current_prices)
-                    else None
+                    spot_today[price_index] if price_index < len(spot_today) else None
                 )
 
                 # A missing slot (a gap in the source) is not learned from

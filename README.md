@@ -24,7 +24,10 @@ and continuously improves accuracy via per-slot bias correction.
 - **17-feature model** — time, wind, solar, temperature, and market-demand
   features, implemented in pure NumPy (no scikit-learn dependency)
 - **Real consumer prices** — Stromligning integration provides prices with
-  tariffs, fees, and VAT (what you actually pay), with Nordpool as fallback
+  tariffs, fees, and VAT (what you actually pay) for display
+- **Spot price forecast** — the model learns the raw day-ahead spot price
+  (Stromligning's spot price sensors) and the forecast adds VAT once; tariffs
+  are not included
 
 ### Self-Learning
 
@@ -48,7 +51,7 @@ and continuously improves accuracy via per-slot bias correction.
 
 ### Data Sources
 
-- **Stromligning** — confirmed consumer prices (96/day)
+- **Stromligning** — confirmed consumer prices (96/day) and the raw spot price
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
 - **Solcast** — solar generation forecast
 - **Nordpool prognoses** — market demand and generation forecasts

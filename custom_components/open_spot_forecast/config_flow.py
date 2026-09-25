@@ -19,6 +19,8 @@ from .const import (
     CONF_REGION,
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
+    CONF_SPOT_PRICE_SENSOR,
+    CONF_SPOT_PRICE_TOMORROW_SENSOR,
     CONF_STROMLIGNING_SENSOR,
     CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
@@ -30,6 +32,8 @@ from .const import (
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_TYPE,
     DEFAULT_REGION,
+    DEFAULT_SPOT_PRICE_SENSOR,
+    DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     DEFAULT_VAT,
     DOMAIN,
     PREDICTION_HOURS_OPTIONS,
@@ -124,6 +128,19 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     default=self._data.get(
                         CONF_STROMLIGNING_TOMORROW_SENSOR,
                         "binary_sensor.stromligning_tomorrow_spotprice_vat",
+                    ),
+                ): selector({"entity": {"domain": "binary_sensor"}}),
+                vol.Optional(
+                    CONF_SPOT_PRICE_SENSOR,
+                    default=self._data.get(
+                        CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR
+                    ),
+                ): selector({"entity": {"domain": "sensor"}}),
+                vol.Optional(
+                    CONF_SPOT_PRICE_TOMORROW_SENSOR,
+                    default=self._data.get(
+                        CONF_SPOT_PRICE_TOMORROW_SENSOR,
+                        DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(
@@ -237,6 +254,25 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                     default=self.config_entry.options.get(
                         CONF_STROMLIGNING_TOMORROW_SENSOR,
                         "binary_sensor.stromligning_tomorrow_spotprice_vat",
+                    ),
+                ): selector({"entity": {"domain": "binary_sensor"}}),
+                vol.Optional(
+                    CONF_SPOT_PRICE_SENSOR,
+                    default=self.config_entry.options.get(
+                        CONF_SPOT_PRICE_SENSOR,
+                        self.config_entry.data.get(
+                            CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR
+                        ),
+                    ),
+                ): selector({"entity": {"domain": "sensor"}}),
+                vol.Optional(
+                    CONF_SPOT_PRICE_TOMORROW_SENSOR,
+                    default=self.config_entry.options.get(
+                        CONF_SPOT_PRICE_TOMORROW_SENSOR,
+                        self.config_entry.data.get(
+                            CONF_SPOT_PRICE_TOMORROW_SENSOR,
+                            DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
+                        ),
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(
