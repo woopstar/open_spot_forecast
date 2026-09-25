@@ -30,19 +30,23 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File                  | Responsibility                                                                                                                      |
-| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
-| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
-| `models.py`           | `ModelMixin` — training + prediction                                                                                                |
-| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
-| `catch_up.py`         | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
-| `gbm.py`              | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)               |
-| `numpy_models.py`     | `NumpyRandomForest` and other legacy pure NumPy models                                                                              |
-| `storage.py`          | `LearningStorage` — SQLite persistence                                                                                              |
-| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
-| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
-| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
+| File                    | Responsibility                                                                                                                      |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
+| `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
+| `models.py`             | `ModelMixin` — training + prediction                                                                                                |
+| `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
+| `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
+| `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)               |
+| `numpy_models.py`       | `NumpyRandomForest` and other legacy pure NumPy models                                                                              |
+| `storage.py`            | `LearningStorage` — SQLite connection, write lock, schema and migrations; composes the storage mixins below                         |
+| `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins             |
+| `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                         |
+| `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                          |
+| `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
+| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
+| `retraining.py`         | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
+| `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -114,7 +118,11 @@ model or feature change; the baseline is in `docs/ml_documentation.md` → Backt
 ### Learning storage
 
 `LearningStorage` in `ml/storage.py` is the single SQLite persistence layer. Never open a
-raw `sqlite3` connection or write to the learning DB outside this class.
+raw `sqlite3` connection or write to the learning DB outside this class. Its table
+operations live in mixins (`prediction_storage.py`, `history_storage.py`,
+`state_storage.py`, `accuracy_storage.py`) that inherit `StorageMixinBase`
+(`ml/storage_base.py`); add a new table's methods to the matching mixin (or a new one),
+not to `storage.py`.
 
 ### Floating-point comparisons
 

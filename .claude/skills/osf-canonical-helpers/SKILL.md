@@ -91,7 +91,9 @@ storage.save_all()
 ```
 
 All persistence goes through `LearningStorage` (SQLite). Never open a raw
-`sqlite3` connection or write to the learning DB outside this class.
+`sqlite3` connection or write to the learning DB outside this class. Its table
+operations live in mixins (`ml/prediction_storage.py`, `ml/history_storage.py`,
+`ml/state_storage.py`, `ml/accuracy_storage.py`); extend the matching mixin.
 
 ## Canonical Patterns
 
