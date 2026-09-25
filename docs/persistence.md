@@ -12,7 +12,7 @@ All learning data is stored in a single SQLite database:
 | -------------------- | --------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                           |
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                         |
-| `bias_correction`    | `hour` (0-95)               | Per-slot multiplicative correction factors                                                           |
+| `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                   |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays: one per 15-min slot from local midnight (92/96/100), `null` for a missing slot   |
 | `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), stored with UTC offset            |
 | `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
@@ -43,6 +43,8 @@ Auto-migration runs at startup (no user intervention):
 | ------- | ---------------------------------------------------------------------------------- |
 | v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                  |
 | v2 → v3 | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95) |
+| v3 → v4 | Added forecast weather columns to predictions                                      |
+| v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)      |
 
 The `meta` table tracks `schema_version` so migrations only run once.
 
@@ -75,5 +77,6 @@ whether to retrain (see `docs/ml_documentation.md` → Retraining).
 ## JSON Legacy
 
 The old JSON format (`open_spot_forecast_DK1_learning.json`) is auto-migrated
-on first startup if the SQLite database is empty. After migration the JSON is
-renamed to `.json.bak` and never used again.
+on first startup if the SQLite database is empty. Its multiplicative bias
+factors are not imported (bias correction is additive since #15). After
+migration the JSON is renamed to `.json.bak` and never used again.

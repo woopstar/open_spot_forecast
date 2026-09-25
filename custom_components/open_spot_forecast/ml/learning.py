@@ -19,6 +19,15 @@ from .training_inputs import TrainingInputs
 _LOGGER = logging.getLogger(__name__)
 
 
+def percent_error(error: float, actual_price: float) -> float:
+    """Return ``error`` as a percentage of the actual price's magnitude.
+
+    Relative to ``|actual|`` so negative prices get a meaningful percentage;
+    0.0 for a zero price, where a percentage is undefined.
+    """
+    return error / abs(actual_price) * 100 if abs(actual_price) > 1e-9 else 0.0
+
+
 def predictions_at_instant(
     predictions: list[dict[str, Any]], moment: datetime
 ) -> list[dict[str, Any]]:
@@ -227,7 +236,7 @@ class LearningMixin(PredictorBase):
         This is the core of the self-learning loop. It:
         1. Finds the prediction made for this timestamp (from SQLite)
         2. Calculates the error (predicted vs actual)
-        3. Updates bias correction factors for this 15-min slot
+        3. Updates the additive bias offset for this 15-min slot
         4. Adapts the model based on recent errors
         5. Records each error in its lead-time bucket
 
@@ -282,7 +291,7 @@ class LearningMixin(PredictorBase):
                 # Calculate error for this prediction
                 error = predicted_price - actual_price
                 abs_error = abs(error)
-                pct_error = (error / actual_price * 100) if actual_price > 0 else 0
+                pct_error = percent_error(error, actual_price)
 
                 metrics["errors"].append(error)
                 metrics["abs_errors"].append(abs_error)
@@ -444,7 +453,7 @@ class LearningMixin(PredictorBase):
                     "mae": float(np.mean(metrics["abs_errors"])),
                     "bias": float(np.mean(metrics["errors"])),
                     "samples": metrics["count"],
-                    "bias_correction": self.bias_correction.get(slot, 1.0),
+                    "bias_correction": self.bias_correction.get(slot, 0.0),
                     "volatility": self.volatility_mae.get(slot),
                 }
 
@@ -490,7 +499,7 @@ class LearningMixin(PredictorBase):
                         "mae": float(np.mean(metrics["abs_errors"])),
                         "mean_error": float(np.mean(metrics["errors"])),
                         "std_error": float(np.std(metrics["errors"])),
-                        "bias_correction": self.bias_correction.get(slot, 1.0),
+                        "bias_correction": self.bias_correction.get(slot, 0.0),
                         "overpredicts": sum(1 for e in metrics["errors"] if e > 0),
                         "underpredicts": sum(1 for e in metrics["errors"] if e < 0),
                     }

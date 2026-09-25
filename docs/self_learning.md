@@ -26,33 +26,53 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    c. If found:
       - Calculate error: predicted_price - actual_price
       - Update per-slot error metrics (MAE, bias, sample count)
-      - Update per-slot bias correction factor
+      - Update the slot's additive bias offset
       - Add each error to its lead-time bucket (see below)
       - Remove the matched predictions from the queue
    d. If not found: skip (no forecast run covered this slot)
 
 3. On next prediction run (every 6 hours):
    - Bias corrections are applied to raw model outputs
-   - Corrected_price = raw_price × bias_correction[slot]
+   - corrected_price = raw_price - offset[slot] (no clamp: prices can be negative)
 ```
 
 ## Bias Correction
 
-Each 15-minute slot (0-95) has a multiplicative correction factor learned via
-exponential moving average:
+Each 15-minute slot (0-95) has an additive offset, in the price unit
+(currency/kWh), learned via exponential moving average (#15):
 
 ```
-bias_ratio = 1.0 - (mean_error / mean_actual_price)
-correction[slot] = 0.9 × old_correction + 0.1 × bias_ratio
+mean_error   = mean(predicted - actual)            # the slot's last 100 errors
+raw_bias     = offset[slot] + mean_error
+offset[slot] = 0.9 × offset[slot] + 0.1 × raw_bias
+corrected    = raw_prediction - offset[slot]
 ```
 
-- `correction > 1.0` → model underpredicts → multiply up
-- `correction < 1.0` → model overpredicts → multiply down
-- `correction = 1.0` → no bias
+- `offset > 0` → model overpredicts → subtract
+- `offset < 0` → model underpredicts → add
+- `offset = 0` → no bias; the prediction is unchanged
 
-Example: If the model consistently predicts 1.00 but actual is 1.30 for
-slot 47 (11:45), the correction converges to ~1.30, and future predictions
-for that slot get multiplied by 1.30.
+The update runs once a slot has 3 samples; the first update sets the offset to
+`mean_error`. Stored predictions already had the current offset subtracted, so
+their `mean_error` is what is _left_ of the bias; `offset + mean_error` is the
+raw model's bias. An EMA of `mean_error` alone would settle at half the bias
+(a simulation with a week of forecast lag: 0.48 for a true bias of 1.0, versus
+0.98 with this formula).
+
+Example: If the model consistently predicts 1.00 but the actual price is 1.30
+for slot 47 (11:45), the offset converges to about -0.30, and future
+predictions for that slot get 0.30 added. The same works for a slot that clears
+at -0.20 while the model predicts 0.10: the offset converges to 0.30 and the
+corrected prediction to -0.20.
+
+Being additive, the correction never divides by a price (it stays bounded when
+prices are zero or negative) and never flips a prediction's sign by scaling.
+Predictions are never clamped at 0 anywhere (model, heuristic fallback, bias
+correction, sensor attributes): negative prices are the hours worth shifting
+load into.
+
+The multiplicative factors of older versions cannot be converted into offsets;
+they are reset once on upgrade (schema v5, see [persistence](persistence.md)).
 
 ## Slot Granularity
 
@@ -112,7 +132,7 @@ Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 | `mean_bias`           | Average systematic error (negative = underpredicting) |
 | `slots_tracked`       | Number of 15-min slots with data                      |
 | `pending_predictions` | Predictions still waiting for their slot to arrive    |
-| `hourly_metrics`      | Per-slot MAE, bias, sample count, correction factor   |
+| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offset         |
 
 ## Reset
 

@@ -13,7 +13,7 @@ prices and continuously improves accuracy via per-slot bias correction.
   features, implemented in pure NumPy (no scikit-learn dependency).
 - **Real consumer prices** — Stromligning provides prices with tariffs, fees,
   and VAT (what you actually pay), with Nordpool as fallback.
-- **Self-learning** — a per-slot multiplicative bias-correction loop that
+- **Self-learning** — a per-slot additive bias-correction loop that
   improves accuracy as predictions are compared against confirmed prices.
 - **No external API keys** — reads everything from your existing Home Assistant
   entities (Met.no weather, Stromligning, Solcast).

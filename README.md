@@ -28,8 +28,9 @@ and continuously improves accuracy via per-slot bias correction.
 
 ### Self-Learning
 
-- **Per-slot bias correction** — a multiplicative EMA correction factor per
-  15-minute slot, learned from prediction-vs-actual comparisons
+- **Per-slot bias correction** — an additive EMA offset per 15-minute slot,
+  learned from prediction-vs-actual comparisons; negative prices are forecast
+  as negative
 - **Solar scaling factor** — a learned EMA ratio between Solcast's estimate and
   actual inverter output
 - **Adaptive confidence** — heuristic confidence early on, switching to a

@@ -7,7 +7,7 @@ import numpy as np
 
 from ..time_slots import slot_start_in_day
 from .base import PredictorBase
-from .learning import predictions_at_instant
+from .learning import percent_error, predictions_at_instant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,7 +96,7 @@ class CatchUpMixin(PredictorBase):
                     predicted_price = prediction.get("price", 0)
                     error = predicted_price - actual_price
                     abs_error = abs(error)
-                    pct_error = (error / actual_price * 100) if actual_price > 0 else 0
+                    pct_error = percent_error(error, actual_price)
 
                     metrics["errors"].append(error)
                     metrics["abs_errors"].append(abs_error)
