@@ -72,6 +72,9 @@ class PredictorBase:
     ) -> None:
         raise NotImplementedError
 
+    def catch_up_learning(self) -> int:
+        raise NotImplementedError
+
     def _update_bias_correction(self, slot: int) -> None:
         raise NotImplementedError
 

@@ -12,6 +12,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from ..price_series import is_invalid_price_series, known_prices
+from .catch_up import CatchUpMixin
 from .features import FeatureMixin
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
@@ -24,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SpotPricePredictor(
-    FeatureMixin, ModelMixin, LearningMixin, LeadTimeMixin, RetrainMixin
+    FeatureMixin, ModelMixin, LearningMixin, CatchUpMixin, LeadTimeMixin, RetrainMixin
 ):
     """ML-based spot price predictor using weather and historical price data."""
 

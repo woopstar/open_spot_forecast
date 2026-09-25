@@ -29,17 +29,18 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File                  | Responsibility                                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `LeadTimeMixin` + `RetrainMixin` |
-| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                        |
-| `models.py`           | `ModelMixin` — training + prediction                                                                               |
-| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                    |
-| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                   |
-| `storage.py`          | `LearningStorage` — SQLite persistence                                                                             |
-| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                          |
-| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                   |
-| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                |
+| File                  | Responsibility                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
+| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
+| `models.py`           | `ModelMixin` — training + prediction                                                                                                |
+| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
+| `catch_up.py`         | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
+| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                                    |
+| `storage.py`          | `LearningStorage` — SQLite persistence                                                                                              |
+| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
+| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
+| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -75,7 +76,7 @@ refuse it. Never add an inline "all prices are 0" check.
 ### ML predictor
 
 `SpotPricePredictor` in `ml/predictor.py` is the single ML predictor. It composes
-`FeatureMixin`, `ModelMixin`, `LearningMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
+`FeatureMixin`, `ModelMixin`, `LearningMixin`, `CatchUpMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
 feature extraction, model training, or self-learning outside `ml/`.
 
 ### Retraining
