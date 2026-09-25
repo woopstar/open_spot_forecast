@@ -125,7 +125,10 @@ are therefore never built as `date + n × 15 min` in local wall-clock time:
   starts at local midnight converted to UTC plus _n_ × 15 min, converted back
   to local time (`slot_start_in_day()` in `time_slots.py`). Every slot after
   a DST change gets its real wall-clock time and UTC offset, so the time
-  features and the `weather_history` / Nordpool lookups line up.
+  features and the `weather_history` / Nordpool lookups line up. A slot
+  missing in the source (`null`, see the price grid in
+  [stromligning_integration.md](stromligning_integration.md#price-grid)) is
+  not a training row; the slots after it keep their times.
 - **Self-learning**: the 15-minute update finds the current slot's price at
   `slot_index_in_day(now)`, its position counted the same way from local
   midnight (not `hour × 4 + minute // 15`). Predictions are matched to the

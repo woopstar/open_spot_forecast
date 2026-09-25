@@ -16,13 +16,13 @@ newer than ``last_trained_at``. Hyperparameter optimization runs once per
 
 import contextlib
 import logging
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-import numpy as np
-
 from homeassistant.util import dt as dt_util
 
+from ..price_series import same_prices
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class RetrainMixin(PredictorBase):
         return max(stamps, default=None)
 
     def record_training_prices(
-        self, prices: list[float], date: str | None = None
+        self, prices: Sequence[float | None], date: str | None = None
     ) -> None:
         """Store the day's prices for training and note whether they changed.
 
@@ -74,9 +74,7 @@ class RetrainMixin(PredictorBase):
 
         if previous is None:
             self._set_hpo_counter(self._hpo_counter + 1)
-        elif len(previous) == len(prices) and np.allclose(
-            previous, prices, rtol=0.0, atol=1e-9
-        ):
+        elif same_prices(previous, prices):
             return
 
         self._prices_updated_at = dt_util.utcnow()
@@ -90,7 +88,9 @@ class RetrainMixin(PredictorBase):
         last_update = self.last_data_update
         return last_update is not None and last_update > self.last_trained_at
 
-    def retrain(self, historical_prices: list[float], features: list[dict]) -> None:
+    def retrain(
+        self, historical_prices: Sequence[float | None], features: list[dict]
+    ) -> None:
         """Train the price model and run hyperparameter optimization when due.
 
         ``last_trained_at`` is the time training *started*: data written while

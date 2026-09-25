@@ -738,22 +738,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 # lookup date must be today's: it is paired with today's price.
                 slot_time = dt_util.now()
 
-                # Determine the interval: 15-min Stromligning data has 92-100
-                # entries per day; hourly data has 23-25
-                interval_minutes = 15 if len(current_prices) > 25 else 60
-
-                # The current slot, and its position in today's prices counted
-                # from local midnight on the UTC timeline, so a 92- or 100-slot
-                # DST day is indexed correctly (not hour * 4 + minute // 15)
-                learn_dt = floor_to_slot(slot_time, interval_minutes)
-                price_index = slot_index_in_day(
-                    slot_time, interval_minutes=interval_minutes
+                # Today's prices are one value per 15-minute slot from local
+                # midnight (the reader aligns them by timestamp), so the
+                # current slot's price is at its position on that grid
+                learn_dt = floor_to_slot(slot_time)
+                price_index = slot_index_in_day(slot_time)
+                actual_price = (
+                    current_prices[price_index]
+                    if price_index < len(current_prices)
+                    else None
                 )
 
-                # Get actual price for that interval
-                if len(current_prices) > price_index:
-                    actual_price = current_prices[price_index]
-
+                # A missing slot (a gap in the source) is not learned from
+                if actual_price is not None:
                     learn_timestamp = learn_dt.isoformat()
 
                     _LOGGER.info(

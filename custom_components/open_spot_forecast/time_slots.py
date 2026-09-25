@@ -165,19 +165,21 @@ def slot_index_in_day(
 
 
 def tomorrow_prices_complete(
-    prices: Sequence[float], now: datetime | None = None
+    prices: Sequence[float | None], now: datetime | None = None
 ) -> bool:
     """Return True if ``prices`` has a price for every slot of tomorrow.
 
     Tomorrow is the next local calendar day, so a DST-change day needs 92 or
-    100 prices instead of 96. A partial publication is not complete.
+    100 prices instead of 96. A partial publication is not complete, and a
+    missing (``None``) slot does not count.
 
     Args:
         prices: Tomorrow's 15-minute prices.
         now: Current time (defaults to now), used to find tomorrow's date.
 
     Returns:
-        True if there are at least as many prices as tomorrow has slots.
+        True if there are at least as many known prices as tomorrow has slots.
     """
     today = dt_util.as_local(now or dt_util.utcnow()).date()
-    return len(prices) >= slots_in_local_day(today + timedelta(days=1))
+    known = sum(1 for price in prices if price is not None)
+    return known >= slots_in_local_day(today + timedelta(days=1))

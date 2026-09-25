@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -78,7 +79,7 @@ class LearningMixin(PredictorBase):
         )
 
         # Build price lookup by date
-        price_by_date: dict[str, list[float]] = {}
+        price_by_date: dict[str, list[float | None]] = {}
         for entry in self.price_history:
             date_str = entry.get("date")
             prices = entry.get("prices", [])
@@ -90,19 +91,16 @@ class LearningMixin(PredictorBase):
             if not prices:
                 continue
 
-            # Determine intervals per hour from data length
-            intervals_per_hour = 4 if len(prices) > 24 else 1
-            minutes_per_interval = 60 // intervals_per_hour
-
             day = datetime.strptime(date_str, "%Y-%m-%d").date()
             for idx, actual_price in enumerate(prices):
-                if actual_price == 0:
+                # A slot missing in the source (None) has nothing to learn from
+                if actual_price is None or actual_price == 0:
                     continue
 
                 # Real slot start: correct on DST days, and indexes past the
                 # day's end (tomorrow's prices stored with today's) land on
                 # the next date
-                slot_start = slot_start_in_day(day, idx, self.tz, minutes_per_interval)
+                slot_start = slot_start_in_day(day, idx, self.tz)
                 hour = slot_start.hour
                 minute = slot_start.minute
 
@@ -177,7 +175,9 @@ class LearningMixin(PredictorBase):
         )
         return total_learned
 
-    def store_daily_prices(self, prices: list[float], date: str | None = None) -> bool:
+    def store_daily_prices(
+        self, prices: Sequence[float | None], date: str | None = None
+    ) -> bool:
         """Store today's prices for historical training data.
 
         An invalid day (all zero, or with missing values) is not stored, so
@@ -202,7 +202,7 @@ class LearningMixin(PredictorBase):
         # Check if we already have this date
         for entry in self.price_history:
             if entry.get("date") == date:
-                entry["prices"] = prices
+                entry["prices"] = list(prices)
                 _LOGGER.debug(
                     "Updated price history for %s (%d prices)", date, len(prices)
                 )
@@ -212,7 +212,7 @@ class LearningMixin(PredictorBase):
         self.price_history.append(
             {
                 "date": date,
-                "prices": prices,
+                "prices": list(prices),
             }
         )
 
@@ -256,6 +256,10 @@ class LearningMixin(PredictorBase):
             # timeline from local midnight, so a 92- or 100-slot DST day gets
             # the real wall-clock time and offset for every slot
             for interval, price in enumerate(prices):
+                # A slot missing in the source (None) is not a training row;
+                # the slots after it keep their own times
+                if price is None:
+                    continue
                 all_prices.append(price)
                 all_features.append(
                     slot_time_features(

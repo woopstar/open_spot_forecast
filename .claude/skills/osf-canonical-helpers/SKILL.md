@@ -53,10 +53,15 @@ All reads of external HA entities (Stromligning, weather, Solcast, Met.no) go
 through `SensorReader`. Never call `hass.states.get(...)` directly in platform
 or ML code — add a reader method instead.
 
-Validate a day of prices with `is_invalid_price_series()` from `price_series.py`
-(all zero, or a missing/non-finite value, means invalid; some zero or negative
-prices are fine). The Stromligning readers already drop invalid days, and
-`store_daily_prices` / `predict` refuse them — never add an inline all-zero check.
+A day's prices are one value per 15-minute slot from local midnight
+(92/96/100), with `None` for a slot missing in the source. Build them from
+timestamped prices with `align_to_grid()` (`price_series.py`), use
+`known_prices()` before min/max/mean, compare with `same_prices()`, and never
+guess hourly vs 15-minute from a list's length. Validate a day with
+`is_invalid_price_series()` (known prices all zero or not finite means
+invalid; some zero or negative prices are fine). The Stromligning readers
+already drop invalid days, and `store_daily_prices` / `predict` refuse them —
+never add an inline all-zero check.
 
 ### 3. ML Predictor — `SpotPricePredictor`
 
