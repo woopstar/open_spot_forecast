@@ -3,7 +3,7 @@
 import contextlib
 import logging
 from collections.abc import Sequence
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -11,7 +11,7 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from ..price_series import known_prices
-from ..time_slots import first_prediction_slot
+from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_vector
 from .gbm import NumpyGradientBoosting
@@ -368,9 +368,10 @@ class ModelMixin(PredictorBase):
             _LOGGER.warning("No historical prices for heuristic predictions")
             return
 
-        # Use historical average with time-of-day adjustment
+        # Use historical average with time-of-day adjustment. The pattern
+        # reads the aligned series, so every slot keeps its own local hour
         avg_price = float(np.mean(known))
-        hourly_pattern = self._extract_hourly_pattern(known)
+        hourly_pattern = self._extract_hourly_pattern(historical_prices)
 
         _LOGGER.info(
             "Heuristic: avg_price=%.4f, hourly_pattern_length=%d",
@@ -429,29 +430,46 @@ class ModelMixin(PredictorBase):
             max(p["price"] for p in self.predictions) if self.predictions else 0,
         )
 
-    def _extract_hourly_pattern(self, prices: list[float]) -> list[float]:
-        """Extract hourly price pattern from historical data."""
-        if len(prices) < 24:
-            return [1.0] * 24
+    def _extract_hourly_pattern(
+        self, prices: Sequence[float | None], first_day: date | None = None
+    ) -> list[float]:
+        """Return each local hour's mean price relative to the mean over hours.
 
-        # Reshape to 24-hour periods
-        n_days = len(prices) // 24
-        if n_days == 0:
-            return [1.0] * 24
+        Args:
+            prices: Prices on the 15-minute grid from local midnight of
+                ``first_day`` on, day after day (92/96/100 slots per day),
+                None for a slot missing in the source.
+            first_day: Local date of the first slot; today by default.
 
-        hourly_avg = []
-        for hour in range(24):
-            hour_prices = [prices[day * 24 + hour] for day in range(n_days)]
-            hourly_avg.append(float(np.mean(hour_prices)))
+        Returns:
+            24 factors, one per local hour. Every known slot counts for its
+            real local hour (``slot_start_in_day``), so a missing slot or a
+            DST day never shifts the others. An hour without prices gets the
+            neutral factor 1.0, and so does every hour if the mean is not
+            positive.
+        """
+        day = first_day if first_day is not None else dt_util.now().date()
+        hour_prices: list[list[float]] = [[] for _ in range(24)]
+        for index, price in enumerate(prices):
+            if price is not None:
+                hour_prices[slot_start_in_day(day, index).hour].append(price)
+
+        hourly_avg = {
+            hour: float(np.mean(values))
+            for hour, values in enumerate(hour_prices)
+            if values
+        }
+        if not hourly_avg:
+            return [1.0] * 24
 
         # Normalize
-        overall_avg = float(np.mean(hourly_avg))
-        if overall_avg > 0:
-            pattern = [h / overall_avg for h in hourly_avg]
-        else:
-            pattern = [1.0] * 24
-
-        return pattern
+        overall_avg = float(np.mean(list(hourly_avg.values())))
+        if not overall_avg > 0:
+            return [1.0] * 24
+        return [
+            hourly_avg[hour] / overall_avg if hour in hourly_avg else 1.0
+            for hour in range(24)
+        ]
 
     def _estimate_confidence(self, feature: dict) -> float:
         """Estimate prediction confidence using learned error metrics.
