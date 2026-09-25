@@ -27,6 +27,25 @@ startup, so existing databases gain it without a versioned migration. Rows
 older than the 30-day rolling window are pruned whenever the metrics are
 refreshed. The table is dropped and recreated by `clear_all()`.
 
+## Code Layout
+
+`LearningStorage` (`ml/storage.py`) is the only class that touches the
+database. It owns the connection, the write lock, the schema and the
+migrations, and inherits its table operations from one mixin per group of
+tables:
+
+| Module                     | Mixin                          | Tables                                                                   |
+| -------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
+| `ml/prediction_storage.py` | `PredictionStorageMixin`       | `predictions`                                                            |
+| `ml/history_storage.py`    | `HistoryStorageMixin`          | `weather_history`, `nordpool_prognoses`, `price_history`                 |
+| `ml/state_storage.py`      | `LearningStateStorageMixin`    | `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk save/load |
+| `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`                                                     |
+
+The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
+the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking
+only. The versioned data migrations live next to them in `ml/bias_storage.py`
+(v5) and `ml/spot_migration.py` (v6).
+
 ## Connection Management
 
 - Single persistent connection per integration lifetime

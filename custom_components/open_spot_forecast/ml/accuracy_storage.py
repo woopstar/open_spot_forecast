@@ -8,17 +8,12 @@ over any rolling window of whole days.
 """
 
 import sqlite3
-import threading
+
+from .storage_base import StorageMixinBase
 
 
-class LeadTimeAccuracyStorageMixin:
+class LeadTimeAccuracyStorageMixin(StorageMixinBase):
     """Lead-time accuracy table operations for ``LearningStorage``."""
-
-    # Provided by LearningStorage.
-    _lock: threading.Lock
-
-    def _ensure_conn(self) -> sqlite3.Connection:
-        raise NotImplementedError
 
     @staticmethod
     def _create_lead_time_accuracy_schema(conn: sqlite3.Connection) -> None:
