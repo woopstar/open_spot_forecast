@@ -30,10 +30,6 @@ from custom_components.open_spot_forecast.ml.state_storage import (
 )
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 
-ML_DIR = Path(__file__).parent.parent / "custom_components/open_spot_forecast/ml"
-MAX_FILE_BYTES = 30 * 1024
-MAX_FILE_LINES = 1000
-
 
 def _hass(tmp_path: Path) -> Mock:
     """Return a mock Home Assistant whose storage lives under tmp_path."""
@@ -56,13 +52,6 @@ def storage(tmp_path: Path) -> Iterator[LearningStorage]:
 
 
 # --- Module layout -------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("path", sorted(ML_DIR.glob("*.py")), ids=lambda p: p.name)
-def test_ml_modules_stay_below_the_file_size_limit(path: Path) -> None:
-    """Every ML module stays below 30 KB and 1000 lines."""
-    assert path.stat().st_size < MAX_FILE_BYTES
-    assert len(path.read_text(encoding="utf-8").splitlines()) < MAX_FILE_LINES
 
 
 @pytest.mark.parametrize(

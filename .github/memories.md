@@ -14,19 +14,20 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### Component layer (`custom_components/open_spot_forecast/`)
 
-| File                 | Responsibility                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `const.py`           | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                           |
-| `config_flow.py`     | Two-step config flow (basic settings → sensor configuration) + options flow                            |
-| `sensor.py`          | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)      |
-| `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                               |
-| `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                      |
-| `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                    |
-| `price_series.py`    | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`          |
-| `spot_prices.py`     | `ml_price_inputs()` (the model's raw spot prices + where they end), `extract_latest_known_timestamp()` |
-| `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML         |
-| `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete      |
-| `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                            |
+| File                 | Responsibility                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `const.py`           | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                                                                               |
+| `config_flow.py`     | Two-step config flow (basic settings → sensor configuration) + options flow                                                                                |
+| `sensor.py`          | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                          |
+| `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                   |
+| `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                          |
+| `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                                                                        |
+| `price_series.py`    | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                              |
+| `spot_prices.py`     | `ml_price_inputs()` (the model's raw spot prices + where they end), `extract_latest_known_timestamp()`                                                     |
+| `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                             |
+| `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                          |
+| `__init__.py`        | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                     |
+| `updater.py`         | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline; `SensorEntities` (configured entity ids) |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
@@ -50,9 +51,10 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
-| File               | Responsibility                                                                     |
-| ------------------ | ---------------------------------------------------------------------------------- |
-| `nordpool_data.py` | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs |
+| File                    | Responsibility                                                                                                        |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                    |
+| `nordpool_prognoses.py` | `fetch_nordpool_prognoses` — both prognoses for the forecast (cached by `updatedAt`) and as `nordpool_prognoses` rows |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -106,6 +108,14 @@ features) in `ml/features.py`, and
 `create_price_model()` (production GBM hyperparameters, also used by HPO) in `ml/models.py`.
 The price model handles NaN inputs natively (each split learns where missing values go),
 so a missing feature can reach it as NaN instead of an invented value.
+
+### Update cycle
+
+`ForecastUpdater` in `updater.py` owns every update path; `async_setup_entry` only builds it,
+runs `async_initial_fetch()` and registers its callbacks. The forecast pipeline (weather →
+Nordpool prognoses → known-data end → `predict` → `save_learning_data`) exists once, in
+`ForecastUpdater.run_forecast()`, used by the initial fetch, the tomorrow-price refresh and the
+6-hourly update. Never copy it into another callback.
 
 ### Model backtest
 
@@ -250,7 +260,8 @@ To wire a new external entity into OSF, follow the full stack in order:
 3. `translations/en.json` — add `data` label for both `config.step.sensors` and `options.step.init`
 4. `translations/da.json` — add the Danish translation
 5. `sensor_reader.py` — add a `read_*` method on `SensorReader`
-6. `__init__.py` — read the value and pass it into `weather_data`
+6. `updater.py` — add the entity to `SensorEntities` (and `sensor_config()`), read the value in
+   `ForecastUpdater._read_weather()` and pass it into `weather_data`
 
 Always check `docs/using_existing_sensors.md` first for the verified entity list.
 

@@ -1,157 +1,33 @@
-"""Open Spot Forecast integration for Home Assistant."""
+"""Open Spot Forecast integration for Home Assistant.
+
+Sets up a config entry: reads its configuration, builds the ML predictor and
+the ``ForecastUpdater`` (``updater.py``), runs the initial fetch and
+registers the timed updates, which ``async_unload_entry`` cancels.
+"""
 
 import logging
-from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.loader import async_get_integration
-from homeassistant.util import dt as dt_util, slugify as util_slugify
 
-from .api import fetch_consumption_prognosis, fetch_production_prognosis
 from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
-    CONF_SOLAR_FORECAST_SENSOR,
-    CONF_SOLAR_POWER_SENSOR,
-    CONF_SPOT_PRICE_SENSOR,
-    CONF_SPOT_PRICE_TOMORROW_SENSOR,
-    CONF_STROMLIGNING_SENSOR,
-    CONF_STROMLIGNING_TOMORROW_SENSOR,
-    CONF_TEMPERATURE_SENSOR,
-    CONF_WIND_DIRECTION_SENSOR,
-    CONF_WIND_SPEED_SENSOR,
-    DEFAULT_SPOT_PRICE_SENSOR,
-    DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     DOMAIN,
     PLATFORMS,
     REGIONS,
     STARTUP,
-    UPDATE_SIGNAL,
-    UPDATE_SIGNAL_FORECAST,
 )
 from .ml.predictor import SpotPricePredictor
-from .sensor_reader import SensorReader, async_read_weather_forecast
-from .spot_prices import ml_price_inputs
-from .time_slots import floor_to_slot, slot_index_in_day, tomorrow_prices_complete
+from .sensor_reader import SensorReader
 from .tomorrow_prices import TomorrowPriceChecker
+from .updater import ForecastUpdater, SensorEntities
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def _fetch_nordpool_prognoses(
-    hass: HomeAssistant, region: str, weather_data: dict, api_data: dict | None = None
-) -> list[dict]:
-    """Fetch Nordpool consumption and production prognoses (with caching).
-
-    Attaches 'consumption_prognosis' and 'production_prognosis' to
-    weather_data if the API calls succeed. Also returns a list of
-    entries suitable for storage in SQLite.
-
-    Freshness is keyed on Nordpool's ``updatedAt`` timestamp rather than the
-    wall-clock date. Day-ahead data is immutable once published, but the
-    production per-type breakdown (Solar/WindOffshore/WindOnshore) is
-    published later than the total, which surfaces as a later ``updatedAt``.
-    We always fetch (calls are infrequent — startup + 6-hourly) and compare
-    ``updatedAt`` so we pick up that late breakdown without guessing from the
-    hour of day.
-
-    Args:
-        hass: Home Assistant instance
-        region: Price region (e.g. "DK1")
-        weather_data: Dict to attach fetched data to
-        api_data: Optional integration data dict for caching
-
-    Returns:
-        List of dicts with keys: timestamp, consumption, solar,
-        wind_offshore, wind_onshore
-    """
-    from datetime import date
-
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-    now = datetime.now()
-
-    cache = api_data.get("_nordpool_cache", {}) if api_data is not None else {}
-    consumption_cache = cache.setdefault("consumption", {})
-    production_cache = cache.setdefault("production", {})
-
-    # Always fetch today. Tomorrow's day-ahead total is published ~13:00 CET,
-    # but the per-type breakdown arrives later; fetching before 13:00 only
-    # returns empty data, so skip it then.
-    dates_to_fetch = [today]
-    if now.hour >= 13 or api_data is None:
-        dates_to_fetch.append(tomorrow)
-
-    stored_entries: list[dict] = []
-    for target in dates_to_fetch:
-        date_key = target.isoformat()
-
-        consumption, cons_updated = await fetch_consumption_prognosis(target, region)
-        production, prod_updated = await fetch_production_prognosis(target, region)
-
-        # --- Consumption ---
-        if consumption:
-            cached = consumption_cache.get(date_key)
-            if cached and cons_updated == cached.get("updated_at"):
-                # Unchanged since the last fetch — reuse what we already parsed.
-                consumption = cached.get("data") or {}
-            else:
-                consumption_cache[date_key] = {
-                    "updated_at": cons_updated,
-                    "data": consumption,
-                }
-
-            if "consumption_prognosis" not in weather_data:
-                weather_data["consumption_prognosis"] = {}
-            weather_data["consumption_prognosis"].update(consumption)
-
-            # Build storage entries combining consumption + production
-            for ts, cons in consumption.items():
-                stored_entries.append(
-                    {
-                        "timestamp": ts,
-                        "consumption": cons,
-                        "solar": None,
-                        "wind_offshore": None,
-                        "wind_onshore": None,
-                    }
-                )
-
-        # --- Production ---
-        if production:
-            cached = production_cache.get(date_key)
-            if cached and prod_updated == cached.get("updated_at"):
-                production = cached.get("data") or []
-            else:
-                production_cache[date_key] = {
-                    "updated_at": prod_updated,
-                    "data": production,
-                }
-
-            if "production_prognosis" not in weather_data:
-                weather_data["production_prognosis"] = []
-            weather_data["production_prognosis"].extend(production)
-
-            # Update storage entries with production data
-            prod_by_ts = {p["deliveryStart"]: p for p in production}
-            for entry in stored_entries:
-                ts = entry["timestamp"]
-                if ts in prod_by_ts:
-                    p = prod_by_ts[ts]
-                    entry["solar"] = p.get("solar")
-                    entry["wind_offshore"] = p.get("wind_offshore")
-                    entry["wind_onshore"] = p.get("wind_onshore")
-
-    if api_data is not None:
-        api_data["_nordpool_cache"] = cache
-        _LOGGER.info("Nordpool cache updated for %d dates", len(dates_to_fetch))
-
-    return stored_entries
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -166,54 +42,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_ENABLE_ML_PREDICTION, entry.data.get(CONF_ENABLE_ML_PREDICTION, True)
     )
 
-    # Sensor configuration - check options first (reconfiguration), then data (initial setup)
-    stromligning_sensor = entry.options.get(
-        CONF_STROMLIGNING_SENSOR, entry.data.get(CONF_STROMLIGNING_SENSOR)
-    )
-    stromligning_tomorrow_sensor = entry.options.get(
-        CONF_STROMLIGNING_TOMORROW_SENSOR,
-        entry.data.get(CONF_STROMLIGNING_TOMORROW_SENSOR),
-    )
-    # Raw spot price excl. VAT and tariffs: what the ML model learns (#16)
-    spot_price_sensor = entry.options.get(
-        CONF_SPOT_PRICE_SENSOR,
-        entry.data.get(CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR),
-    )
-    spot_price_tomorrow_sensor = entry.options.get(
-        CONF_SPOT_PRICE_TOMORROW_SENSOR,
-        entry.data.get(
-            CONF_SPOT_PRICE_TOMORROW_SENSOR, DEFAULT_SPOT_PRICE_TOMORROW_SENSOR
-        ),
-    )
-    wind_speed_sensor = entry.options.get(
-        CONF_WIND_SPEED_SENSOR, entry.data.get(CONF_WIND_SPEED_SENSOR)
-    )
-    wind_direction_sensor = entry.options.get(
-        CONF_WIND_DIRECTION_SENSOR, entry.data.get(CONF_WIND_DIRECTION_SENSOR)
-    )
-    solar_power_sensor = entry.options.get(
-        CONF_SOLAR_POWER_SENSOR, entry.data.get(CONF_SOLAR_POWER_SENSOR)
-    )
-    solar_forecast_sensor = entry.options.get(
-        CONF_SOLAR_FORECAST_SENSOR, entry.data.get(CONF_SOLAR_FORECAST_SENSOR)
-    )
-    temperature_sensor = entry.options.get(
-        CONF_TEMPERATURE_SENSOR, entry.data.get(CONF_TEMPERATURE_SENSOR)
-    )
-
+    # Sensor configuration - options first (reconfiguration), then data (initial setup)
+    sensors = SensorEntities.from_entry(entry)
     _LOGGER.info(
         "Sensor configuration: stromligning=%s, stromligning_tomorrow=%s, spot=%s, "
         "spot_tomorrow=%s, wind_speed=%s, wind_direction=%s, solar_power=%s, "
         "solar_forecast=%s, temperature=%s",
-        stromligning_sensor,
-        stromligning_tomorrow_sensor,
-        spot_price_sensor,
-        spot_price_tomorrow_sensor,
-        wind_speed_sensor,
-        wind_direction_sensor,
-        solar_power_sensor,
-        solar_forecast_sensor,
-        temperature_sensor,
+        sensors.stromligning,
+        sensors.stromligning_tomorrow,
+        sensors.spot_price,
+        sensors.spot_price_tomorrow,
+        sensors.wind_speed,
+        sensors.wind_direction,
+        sensors.solar_power,
+        sensors.solar_forecast,
+        sensors.temperature,
     )
 
     # Initialize sensor reader
@@ -240,526 +83,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "weather_data": {},
         "tomorrow_available": False,
         "last_update": None,
-        "sensor_config": {
-            "stromligning_sensor": stromligning_sensor,
-            "wind_speed_sensor": wind_speed_sensor,
-            "wind_direction_sensor": wind_direction_sensor,
-            "solar_power_sensor": solar_power_sensor,
-            "solar_forecast_sensor": solar_forecast_sensor,
-            "temperature_sensor": temperature_sensor,
-        },
+        "sensor_config": sensors.sensor_config(),
     }
 
     hass.data[DOMAIN][entry.entry_id] = api_data
 
-    def read_spot_prices() -> None:
-        """Read the raw spot price (the ML model's prices) into api_data."""
-        if ml_predictor:
-            api_data["spot_data"] = sensor_reader.read_spot_prices(
-                spot_price_sensor, spot_price_tomorrow_sensor
-            )
-
-    def update_tomorrow_available() -> bool:
-        """Recompute tomorrow_available; return True if tomorrow just became complete."""
-        was_complete = api_data["tomorrow_available"]
-        api_data["tomorrow_available"] = tomorrow_prices_complete(
-            api_data["prices_tomorrow"]
-        )
-        arrived = api_data["tomorrow_available"] and not was_complete
-        if arrived:
-            _LOGGER.info(
-                "Tomorrow's prices are complete (%d intervals)",
-                len(api_data["prices_tomorrow"]),
-            )
-        return arrived
-
-    # Initial data fetch
+    updater = ForecastUpdater(
+        hass, entry, api_data, sensors, sensor_reader, ml_predictor
+    )
     try:
-        _LOGGER.info("Starting initial data fetch for Open Spot Forecast")
-
-        # Try to read from Stromligning sensor first (priority 1)
-        if stromligning_sensor:
-            _LOGGER.info(
-                "Reading prices from Stromligning sensor: %s", stromligning_sensor
-            )
-            stromligning_data = sensor_reader.read_stromligning_sensor(
-                stromligning_sensor
-            )
-            _LOGGER.debug("Stromligning data: %s", stromligning_data)
-
-            # Read tomorrow sensor if configured
-            if stromligning_tomorrow_sensor:
-                _LOGGER.info(
-                    "Reading tomorrow prices from Stromligning sensor: %s",
-                    stromligning_tomorrow_sensor,
-                )
-                tomorrow_data = sensor_reader.read_stromligning_tomorrow_sensor(
-                    stromligning_tomorrow_sensor
-                )
-                if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    stromligning_data["tomorrow"] = tomorrow_data["tomorrow"]
-                    stromligning_data["raw_tomorrow"] = tomorrow_data["raw_tomorrow"]
-                    _LOGGER.info(
-                        "Loaded %d tomorrow prices from Stromligning tomorrow sensor",
-                        len(tomorrow_data["tomorrow"]),
-                    )
-
-            if stromligning_data["today"]:
-                api_data["prices_today"] = stromligning_data["today"]
-                api_data["prices_tomorrow"] = stromligning_data["tomorrow"]
-                api_data["stromligning_data"] = stromligning_data
-                api_data["price_source"] = "stromligning"
-                _LOGGER.info(
-                    "Loaded %d today prices and %d tomorrow prices from Stromligning (real consumer prices with tariffs/VAT)",
-                    len(stromligning_data["today"]),
-                    len(stromligning_data["tomorrow"]),
-                )
-            else:
-                # Keep reading the sensor: after a restart it can be missing or
-                # report invalid (all-zero) prices until its source recovers
-                _LOGGER.warning("Stromligning sensor has no valid prices yet")
-
-        # No price sources — just use empty data
-        if not stromligning_sensor:
-            _LOGGER.warning("No price sensor configured (Stromligning recommended)")
-
-        _LOGGER.info(
-            "Price data loaded: source=%s, today=%d prices, tomorrow=%d prices",
-            api_data.get("price_source", "unknown"),
-            len(api_data["prices_today"]),
-            len(api_data["prices_tomorrow"]),
-        )
-
-        # Set tomorrow availability flag
-        update_tomorrow_available()
-
-        read_spot_prices()
-        if ml_predictor and not api_data["spot_data"]["today"]:
-            _LOGGER.warning(
-                "Spot price sensor %s has no prices: the ML forecast needs the raw "
-                "spot price excl. VAT (Stromligning's spotprice_ex_vat sensor)",
-                spot_price_sensor,
-            )
-
-        # Read weather data from sensors or DMI API
-        weather_data = {}
-        if any(
-            [
-                wind_speed_sensor,
-                wind_direction_sensor,
-                solar_power_sensor,
-                solar_forecast_sensor,
-                temperature_sensor,
-            ]
-        ):
-            _LOGGER.info("Reading weather data from Home Assistant sensors")
-            _LOGGER.debug("Sensor config: %s", api_data["sensor_config"])
-            weather_data = sensor_reader.read_weather_sensors(api_data["sensor_config"])
-            _LOGGER.debug("Weather data from sensors: %s", weather_data)
-
-            # Also read Solcast if configured
-            if solar_forecast_sensor and "solcast" in solar_forecast_sensor.lower():
-                solcast_data = sensor_reader.read_solcast_sensor(solar_forecast_sensor)
-                weather_data["solcast_forecast"] = solcast_data
-                _LOGGER.debug("Solcast data: %s", solcast_data)
-
-        api_data["weather_data"] = weather_data
-
-        # Read hourly weather forecast for time-varying per-slot features
-        if wind_speed_sensor and wind_speed_sensor.startswith("weather."):
-            forecast = await async_read_weather_forecast(hass, wind_speed_sensor)
-            if forecast:
-                weather_data["weather_forecast"] = forecast
-                api_data["weather_data"] = weather_data
-
-        # Fetch Nordpool consumption and production prognoses
-        np_entries = await _fetch_nordpool_prognoses(
-            hass, region, weather_data, api_data
-        )
-        api_data["weather_data"] = weather_data
-        if np_entries and ml_predictor:
-            await hass.async_add_executor_job(
-                ml_predictor.storage.insert_nordpool_prognoses_batch, np_entries
-            )
-
-        _LOGGER.info(
-            "Weather data loaded: wind_speed=%s, temperature=%s, solar_power=%s",
-            weather_data.get("wind_speed"),
-            weather_data.get("temperature"),
-            weather_data.get("solar_power"),
-        )
-
-        if ml_predictor and weather_data:
-            # The model's prices: raw spot excl. VAT, today then tomorrow, and
-            # where they end (predictions start there)
-            all_known_prices, known_data_end_time = ml_price_inputs(
-                api_data.get("spot_data")
-            )
-
-            _LOGGER.info(
-                "Running ML predictions with %d price samples (known data ends at %s)",
-                len(all_known_prices),
-                known_data_end_time,
-            )
-            await hass.async_add_executor_job(
-                ml_predictor.predict,
-                weather_data,
-                all_known_prices,
-                7,  # forecast_days
-                15,  # interval_minutes
-                known_data_end_time,
-            )
-            api_data["ml_predictions"] = ml_predictor.predictions
-            _LOGGER.info("Generated %d ML predictions", len(ml_predictor.predictions))
-
-            # Save learning data after prediction (includes stored predictions)
-            await ml_predictor.save_learning_data()
-
-        api_data["last_update"] = datetime.now()
-        _LOGGER.info("Initial data fetch completed successfully")
-
+        await updater.async_initial_fetch()
     except Exception as err:
         _LOGGER.error("Failed to initialize data: %s", err, exc_info=True)
         raise ConfigEntryNotReady from err
-
-    # Schedule updates
-    def read_stromligning_prices() -> None:
-        """Read today's and tomorrow's prices from Stromligning into api_data."""
-        _LOGGER.debug("Reading today's and tomorrow's prices")
-
-        if stromligning_sensor:
-            stromligning_data = sensor_reader.read_stromligning_sensor(
-                stromligning_sensor
-            )
-            _LOGGER.debug("Stromligning data (update): %s", stromligning_data)
-
-            # Read tomorrow sensor if configured
-            if stromligning_tomorrow_sensor:
-                tomorrow_data = sensor_reader.read_stromligning_tomorrow_sensor(
-                    stromligning_tomorrow_sensor
-                )
-                if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    stromligning_data["tomorrow"] = tomorrow_data["tomorrow"]
-                    stromligning_data["raw_tomorrow"] = tomorrow_data["raw_tomorrow"]
-                    _LOGGER.info(
-                        "Loaded %d tomorrow prices from Stromligning tomorrow sensor",
-                        len(tomorrow_data["tomorrow"]),
-                    )
-
-            if stromligning_data["today"]:
-                api_data["prices_today"] = stromligning_data["today"]
-                api_data["prices_tomorrow"] = stromligning_data["tomorrow"]
-                api_data["stromligning_data"] = stromligning_data
-                api_data["price_source"] = "stromligning"
-                _LOGGER.debug("Updated prices from Stromligning")
-
-        read_spot_prices()
-
-    async def refresh_forecast() -> None:
-        """Re-read the prices and re-run the forecast (the model retrains on new data)."""
-        read_stromligning_prices()
-        update_tomorrow_available()
-        api_data["last_update"] = datetime.now()
-
-        if ml_predictor:
-            # Read weather data
-            weather_data = {}
-            if any(
-                [
-                    wind_speed_sensor,
-                    wind_direction_sensor,
-                    solar_power_sensor,
-                    solar_forecast_sensor,
-                    temperature_sensor,
-                ]
-            ):
-                weather_data = sensor_reader.read_weather_sensors(
-                    api_data["sensor_config"]
-                )
-
-                if solar_forecast_sensor and "solcast" in solar_forecast_sensor.lower():
-                    solcast_data = sensor_reader.read_solcast_sensor(
-                        solar_forecast_sensor
-                    )
-                    weather_data["solcast_forecast"] = solcast_data
-
-            api_data["weather_data"] = weather_data
-
-            # Read hourly weather forecast for time-varying per-slot features
-            if wind_speed_sensor and wind_speed_sensor.startswith("weather."):
-                forecast = await async_read_weather_forecast(hass, wind_speed_sensor)
-                if forecast:
-                    weather_data["weather_forecast"] = forecast
-                    api_data["weather_data"] = weather_data
-
-            # Fetch Nordpool consumption and production prognoses
-            np_entries = await _fetch_nordpool_prognoses(
-                hass, region, weather_data, api_data
-            )
-            api_data["weather_data"] = weather_data
-            if np_entries and ml_predictor:
-                await hass.async_add_executor_job(
-                    ml_predictor.storage.insert_nordpool_prognoses_batch, np_entries
-                )
-
-            if weather_data:
-                # The model's prices: raw spot excl. VAT, today then tomorrow, and
-                # where they end (predictions start there)
-                all_known_prices, known_data_end_time = ml_price_inputs(
-                    api_data.get("spot_data")
-                )
-
-                await hass.async_add_executor_job(
-                    ml_predictor.predict,
-                    weather_data,
-                    all_known_prices,
-                    7,  # forecast_days
-                    15,  # interval_minutes
-                    known_data_end_time,
-                )
-                api_data["ml_predictions"] = ml_predictor.predictions
-
-                # Save learning data after prediction
-                await ml_predictor.save_learning_data()
-
-        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
-
-    def start_forecast_refresh() -> None:
-        """Refresh the forecast in the background once tomorrow is complete."""
-        entry.async_create_background_task(
-            hass, refresh_forecast(), "open_spot_forecast_tomorrow_prices"
-        )
-
-    async def check_tomorrow_prices() -> bool:
-        """Re-read the prices; refresh the forecast when tomorrow completes.
-
-        Called by TomorrowPriceChecker from 13:00 local until tomorrow's
-        prices are complete. Returns whether they are.
-        """
-        read_stromligning_prices()
-        api_data["last_update"] = datetime.now()
-        if update_tomorrow_available() and ml_predictor:
-            start_forecast_refresh()
-        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
-        return bool(api_data["tomorrow_available"])
-
-    async def update_forecasts(_now):
-        """Update ML forecasts (every 6 hours)."""
-        _LOGGER.info("6-hour forecast update triggered")
-
-        if ml_predictor:
-            # Read weather data
-            weather_data = {}
-            if any(
-                [
-                    wind_speed_sensor,
-                    wind_direction_sensor,
-                    solar_power_sensor,
-                    solar_forecast_sensor,
-                    temperature_sensor,
-                ]
-            ):
-                weather_data = sensor_reader.read_weather_sensors(
-                    api_data["sensor_config"]
-                )
-                _LOGGER.debug("Weather data for forecast update: %s", weather_data)
-
-                if solar_forecast_sensor and "solcast" in solar_forecast_sensor.lower():
-                    solcast_data = sensor_reader.read_solcast_sensor(
-                        solar_forecast_sensor
-                    )
-                    weather_data["solcast_forecast"] = solcast_data
-
-            # Read hourly weather forecast for time-varying per-slot features
-            if wind_speed_sensor and wind_speed_sensor.startswith("weather."):
-                forecast = await async_read_weather_forecast(hass, wind_speed_sensor)
-                if forecast:
-                    weather_data["weather_forecast"] = forecast
-                    api_data["weather_data"] = weather_data
-
-            # Fetch Nordpool consumption and production prognoses (cached)
-            np_entries = await _fetch_nordpool_prognoses(
-                hass, region, weather_data, api_data
-            )
-            api_data["weather_data"] = weather_data
-            if np_entries and ml_predictor:
-                await hass.async_add_executor_job(
-                    ml_predictor.storage.insert_nordpool_prognoses_batch, np_entries
-                )
-
-            if weather_data:
-                _LOGGER.info("Running ML predictions with updated weather data")
-
-                # The model's prices: raw spot excl. VAT, today then tomorrow, and
-                # where they end (predictions start there)
-                all_known_prices, known_data_end_time = ml_price_inputs(
-                    api_data.get("spot_data")
-                )
-
-                await hass.async_add_executor_job(
-                    ml_predictor.predict,
-                    weather_data,
-                    all_known_prices,
-                    7,  # forecast_days
-                    15,  # interval_minutes
-                    known_data_end_time,
-                )
-                api_data["ml_predictions"] = ml_predictor.predictions
-                _LOGGER.info(
-                    "Generated %d ML predictions", len(ml_predictor.predictions)
-                )
-
-                # Save learning data after prediction
-                await ml_predictor.save_learning_data()
-
-        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL_FORECAST))
-        _LOGGER.debug("6-hour forecast update completed")
-
-    async def new_day(_now):
-        """Handle new day - rotate tomorrow to today."""
-        _LOGGER.debug("New day - rotating prices")
-
-        # Try to read from Stromligning sensor first (priority 1)
-        if stromligning_sensor:
-            stromligning_data = sensor_reader.read_stromligning_sensor(
-                stromligning_sensor
-            )
-            if stromligning_data["tomorrow"]:
-                api_data["prices_today"] = stromligning_data["tomorrow"]
-                api_data["prices_tomorrow"] = []
-                api_data["stromligning_data"] = stromligning_data
-            else:
-                # No tomorrow data yet — clear it until the tomorrow-price check finds it
-                api_data["prices_tomorrow"] = []
-            api_data["tomorrow_available"] = False
-
-        # No price sensors configured
-        if not stromligning_sensor:
-            api_data["prices_tomorrow"] = []
-            api_data["tomorrow_available"] = False
-
-        read_spot_prices()
-
-        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
-
-    async def new_quarter(_now):
-        """Update every 15 minutes and perform self-learning."""
-        _LOGGER.info("15-minute update triggered for self-learning")
-
-        # Read the consumer prices (displayed; also the tomorrow check)
-        if stromligning_sensor:
-            stromligning_data = sensor_reader.read_stromligning_sensor(
-                stromligning_sensor
-            )
-            current_prices = stromligning_data["today"]
-            if current_prices:
-                api_data["prices_today"] = current_prices
-                api_data["price_source"] = "stromligning"
-
-            # Also check if tomorrow's prices are newly available
-            if stromligning_tomorrow_sensor:
-                tomorrow_data = sensor_reader.read_stromligning_tomorrow_sensor(
-                    stromligning_tomorrow_sensor
-                )
-                if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    api_data["prices_tomorrow"] = tomorrow_data["tomorrow"]
-
-            _LOGGER.debug(
-                "Read %d consumer prices from Stromligning", len(current_prices)
-            )
-
-        tomorrow_arrived = update_tomorrow_available()
-
-        # The model learns from the raw spot price, never the consumer price
-        read_spot_prices()
-        spot_today: list[float | None] = (api_data.get("spot_data") or {}).get(
-            "today", []
-        )
-
-        # --- Collect weather snapshot for historical training ---
-        if ml_predictor and wind_speed_sensor:
-            try:
-                # With its UTC offset, so training can match it to a slot
-                now_ts = dt_util.now().isoformat()
-                weather_now = sensor_reader.read_weather_sensors(
-                    api_data["sensor_config"]
-                )
-                await hass.async_add_executor_job(
-                    ml_predictor.storage.insert_weather_snapshot,
-                    now_ts,
-                    weather_now.get("temperature"),
-                    weather_now.get("wind_speed"),
-                    weather_now.get("wind_direction"),
-                    weather_now.get("cloud_coverage"),
-                    weather_now.get("humidity"),
-                    weather_now.get("solar_power"),
-                )
-                # Prune old weather every 100 snapshots
-                if ml_predictor.storage.count_weather_snapshots() % 100 == 0:
-                    ml_predictor.storage.delete_old_weather(30)
-            except Exception as err:
-                _LOGGER.debug("Failed to store weather snapshot: %s", err)
-
-        # --- Self-learning: compare past predictions with actual prices ---
-        if ml_predictor and spot_today:
-            try:
-                # Today's confirmed prices include the current slot, so match
-                # every stored prediction for it, whatever its lead time. The
-                # lookup date must be today's: it is paired with today's price.
-                slot_time = dt_util.now()
-
-                # Today's spot prices are one value per 15-minute slot from local
-                # midnight (the reader aligns them by timestamp), so the
-                # current slot's price is at its position on that grid
-                learn_dt = floor_to_slot(slot_time)
-                price_index = slot_index_in_day(slot_time)
-                actual_price = (
-                    spot_today[price_index] if price_index < len(spot_today) else None
-                )
-
-                # A missing slot (a gap in the source) is not learned from
-                if actual_price is not None:
-                    learn_timestamp = learn_dt.isoformat()
-
-                    _LOGGER.info(
-                        "Self-learning: looking up prediction for %s (index %d, price %.2f)",
-                        learn_timestamp,
-                        price_index,
-                        actual_price,
-                    )
-
-                    # Feed actual price to learning loop
-                    learning_did_update = await hass.async_add_executor_job(
-                        ml_predictor.learn_from_actual_price,
-                        learn_timestamp,
-                        actual_price,
-                    )
-
-                    if learning_did_update:
-                        _LOGGER.debug(
-                            "Self-learning: compared prediction for %s with actual price %.2f",
-                            learn_timestamp,
-                            actual_price,
-                        )
-                        # Only persist if learning actually found a match
-                        await ml_predictor.save_learning_data()
-            except Exception as err:
-                _LOGGER.error("Self-learning update error: %s", err, exc_info=True)
-
-        # Tomorrow's prices extend the training data: refresh the forecast now
-        # (the model retrains on them) instead of waiting for the next run
-        if tomorrow_arrived and ml_predictor:
-            start_forecast_refresh()
-
-        async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
-        _LOGGER.debug("15-minute update completed, sensors notified")
 
     # Schedule callbacks
     listeners = []
 
     # Tomorrow's prices: re-checked from 13:00 local until complete. The
     # checker reschedules itself, so unload cancels its pending check
-    tomorrow_checker = TomorrowPriceChecker(hass, check_tomorrow_prices)
+    tomorrow_checker = TomorrowPriceChecker(hass, updater.check_tomorrow_prices)
     tomorrow_checker.schedule(api_data["tomorrow_available"])
     listeners.append(tomorrow_checker.cancel)
 
@@ -767,15 +110,19 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if enable_ml:
         listeners.append(
             async_track_time_change(
-                hass, update_forecasts, hour="/6", minute=10, second=0
+                hass, updater.update_forecasts, hour="/6", minute=10, second=0
             )
         )
 
     # New day at midnight
-    listeners.append(async_track_time_change(hass, new_day, hour=0, minute=0, second=1))
+    listeners.append(
+        async_track_time_change(hass, updater.new_day, hour=0, minute=0, second=1)
+    )
 
     # Every 15 minutes
-    listeners.append(async_track_time_change(hass, new_quarter, minute="/15", second=1))
+    listeners.append(
+        async_track_time_change(hass, updater.new_quarter, minute="/15", second=1)
+    )
 
     api_data["listeners"] = listeners
 

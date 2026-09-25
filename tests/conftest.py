@@ -56,7 +56,10 @@ def setup_entry(
     with ExitStack() as stack:
         stack.enter_context(patch(f"{module}.async_get_integration", new=AsyncMock()))
         stack.enter_context(
-            patch(f"{module}._fetch_nordpool_prognoses", new=AsyncMock(return_value=[]))
+            patch(
+                f"{module}.updater.fetch_nordpool_prognoses",
+                new=AsyncMock(return_value=[]),
+            )
         )
         stack.enter_context(
             patch(f"{module}.async_track_time_change", side_effect=track_time_change)
@@ -64,7 +67,7 @@ def setup_entry(
         stack.enter_context(
             patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time")
         )
-        stack.enter_context(patch(f"{module}.async_dispatcher_send"))
+        stack.enter_context(patch(f"{module}.updater.async_dispatcher_send"))
 
         async def setup(reader: Any, ml_predictor: Any) -> tuple[dict, dict[str, Any]]:
             stack.enter_context(patch(f"{module}.SensorReader", return_value=reader))

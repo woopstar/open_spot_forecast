@@ -60,7 +60,7 @@ The agent MUST:
    Met.no weather, Solcast, inverter power, temperature). Only fall back to searching an
    upstream integration repo when an entity is not yet listed there.
 2. **If the entity already exists in OSF** (in `const.py`, `config_flow.py`, `sensor_reader.py`,
-   and `__init__.py`): re-use it — never hard-code the value.
+   and `updater.py`): re-use it — never hard-code the value.
 3. **If the entity is NOT yet wired into OSF**: add it through the full stack in this order:
    - `const.py` — add a `CONF_*` key (and a default entity-id string where sensible)
    - `config_flow.py` — add to the `sensors` step schema (and options flow `init` step)
@@ -68,7 +68,8 @@ The agent MUST:
      **both** `config.step.sensors` and `options.step.init`
    - `translations/da.json` — add the Danish translation, in sync with `en.json`
    - `sensor_reader.py` — add a `read_*` method on `SensorReader`
-   - `__init__.py` — read the value during the update cycle and pass it into `weather_data`
+   - `updater.py` — add it to `SensorEntities`, read the value in `ForecastUpdater._read_weather()`
+     and pass it into `weather_data`
 4. **Never use a fixed numeric constant** for a value that an entity reports. Always source it
    from the live entity.
 

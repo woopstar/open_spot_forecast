@@ -263,7 +263,11 @@ async def test_quarter_update_skips_a_missing_slot(
 def test_no_resolution_detection_by_list_length() -> None:
     """Hourly vs 15-minute is never guessed from a price list's length."""
     guess = re.compile(r"intervals_per_hour|len\(\w*prices\w*\)\s*>\s*2[45]")
-    sources = [INTEGRATION / "__init__.py", *sorted((INTEGRATION / "ml").glob("*.py"))]
+    sources = [
+        INTEGRATION / "__init__.py",
+        INTEGRATION / "updater.py",
+        *sorted((INTEGRATION / "ml").glob("*.py")),
+    ]
     offenders = [
         f"{path.name}:{number}"
         for path in sources
