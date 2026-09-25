@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .const import DOMAIN, UPDATE_SIGNAL
+from .price_series import known_prices
 from .time_slots import slots_in_local_day, tomorrow_prices_complete
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,7 +78,9 @@ class TomorrowAvailableSensor(BinarySensorEntity):
         """Return tomorrow's price count and the count a complete day needs."""
         tomorrow = dt_util.now().date() + timedelta(days=1)
         return {
-            "tomorrow_prices_count": len(self.api_data.get("prices_tomorrow", [])),
+            "tomorrow_prices_count": len(
+                known_prices(self.api_data.get("prices_tomorrow", []))
+            ),
             "tomorrow_slots_expected": slots_in_local_day(tomorrow),
         }
 

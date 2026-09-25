@@ -29,14 +29,14 @@ from custom_components.open_spot_forecast.price_series import is_invalid_price_s
         [0.0] * 96,
         [0] * 24,
         [1e-12, -1e-12, 0.0],
-        [1.2, None, 1.4],
+        [0.0, None, 0.0],
         [1.2, math.nan, 1.4],
         [1.2, math.inf, 1.4],
     ],
-    ids=["all-zero", "all-zero-int", "all-near-zero", "none", "nan", "inf"],
+    ids=["all-zero", "all-zero-int", "all-near-zero", "known-all-zero", "nan", "inf"],
 )
 def test_invalid_series(prices: list[float | None]) -> None:
-    """All-zero days and days with a missing or non-finite price are invalid."""
+    """All-zero days and days with a non-finite price are invalid."""
     assert is_invalid_price_series(prices) is True
 
 
@@ -44,15 +44,25 @@ def test_invalid_series(prices: list[float | None]) -> None:
     "prices",
     [
         [],
+        [None, None],
+        [1.2, None, 1.4],
         [1.2, 0.0, 1.4],
         [0.0] * 95 + [0.01],
         [-0.3, 0.0, 0.5],
         [-0.2] * 96,
     ],
-    ids=["empty", "some-zero", "one-non-zero", "negative-and-zero", "all-negative"],
+    ids=[
+        "empty",
+        "no-known-price",
+        "missing-slot",
+        "some-zero",
+        "one-non-zero",
+        "negative-and-zero",
+        "all-negative",
+    ],
 )
 def test_valid_series(prices: list[float]) -> None:
-    """Some zero or negative prices are normal; an empty series is no data."""
+    """Some zero or negative prices are normal; None is a missing slot."""
     assert is_invalid_price_series(prices) is False
 
 

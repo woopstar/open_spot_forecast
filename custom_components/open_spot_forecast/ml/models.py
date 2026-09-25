@@ -2,12 +2,14 @@
 
 import contextlib
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
 
 from homeassistant.util import dt as dt_util
 
+from ..price_series import known_prices
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 from .features import build_feature_vector
@@ -50,7 +52,7 @@ class ModelMixin(PredictorBase):
             return None
 
     def _train_models(
-        self, historical_prices: list[float], features: list[dict]
+        self, historical_prices: Sequence[float | None], features: list[dict]
     ) -> None:
         """Train ML models on historical data.
 
@@ -421,7 +423,7 @@ class ModelMixin(PredictorBase):
 
     def _generate_heuristic_predictions(
         self,
-        historical_prices: list[float],
+        historical_prices: Sequence[float | None],
         forecast_days: int,
         interval_minutes: int,
         known_data_end_time: datetime | None = None,
@@ -434,13 +436,15 @@ class ModelMixin(PredictorBase):
             "Generating heuristic predictions with %d historical prices",
             len(historical_prices),
         )
-        if not historical_prices:
+        # Slots missing in the source (None) carry no price
+        known = known_prices(historical_prices)
+        if not known:
             _LOGGER.warning("No historical prices for heuristic predictions")
             return
 
         # Use historical average with time-of-day adjustment
-        avg_price = float(np.mean(historical_prices))
-        hourly_pattern = self._extract_hourly_pattern(historical_prices)
+        avg_price = float(np.mean(known))
+        hourly_pattern = self._extract_hourly_pattern(known)
 
         _LOGGER.info(
             "Heuristic: avg_price=%.4f, hourly_pattern_length=%d",

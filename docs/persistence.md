@@ -13,13 +13,13 @@ All learning data is stored in a single SQLite database:
 | `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                           |
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                         |
 | `bias_correction`    | `hour` (0-95)               | Per-slot multiplicative correction factors                                                           |
-| `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays (96 values per day)                                                               |
+| `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays: one per 15-min slot from local midnight (92/96/100), `null` for a missing slot   |
 | `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                                        |
 | `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error |
 
-`price_history` never stores an invalid day (all zero, or with missing or
-non-finite values; see `is_invalid_price_series()` in `price_series.py`), and
+`price_history` never stores an invalid day (known prices all zero, or not
+all finite; see `is_invalid_price_series()` in `price_series.py`), and
 an invalid day never overwrites prices already stored for that date.
 
 `lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every

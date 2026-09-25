@@ -1,6 +1,7 @@
 """Feature engineering for the spot price predictor."""
 
 import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -8,6 +9,7 @@ import numpy as np
 
 from homeassistant.util import dt as dt_util
 
+from ..price_series import known_prices
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 
@@ -267,7 +269,7 @@ class FeatureMixin(PredictorBase):
         wind_features: dict,
         solar_features: dict,
         time_features: list[dict],
-        historical_prices: list[float],
+        historical_prices: Sequence[float | None],
         weather_data: dict,
     ) -> list[dict]:
         """Combine all features into a single feature set.
@@ -303,11 +305,12 @@ class FeatureMixin(PredictorBase):
                     hour_key = dt_str[:13] if len(dt_str) >= 13 else dt_str
                     forecast_by_hour[hour_key] = entry
 
+        known = known_prices(historical_prices)
         price_stats = {
-            "price_mean": float(np.mean(historical_prices)) if historical_prices else 0,
-            "price_std": float(np.std(historical_prices)) if historical_prices else 0,
-            "price_min": float(np.min(historical_prices)) if historical_prices else 0,
-            "price_max": float(np.max(historical_prices)) if historical_prices else 0,
+            "price_mean": float(np.mean(known)) if known else 0,
+            "price_std": float(np.std(known)) if known else 0,
+            "price_min": float(np.min(known)) if known else 0,
+            "price_max": float(np.max(known)) if known else 0,
         }
 
         default_temp = weather_data.get("temperature") or 15.0

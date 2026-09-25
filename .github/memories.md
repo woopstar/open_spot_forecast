@@ -22,24 +22,25 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `accuracy_sensor.py` | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                          |
 | `binary_sensor.py`   | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                 |
 | `sensor_reader.py`   | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)               |
-| `price_series.py`    | `is_invalid_price_series()` — rejects all-zero days and days with missing/non-finite prices       |
+| `price_series.py`    | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`     |
 | `time_slots.py`      | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML    |
 | `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete |
 | `__init__.py`        | Setup, update cycle (15-min / 6-hour / tomorrow poll / midnight), ML wiring                       |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File                  | Responsibility                                                                                                     |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `LeadTimeMixin` + `RetrainMixin` |
-| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                        |
-| `models.py`           | `ModelMixin` — training + prediction                                                                               |
-| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                    |
-| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                   |
-| `storage.py`          | `LearningStorage` — SQLite persistence                                                                             |
-| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                          |
-| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                   |
-| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                |
+| File                  | Responsibility                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `predictor.py`        | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
+| `features.py`         | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
+| `models.py`           | `ModelMixin` — training + prediction                                                                                                |
+| `learning.py`         | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
+| `catch_up.py`         | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
+| `numpy_models.py`     | `NumpyGradientBoosting`, `NumpyRandomForest` — pure NumPy models                                                                    |
+| `storage.py`          | `LearningStorage` — SQLite persistence                                                                                              |
+| `accuracy_storage.py` | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
+| `retraining.py`       | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
+| `lead_time.py`        | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -64,14 +65,18 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 `read_stromligning_sensor`, `read_stromligning_tomorrow_sensor`, `read_weather_sensors`,
 `read_solcast_sensor`, `read_met_weather`.
 
-Price days are validated with `is_invalid_price_series()` (`price_series.py`): the
-Stromligning readers drop an all-zero day or one with missing values, and
-`store_daily_prices` / `predict` refuse one. Never add an inline "all prices are 0" check.
+A day's prices are one value per 15-min slot from local midnight (92/96/100), `None` for a
+slot missing in the source: the readers place items by their own timestamps with
+`align_to_grid()` (`price_series.py`; hourly expanded, gaps up to 4 slots filled). Use
+`known_prices()` before min/max/mean and skip `None` slots in training and learning; never
+guess the resolution from a list's length. `is_invalid_price_series()` rejects a day whose known
+prices are all zero or not finite; the readers drop it and `store_daily_prices` / `predict`
+refuse it. Never add an inline "all prices are 0" check.
 
 ### ML predictor
 
 `SpotPricePredictor` in `ml/predictor.py` is the single ML predictor. It composes
-`FeatureMixin`, `ModelMixin`, `LearningMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
+`FeatureMixin`, `ModelMixin`, `LearningMixin`, `CatchUpMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
 feature extraction, model training, or self-learning outside `ml/`.
 
 ### Retraining
@@ -185,15 +190,15 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                  | Content                                          |
-| -------------------- | -------------------- | ------------------------------------------------ |
-| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison          |
-| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                            |
-| `bias_correction`    | `hour` (0-95)        | Per-slot correction factors                      |
-| `price_history`      | `date` (YYYY-MM-DD)  | Daily price arrays (96 values/day)               |
-| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                         |
-| `meta`               | `key`                | Training state, schema version                   |
-| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days) |
+| Table                | Key                  | Content                                           |
+| -------------------- | -------------------- | ------------------------------------------------- |
+| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison           |
+| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                             |
+| `bias_correction`    | `hour` (0-95)        | Per-slot correction factors                       |
+| `price_history`      | `date` (YYYY-MM-DD)  | Daily price arrays (92/96/100 slots, `null` gaps) |
+| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                          |
+| `meta`               | `key`                | Training state, schema version                    |
+| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days)  |
 
 Migrations are versioned in `meta.schema_version` and run once at startup. The legacy JSON
 format (`open_spot_forecast_DK1_learning.json`) is auto-migrated on first startup.

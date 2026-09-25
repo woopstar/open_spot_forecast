@@ -155,15 +155,41 @@ def read_stromligning_sensor(self, entity_id: str) -> dict:
     return result
 ```
 
+### Price Grid
+
+The reader places each day's prices on that local day's 15-minute grid:
+one value per slot from local midnight, 96 slots or 92/100 on a DST-change
+day (`align_to_grid()` in `price_series.py`). Prices are placed by the
+source's own timestamps, never by their position in the list:
+
+- Each price item fills the slots from its `start` (or `timestamp`/`time`)
+  to its `end`. Without an `end` it lasts the series' resolution, the
+  smallest gap between consecutive starts: 15 minutes, or 60 for hourly
+  prices, which are expanded to four slots.
+- A gap of up to 4 slots between two known prices takes the earlier price.
+  Longer gaps, and slots before the first or after the last known price
+  (e.g. a partial publication), stay missing (`null` in `today_prices`).
+  Missing slots are shown as missing, skipped by the min/max/mean sensors,
+  and excluded from training and self-learning.
+- Items dated outside today or tomorrow are ignored, also on the tomorrow
+  sensor.
+- A `today`/`tomorrow` attribute list has no timestamps, so it is used only
+  when it is exactly one local day long: a price per 15-minute slot or per
+  hour.
+- If the sensor only reports its current price (e.g. around midnight), that
+  price fills the current slot.
+
 ### Invalid Price Data
 
 A price source that is failing (for example right after a Home Assistant
 restart, or during an API hiccup) often reports 0 for every slot. The reader
 checks each day's prices with `is_invalid_price_series()` (`price_series.py`)
-and drops a day that is:
+and drops a day whose known prices are:
 
 - all zero, or
-- missing a value (`None`) or containing a non-finite value (NaN, inf).
+- not all finite (NaN, inf).
+
+A missing slot does not make a day invalid (see [Price Grid](#price-grid)).
 
 A dropped day reads as "no data": Open Spot Forecast keeps its previous
 prices for that day, and nothing is stored, trained on or learned from.

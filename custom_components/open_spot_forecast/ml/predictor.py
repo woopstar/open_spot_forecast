@@ -2,6 +2,7 @@
 
 import logging
 import threading
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -10,7 +11,8 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..price_series import is_invalid_price_series
+from ..price_series import is_invalid_price_series, known_prices
+from .catch_up import CatchUpMixin
 from .features import FeatureMixin
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
@@ -23,7 +25,7 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SpotPricePredictor(
-    FeatureMixin, ModelMixin, LearningMixin, LeadTimeMixin, RetrainMixin
+    FeatureMixin, ModelMixin, LearningMixin, CatchUpMixin, LeadTimeMixin, RetrainMixin
 ):
     """ML-based spot price predictor using weather and historical price data."""
 
@@ -87,7 +89,7 @@ class SpotPricePredictor(
     def predict(
         self,
         weather_data: dict,
-        historical_prices: list[float],
+        historical_prices: Sequence[float | None],
         forecast_days: int = 7,
         interval_minutes: int = 15,
         known_data_end_time: datetime | None = None,
@@ -116,7 +118,7 @@ class SpotPricePredictor(
     def _predict(
         self,
         weather_data: dict,
-        historical_prices: list[float],
+        historical_prices: Sequence[float | None],
         forecast_days: int,
         interval_minutes: int,
         known_data_end_time: datetime | None,
@@ -129,8 +131,8 @@ class SpotPricePredictor(
                 forecast_days,
             )
 
-            # Validate input data
-            if not historical_prices:
+            # Validate input data (None marks a slot missing in the source)
+            if not known_prices(historical_prices):
                 _LOGGER.warning(
                     "No historical prices provided, cannot generate predictions"
                 )
@@ -138,11 +140,11 @@ class SpotPricePredictor(
                 self.confidence_scores = []
                 return
 
-            # All-zero or incomplete prices come from a failing source: don't
+            # All-zero or non-finite prices come from a failing source: don't
             # store, train or predict on them, keep the previous predictions
             if is_invalid_price_series(historical_prices):
                 _LOGGER.warning(
-                    "Known prices are all zero or have missing values, "
+                    "Known prices are all zero or not finite, "
                     "keeping the previous predictions"
                 )
                 return
@@ -201,7 +203,7 @@ class SpotPricePredictor(
             )
 
             # Retrain only if the model is missing or its inputs changed
-            if len(historical_prices) > 24:
+            if len(known_prices(historical_prices)) > 24:
                 self.record_training_prices(historical_prices)
                 if self.needs_retraining():
                     _LOGGER.info(

@@ -2,13 +2,24 @@
 
 import contextlib
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .price_series import is_invalid_price_series
+from .price_series import (
+    PriceSample,
+    align_to_grid,
+    is_invalid_price_series,
+    known_prices,
+)
+from .time_slots import (
+    SLOT_MINUTES,
+    floor_to_slot,
+    slot_start_in_day,
+    slots_in_local_day,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -20,6 +31,68 @@ def _item_price(item: dict) -> Any:
     """
     price = item.get("price")
     return item.get("value") if price is None else price
+
+
+def _parse_time(value: Any) -> datetime | None:
+    """Parse an ISO string or datetime as local time (naive = local)."""
+    if isinstance(value, str):
+        parsed = dt_util.parse_datetime(value)
+    elif isinstance(value, datetime):
+        parsed = value
+    else:
+        return None
+    return dt_util.as_local(parsed) if parsed is not None else None
+
+
+def _item_sample(item: Any) -> PriceSample | None:
+    """Return a price item's ``(start, end, price)``, or None if unusable.
+
+    The start is the item's own ``timestamp``/``time``/``start``; ``end`` is
+    optional. The item's position in the list is never used.
+    """
+    if not isinstance(item, dict):
+        return None
+    price = _item_price(item)
+    start = _parse_time(item.get("timestamp") or item.get("time") or item.get("start"))
+    if price is None or start is None:
+        return None
+    try:
+        value = float(price)
+    except ValueError, TypeError:
+        _LOGGER.debug("Ignoring price item with a non-numeric price: %s", item)
+        return None
+    return start, _parse_time(item.get("end")), value
+
+
+def _positional_day(values: Any, day: date) -> list[float | None]:
+    """Place a list of prices without timestamps onto ``day``'s grid.
+
+    Such a list has positions only, so it is used only when it is exactly one
+    local day long: a price per 15-minute slot (92/96/100) or per hour
+    (23/24/25, each expanded to four slots). Anything else reads as no data.
+    """
+    if not isinstance(values, list):
+        return []
+    minutes = next(
+        (m for m in (SLOT_MINUTES, 60) if len(values) == slots_in_local_day(day, m)),
+        None,
+    )
+    if minutes is None:
+        _LOGGER.debug(
+            "Cannot place %d prices without timestamps on %s", len(values), day
+        )
+        return []
+    samples: list[PriceSample] = []
+    for index, value in enumerate(values):
+        with contextlib.suppress(ValueError, TypeError):
+            samples.append(
+                (
+                    slot_start_in_day(day, index, interval_minutes=minutes),
+                    slot_start_in_day(day, index + 1, interval_minutes=minutes),
+                    float(value),
+                )
+            )
+    return align_to_grid(samples, day)
 
 
 class SensorReader:
@@ -150,86 +223,53 @@ class SensorReader:
                 _LOGGER.debug("Found prices in attribute: %s", attr_name)
                 break
 
+        # Each day is one value per 15-minute slot from local midnight (see
+        # price_series.align_to_grid), placed by the items' own timestamps
+        today = dt_util.now().date()
+        days = {"today": today, "tomorrow": today + timedelta(days=1)}
+
         if prices_attr and isinstance(prices_attr, list):
-            # Parse the price array
-            local_now = dt_util.as_local(dt_util.utcnow())
-            today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-            tomorrow_start = today_start + timedelta(days=1)
-
+            samples: list[tuple[PriceSample, dict]] = []
             for item in prices_attr:
-                if isinstance(item, dict):
-                    price = _item_price(item)
-                    timestamp = (
-                        item.get("timestamp") or item.get("time") or item.get("start")
-                    )
-
-                    if price is not None and timestamp is not None:
-                        try:
-                            # Parse and normalize to local time for comparison
-                            if isinstance(timestamp, str):
-                                dt = dt_util.parse_datetime(timestamp)
-                            elif isinstance(timestamp, datetime):
-                                dt = timestamp
-                            else:
-                                dt = None
-
-                            if dt is None:
-                                continue
-                            dt_local = dt_util.as_local(dt)
-
-                            price_val = float(price)
-
-                            # Categorize as today or tomorrow
-                            if today_start <= dt_local < tomorrow_start:
-                                result["today"].append(price_val)
-                                result["raw_today"].append(item)
-                            elif dt_local >= tomorrow_start:
-                                result["tomorrow"].append(price_val)
-                                result["raw_tomorrow"].append(item)
-
-                            result["prices_15min"].append(item)
-                        except (ValueError, TypeError) as e:
-                            _LOGGER.debug("Error parsing price item: %s", e)
-
-        # Try today/tomorrow attributes
-        if not result["today"] and "today" in state.attributes:
-            today_data = state.attributes["today"]
-            if isinstance(today_data, list):
-                # Keep None: a missing slot invalidates the day rather than
-                # silently shifting every later slot
-                result["today"] = [None if p is None else float(p) for p in today_data]
-                _LOGGER.debug("Found today prices in 'today' attribute")
-
-        if not result["tomorrow"] and "tomorrow" in state.attributes:
-            tomorrow_data = state.attributes["tomorrow"]
-            if isinstance(tomorrow_data, list):
-                # Keep None: a missing slot invalidates the day rather than
-                # silently shifting every later slot
-                result["tomorrow"] = [
-                    None if p is None else float(p) for p in tomorrow_data
+                sample = _item_sample(item)
+                if sample is not None:
+                    samples.append((sample, item))
+                    result["prices_15min"].append(item)
+            for key, day in days.items():
+                result[key] = align_to_grid([sample for sample, _ in samples], day)
+                result[f"raw_{key}"] = [
+                    item for (start, _, _), item in samples if start.date() == day
                 ]
-                _LOGGER.debug("Found tomorrow prices in 'tomorrow' attribute")
 
-        # If we still have no prices but have current price, use it as fallback.
-        # This is expected during the midnight rollover when the sensor clears
-        # its price arrays but still reports a current price, so log at debug.
+        # Try today/tomorrow attributes (prices without timestamps)
+        for key, day in days.items():
+            if not result[key] and key in state.attributes:
+                result[key] = _positional_day(state.attributes[key], day)
+                _LOGGER.debug("Found %s prices in '%s' attribute", key, key)
+
+        # If we still have no prices but have current price, use it as fallback
+        # for the current slot. This is expected during the midnight rollover
+        # when the sensor clears its price arrays but still reports a current
+        # price, so log at debug.
         if not result["today"] and result["current_price"] is not None:
             _LOGGER.debug(
                 "Stromligning sensor has current price but no price arrays. "
-                "Using current price as fallback for today."
+                "Using current price as fallback for the current slot."
             )
-            result["today"] = [result["current_price"]]
+            result["today"] = align_to_grid(
+                [(floor_to_slot(dt_util.now()), None, result["current_price"])], today
+            )
 
-        for day in ("today", "tomorrow"):
-            self._reject_invalid_day(result, day, entity_id)
+        for key in days:
+            self._reject_invalid_day(result, key, entity_id)
 
         _LOGGER.info(
             "Read Stromligning sensor %s: current=%.4f kr/kWh, "
-            "today=%d intervals, tomorrow=%d intervals",
+            "today=%d prices, tomorrow=%d prices",
             entity_id,
             result["current_price"] or 0,
-            len(result["today"]),
-            len(result["tomorrow"]),
+            len(known_prices(result["today"])),
+            len(known_prices(result["tomorrow"])),
         )
 
         return result
@@ -268,27 +308,24 @@ class SensorReader:
             _LOGGER.debug("Stromligning tomorrow sensor has no prices attribute")
             return result
 
-        for item in prices_attr:
-            if isinstance(item, dict):
-                price = _item_price(item)
-                timestamp = (
-                    item.get("timestamp") or item.get("time") or item.get("start")
-                )
-
-                if price is not None and timestamp is not None:
-                    try:
-                        price_val = float(price)
-                        result["tomorrow"].append(price_val)
-                        result["raw_tomorrow"].append(item)
-                    except (ValueError, TypeError) as e:
-                        _LOGGER.debug("Error parsing tomorrow price item: %s", e)
+        # Only items that start on tomorrow's local date count as tomorrow's
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        samples = [
+            (sample, item)
+            for item in prices_attr
+            if (sample := _item_sample(item)) is not None
+        ]
+        result["tomorrow"] = align_to_grid([sample for sample, _ in samples], tomorrow)
+        result["raw_tomorrow"] = [
+            item for (start, _, _), item in samples if start.date() == tomorrow
+        ]
 
         self._reject_invalid_day(result, "tomorrow", entity_id)
 
         _LOGGER.info(
-            "Read Stromligning tomorrow sensor %s: %d intervals",
+            "Read Stromligning tomorrow sensor %s: %d prices",
             entity_id,
-            len(result["tomorrow"]),
+            len(known_prices(result["tomorrow"])),
         )
 
         return result

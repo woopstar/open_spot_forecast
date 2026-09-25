@@ -1,17 +1,19 @@
 """Tests for the SensorReader module."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.open_spot_forecast.price_series import known_prices
 from custom_components.open_spot_forecast.sensor_reader import (
     SensorReader,
     async_read_weather_forecast,
 )
+from custom_components.open_spot_forecast.time_slots import slot_index_in_day
 
 
 def _state(value: str, attributes: dict | None = None) -> MagicMock:
@@ -111,28 +113,31 @@ class TestReadStromligningSensor:
         assert result["today"] == []
 
     def test_prices_attribute_full_parse(self):
-        """A full prices array is parsed and categorized into today/tomorrow."""
-        now = datetime.now()
-        today_iso = now.isoformat()
-        tomorrow_iso = (now + timedelta(days=1)).isoformat()
-        aware_iso = now.replace(microsecond=0).astimezone().isoformat()
-        aware_dt = now.astimezone()
+        """Items land on today's/tomorrow's 15-minute grid by their own timestamps."""
+        start = dt_util.start_of_local_day()
+        tomorrow = start + timedelta(days=1)
         items = [
-            {"price": 1.23, "timestamp": today_iso},
-            {"value": 2.34, "time": tomorrow_iso},
-            {"price": 3.45, "start": aware_iso},
-            {"price": 4.56, "timestamp": now},
-            {"price": 5.67, "timestamp": aware_dt},
-            {"price": "bad", "timestamp": today_iso},
+            {"price": 1.23, "timestamp": start.isoformat()},
+            {"price": 3.45, "start": (start + timedelta(minutes=15)).isoformat()},
+            {
+                "price": 4.56,
+                "timestamp": (start + timedelta(minutes=30)).replace(tzinfo=None),
+            },
+            {"price": 5.67, "timestamp": start + timedelta(minutes=45)},
+            {"value": 2.34, "time": tomorrow.isoformat()},
+            {"price": "bad", "timestamp": start.isoformat()},
             {},
         ]
         reader = _make_reader({"sensor.strom": _state("9.99", {"prices": items})})
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["current_price"] == 9.99
-        assert result["today"] == [1.23, 3.45, 4.56, 5.67]
-        assert result["tomorrow"] == [2.34]
+        assert result["current_price"] == pytest.approx(9.99)
+        assert len(result["today"]) == 96
+        assert result["today"][:4] == pytest.approx([1.23, 3.45, 4.56, 5.67])
+        assert result["today"][4:] == [None] * 92
+        assert result["tomorrow"][0] == pytest.approx(2.34)
+        assert known_prices(result["tomorrow"]) == pytest.approx([2.34])
         assert len(result["raw_today"]) == 4
         assert len(result["raw_tomorrow"]) == 1
         assert len(result["prices_15min"]) == 5
@@ -142,7 +147,7 @@ class TestReadStromligningSensor:
     )
     def test_price_array_attribute_names(self, attr_name):
         """Every supported price-array attribute name is recognised."""
-        now = datetime.now()
+        now = dt_util.now()
         reader = _make_reader(
             {
                 "sensor.strom": _state(
@@ -153,48 +158,68 @@ class TestReadStromligningSensor:
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["today"] == [1.0]
+        assert result["today"][slot_index_in_day(now)] == pytest.approx(1.0)
+        assert known_prices(result["today"]) == pytest.approx([1.0])
 
     def test_today_tomorrow_attributes(self):
-        """The 'today'/'tomorrow' attribute lists are used as a fallback."""
+        """Full-day 'today'/'tomorrow' lists are placed by position; hourly expands."""
+        today = [float(i) for i in range(96)]
+        hourly = [float(h) for h in range(24)]
         reader = _make_reader(
-            {
-                "sensor.strom": _state(
-                    "3.0",
-                    {"today": [1.0, 2.0], "tomorrow": [4.0, 5.0]},
-                )
-            }
+            {"sensor.strom": _state("3.0", {"today": today, "tomorrow": hourly})}
         )
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["today"] == [1.0, 2.0]
-        assert result["tomorrow"] == [4.0, 5.0]
+        assert result["today"] == pytest.approx(today)
+        assert result["tomorrow"] == pytest.approx(
+            [h for h in hourly for _ in range(4)]
+        )
 
     def test_prices_not_a_list_falls_back(self):
-        """A non-list prices attribute falls back to today/tomorrow lists."""
+        """A non-list prices attribute falls back to the today/tomorrow lists."""
         reader = _make_reader(
             {
                 "sensor.strom": _state(
                     "5.0",
-                    {"prices": "not-a-list", "today": [1.0], "tomorrow": [2.0]},
+                    {
+                        "prices": "not-a-list",
+                        "today": [1.0] * 96,
+                        "tomorrow": [2.0] * 24,
+                    },
                 )
             }
         )
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["today"] == [1.0]
-        assert result["tomorrow"] == [2.0]
+        assert result["today"] == pytest.approx([1.0] * 96)
+        assert result["tomorrow"] == pytest.approx([2.0] * 96)
+
+    def test_list_without_timestamps_must_cover_one_day(self):
+        """A 'today' list that is not exactly one day long can't be placed."""
+        reader = _make_reader(
+            {
+                "sensor.strom": _state(
+                    "abc", {"today": [1.0, 2.0], "tomorrow": [2.0] * 50}
+                )
+            }
+        )
+
+        result = reader.read_stromligning_sensor("sensor.strom")
+
+        assert result["today"] == []
+        assert result["tomorrow"] == []
 
     def test_midnight_rollover_fallback(self):
-        """Current price is used as today's fallback when no arrays exist."""
+        """Without arrays, the current price fills the current slot of today."""
         reader = _make_reader({"sensor.strom": _state("6.0", {})})
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["current_price"] == 6.0
-        assert result["today"] == [6.0]
+        assert result["current_price"] == pytest.approx(6.0)
+        assert result["today"][slot_index_in_day(dt_util.now())] == pytest.approx(6.0)
+        assert known_prices(result["today"]) == pytest.approx([6.0])
 
 
 class TestReadStromligningTomorrowSensor:
@@ -233,17 +258,14 @@ class TestReadStromligningTomorrowSensor:
         assert result["tomorrow"] == []
 
     def test_prices_parsed(self):
-        """Prices are parsed into tomorrow and raw_tomorrow."""
-        now = datetime.now()
-        aware_iso = now.astimezone().isoformat()
-        aware_dt = now.astimezone()
+        """Only items that start on tomorrow's local date are tomorrow's prices."""
+        tomorrow = dt_util.start_of_local_day() + timedelta(days=1)
         items = [
-            {"price": 1.0, "timestamp": (now + timedelta(days=1)).isoformat()},
-            {"value": 2.0, "time": now.isoformat()},
-            {"price": 3.0, "start": now},
-            {"price": 4.0, "timestamp": aware_iso},
-            {"price": 5.0, "timestamp": aware_dt},
-            {"price": "bad", "timestamp": now.isoformat()},
+            {"price": 1.0, "timestamp": tomorrow.isoformat()},
+            {"value": 2.0, "time": (tomorrow + timedelta(minutes=15)).isoformat()},
+            {"price": 3.0, "start": tomorrow + timedelta(minutes=30)},
+            {"price": 9.0, "timestamp": dt_util.now().isoformat()},  # today: ignored
+            {"price": "bad", "timestamp": tomorrow.isoformat()},
             {},
         ]
         reader = _make_reader({"sensor.tomorrow": _state("on", {"prices": items})})
@@ -251,8 +273,9 @@ class TestReadStromligningTomorrowSensor:
         result = reader.read_stromligning_tomorrow_sensor("sensor.tomorrow")
 
         assert result["available"] is True
-        assert result["tomorrow"] == [1.0, 2.0, 3.0, 4.0, 5.0]
-        assert len(result["raw_tomorrow"]) == 5
+        assert result["tomorrow"][:3] == pytest.approx([1.0, 2.0, 3.0])
+        assert known_prices(result["tomorrow"]) == pytest.approx([1.0, 2.0, 3.0])
+        assert len(result["raw_tomorrow"]) == 3
 
 
 def _day_items(prices: list[float], day_offset: int = 0) -> list[dict]:
@@ -289,7 +312,7 @@ class TestRejectInvalidPriceDays:
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["today"] == pytest.approx(prices)
+        assert result["today"][:4] == pytest.approx(prices)
         assert len(result["raw_today"]) == 4
 
     def test_rejection_warns_once_per_streak(self, caplog):
@@ -310,15 +333,16 @@ class TestRejectInvalidPriceDays:
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert len(warnings) == 2
 
-    def test_missing_value_in_today_attribute_rejects_the_day(self):
-        """A None slot invalidates the day instead of shifting later slots."""
-        reader = _make_reader(
-            {"sensor.strom": _state("3.0", {"today": [1.0, None, 2.0]})}
-        )
+    def test_missing_value_in_today_attribute_is_a_gap(self):
+        """A None slot is a gap on the grid: filled if short, never shifting."""
+        today = [float(i) for i in range(96)]
+        today[10] = None
+        reader = _make_reader({"sensor.strom": _state("3.0", {"today": today})})
 
         result = reader.read_stromligning_sensor("sensor.strom")
 
-        assert result["today"] == []
+        assert result["today"][9:12] == pytest.approx([9.0, 9.0, 11.0])
+        assert result["today"][50] == pytest.approx(50.0)
 
     def test_zero_current_price_fallback_is_rejected(self):
         """The current-price fallback is rejected when that price is 0."""

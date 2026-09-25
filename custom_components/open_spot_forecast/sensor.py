@@ -34,6 +34,7 @@ from .const import (
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .price_series import known_prices
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -223,7 +224,7 @@ class TodayMinSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("today"):
-            prices = stromligning_data["today"]
+            prices = known_prices(stromligning_data["today"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
@@ -277,7 +278,7 @@ class TodayMaxSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("today"):
-            prices = stromligning_data["today"]
+            prices = known_prices(stromligning_data["today"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
@@ -331,7 +332,7 @@ class TodayMeanSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("today"):
-            prices = stromligning_data["today"]
+            prices = known_prices(stromligning_data["today"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)
@@ -385,7 +386,7 @@ class TomorrowMinSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = stromligning_data["tomorrow"]
+            prices = known_prices(stromligning_data["tomorrow"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 min_price = min(prices)
@@ -439,7 +440,7 @@ class TomorrowMaxSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = stromligning_data["tomorrow"]
+            prices = known_prices(stromligning_data["tomorrow"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 max_price = max(prices)
@@ -493,7 +494,7 @@ class TomorrowMeanSensor(SensorEntity):
         # Try Stromligning first (priority)
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = stromligning_data["tomorrow"]
+            prices = known_prices(stromligning_data["tomorrow"])
             if prices:
                 # Stromligning prices already include VAT and tariffs
                 mean_price = sum(prices) / len(prices)

@@ -10,6 +10,7 @@ mixins inherit a consistent, fully-typed ``self``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, tzinfo
 from typing import Any
 
@@ -52,7 +53,9 @@ class PredictorBase:
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
-    def store_daily_prices(self, prices: list[float], date: str | None = None) -> bool:
+    def store_daily_prices(
+        self, prices: Sequence[float | None], date: str | None = None
+    ) -> bool:
         raise NotImplementedError
 
     def get_all_historical_prices(self) -> tuple[list[float], list[dict]]:
@@ -69,6 +72,9 @@ class PredictorBase:
     ) -> None:
         raise NotImplementedError
 
+    def catch_up_learning(self) -> int:
+        raise NotImplementedError
+
     def _update_bias_correction(self, slot: int) -> None:
         raise NotImplementedError
 
@@ -78,7 +84,7 @@ class PredictorBase:
         raise NotImplementedError
 
     def _train_models(
-        self, historical_prices: list[float], features: list[dict]
+        self, historical_prices: Sequence[float | None], features: list[dict]
     ) -> None:
         raise NotImplementedError
 
