@@ -135,12 +135,16 @@ inline a feature list. Adding/removing a feature is a model change — see the
 ### Bias Correction Formula
 
 ```python
-bias_ratio = 1.0 - (mean_error / mean_actual_price)
-correction[slot] = 0.9 * old_correction + 0.1 * bias_ratio
+raw_bias = offset[slot] + mean_error      # mean_error = mean(predicted - actual)
+offset[slot] = 0.9 * offset[slot] + 0.1 * raw_bias
+corrected_price = raw_price - offset[slot]
 ```
 
-This EMA is the canonical self-learning update. Never invent a different
-correction scheme.
+This additive EMA (#15) is the canonical self-learning update. `mean_error` is
+measured on stored predictions, which already had the offset subtracted, so
+`offset + mean_error` is the raw model's bias. It works for negative prices and
+never divides by a price. Never invent a different correction scheme, and never
+clamp predictions at 0.
 
 ### Solar Scaling Factor
 

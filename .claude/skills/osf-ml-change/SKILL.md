@@ -21,7 +21,7 @@ Every ML change must satisfy ALL of these invariants:
 
 - [ ] **Feature vector** — 17 canonical features; any add/remove is a model change
 - [ ] **Slot granularity** — 96 slots (15-min), never assume hourly (0-23)
-- [ ] **Bias correction** — EMA formula `0.9 * old + 0.1 * bias_ratio`; never invent a new scheme
+- [ ] **Bias correction** — additive offset, `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset`; never invent a new scheme, never clamp at 0
 - [ ] **Solar scaling** — EMA of `actual_power / solcast_estimate`; learned and persisted, not a price-model input (#17)
 - [ ] **Feature consistency** — training and prediction rows both come from `build_feature_row()`; unknown inputs are NaN
 - [ ] **Confidence score** — heuristic (< 5 samples) → learned (≥ 5 samples); floor respected

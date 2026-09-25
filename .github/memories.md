@@ -163,15 +163,19 @@ never round with `dt.replace(minute=...)` or add minutes to a local datetime inl
 
 ## Bias Correction Formula
 
-Each 15-minute slot has a multiplicative correction factor learned via EMA:
+Each 15-minute slot has an additive offset (currency/kWh) learned via EMA (#15):
 
 ```
-bias_ratio = 1.0 - (mean_error / mean_actual_price)
-correction[slot] = 0.9 * old_correction + 0.1 * bias_ratio
+raw_bias = offset[slot] + mean_error      # mean_error = mean(predicted - actual)
+offset[slot] = 0.9 * offset[slot] + 0.1 * raw_bias
+corrected_price = raw_price - offset[slot]
 ```
 
-`correction > 1.0` → model underpredicts → multiply up. `correction < 1.0` → model
-overpredicts → multiply down. Never invent a different correction scheme.
+`offset > 0` → model overpredicts → subtract. `offset < 0` → model underpredicts → add.
+`mean_error` comes from stored (already corrected) predictions, so `offset + mean_error` is
+the raw model's bias; an EMA of `mean_error` alone would settle at half the bias. The first
+update sets the offset to `mean_error`. Prices can be negative: never clamp predictions at
+0 and never divide by a price. Never invent a different correction scheme.
 
 ## Solar Scaling Factor
 
@@ -188,7 +192,7 @@ Updated every prediction run and persisted, but not applied to the price model s
 
 - **Phase 1 — Heuristic** (< 5 samples): `base = 0.80 - wind_penalty - solar_penalty -
 weekend - days_ahead`, floor `0.30`.
-- **Phase 2 — Learned** (≥ 5 samples): `confidence = max(0.10, 1.0 - (MAE / mean_actual))`
+- **Phase 2 — Learned** (≥ 5 samples): `confidence = max(0.10, 1.0 - (MAE / mean(|actual|)))`
   minus forecast temperature/wind error penalties (max `-0.15` each).
 
 ## Storage Schema
@@ -199,7 +203,7 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 | -------------------- | -------------------- | ------------------------------------------------- |
 | `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison           |
 | `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                             |
-| `bias_correction`    | `hour` (0-95)        | Per-slot correction factors                       |
+| `bias_correction`    | `hour` (0-95)        | Per-slot additive bias offsets (schema v5)        |
 | `price_history`      | `date` (YYYY-MM-DD)  | Daily price arrays (92/96/100 slots, `null` gaps) |
 | `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                          |
 | `meta`               | `key`                | Training state, schema version                    |

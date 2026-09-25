@@ -259,6 +259,13 @@ Hyperparameter optimization compares its candidates on the same chronological
 80/20 split, then replaces `price_model` with an unfitted model using the best
 parameters, which the next training fits on all rows.
 
+## Negative Prices
+
+DK1 and DK2 regularly clear below zero on windy or sunny days. Nothing in the
+pipeline clamps a price at 0 (#15): the model's output, the heuristic
+fallback, the additive bias correction, the stored predictions and the sensor
+attributes all keep negative values.
+
 ## Prediction Window
 
 Predictions start at the current 15-minute slot (at 10:05, the 10:00 slot).
@@ -300,10 +307,16 @@ Floor: 0.30
 **Phase 2 — Learned** (≥ 5 samples):
 
 ```
-confidence = max(0.10, 1.0 - (MAE / mean_actual))
+confidence = max(0.10, 1.0 - (MAE / mean(|actual|)))
+- volatility penalty: min(0.25, 0.3 × volatility_MAE / mean(|actual|))
 - forecast_temp_error penalty (max -0.15)
 - forecast_wind_error penalty (max -0.15)
 ```
+
+The price scale is the slot's mean _absolute_ actual price (#15), so slots
+that clear at or below zero still get a learned confidence; with only positive
+prices it equals the mean price. Only a slot whose actual prices are all
+exactly zero falls back to the heuristic.
 
 ## Self-Learning Loop
 
@@ -312,7 +325,8 @@ Every 15 minutes:
 1. Read current Stromligning price
 2. Look up every stored prediction for the current slot (all forecast runs)
 3. Calculate error, update per-slot metrics
-4. Update per-slot bias correction via EMA
+4. Update the slot's additive bias offset via EMA (see
+   [self-learning](self_learning.md#bias-correction))
 5. Compare stored forecast weather vs actual → forecast accuracy tracking
 6. Remove matched predictions from pending queue
 7. Add each error to its lead-time bucket (day 1/2/3/4+) → rolling 30-day
@@ -370,7 +384,7 @@ pipeline:
   both GBMs see only the five time features. Historical weather forecasts
   arrive with #22 and #23.
 - **Raw model output.** Per-slot bias correction (which needs live
-  self-learning state), clamping negative predictions to 0, and
+  self-learning state) and
   hyperparameters restored from HPO are not applied.
 
 ### Running

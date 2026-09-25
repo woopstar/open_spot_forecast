@@ -301,7 +301,7 @@ class ModelMixin(PredictorBase):
                 {
                     "start": start,
                     "end": feature.get("end"),
-                    "price": max(0, price),
+                    "price": price,
                     "confidence": confidence,
                     "model": "GradientBoosting",
                 }
@@ -313,7 +313,7 @@ class ModelMixin(PredictorBase):
             if start:
                 self.store_prediction_for_learning(
                     start,
-                    max(0, price),
+                    price,
                     confidence,
                     forecast_temp=feature.get("temperature"),
                     forecast_wind=feature.get("wind_speed_mean"),
@@ -411,7 +411,7 @@ class ModelMixin(PredictorBase):
                     {
                         "start": start_str,
                         "end": end_str,
-                        "price": max(0, price),
+                        "price": price,
                         "confidence": confidence,
                         "model": "heuristic",
                     }
@@ -420,7 +420,7 @@ class ModelMixin(PredictorBase):
                 self.confidence_scores.append(confidence)
 
                 # Store prediction for self-learning
-                self.store_prediction_for_learning(start_str, max(0, price), confidence)
+                self.store_prediction_for_learning(start_str, price, confidence)
 
         _LOGGER.info(
             "Generated %d heuristic predictions, price range: %.4f - %.4f",
@@ -456,11 +456,12 @@ class ModelMixin(PredictorBase):
     def _estimate_confidence(self, feature: dict) -> float:
         """Estimate prediction confidence using learned error metrics.
 
-        Uses the slot's MAE relative to its mean actual price when
-        sufficient learning data exists, then adjusts for volatility
-        (per-slot EMA of MAE) and weather forecast accuracy.
-        Falls back to a heuristic based on feature quality and forecast
-        distance.
+        Uses the slot's MAE relative to its price scale, the mean absolute
+        actual price, when sufficient learning data exists, then adjusts for
+        volatility (per-slot EMA of MAE) and weather forecast accuracy. The
+        scale is positive for negative prices too, so slots that clear at or
+        below zero still get a learned confidence. Falls back to a heuristic
+        based on feature quality and forecast distance.
         """
         hour = feature.get("hour", 0)
         minute = feature.get("minute", 0)
@@ -471,16 +472,16 @@ class ModelMixin(PredictorBase):
             metrics = self.error_metrics[slot]
             if metrics["count"] >= 5:
                 mae = float(np.mean(metrics["abs_errors"]))
-                mean_actual = float(np.mean(metrics["actuals"]))
-                if mean_actual > 0:
-                    error_ratio = mae / mean_actual
+                price_scale = float(np.mean(np.abs(metrics["actuals"])))
+                if price_scale > 1e-9:
+                    error_ratio = mae / price_scale
                     learned_confidence = max(0.1, 1.0 - error_ratio)
 
                     # --- Volatility adjustment ---
                     # Higher per-slot volatility → lower confidence
                     vol = self.volatility_mae.get(slot)
-                    if vol is not None and vol > 0 and mean_actual > 0:
-                        vol_ratio = vol / mean_actual
+                    if vol is not None and vol > 0:
+                        vol_ratio = vol / price_scale
                         # Reduce confidence proportional to volatility
                         # Volatility of 50% of mean → ~0.15 reduction
                         learned_confidence -= min(0.25, vol_ratio * 0.3)
@@ -523,36 +524,45 @@ class ModelMixin(PredictorBase):
         return max(0.3, min(1.0, confidence))
 
     def apply_bias_correction(self, predicted_price: float, slot: int) -> float:
-        """Apply learned bias correction to a prediction.
+        """Subtract the slot's learned bias offset from a prediction.
+
+        The correction is additive, so it works the same for positive,
+        zero and negative prices and never flips a prediction's sign by
+        scaling it. The result is not clamped: prices can be negative.
 
         Args:
-            predicted_price: Raw predicted price
+            predicted_price: Raw model prediction
             slot: 15-minute slot index (0-95)
 
         Returns:
-            Corrected price after applying learned bias adjustment
+            ``predicted_price - offset[slot]`` (unchanged without an offset)
         """
-        if slot in self.bias_correction:
-            correction = self.bias_correction[slot]
-            corrected_price = predicted_price * correction
+        offset = self.bias_correction.get(slot)
+        if offset is None:
+            return predicted_price
 
-            _LOGGER.debug(
-                "Applied bias correction for slot %d: %.2f -> %.2f (factor=%.3f)",
-                slot,
-                predicted_price,
-                corrected_price,
-                correction,
-            )
-
-            return max(0, corrected_price)
-
-        return predicted_price
+        corrected_price = predicted_price - offset
+        _LOGGER.debug(
+            "Applied bias correction for slot %d: %.4f -> %.4f (offset=%.4f)",
+            slot,
+            predicted_price,
+            corrected_price,
+            offset,
+        )
+        return corrected_price
 
     def _update_bias_correction(self, slot: int) -> None:
-        """Update bias correction factor for a specific 15-minute slot.
+        """Update the additive bias offset of one 15-minute slot.
 
-        Uses exponential moving average to adaptively learn systematic
-        prediction biases for each 15-minute slot of the day.
+        ``mean_error`` (predicted - actual) is measured on stored predictions,
+        which already had the current offset subtracted, so the raw model's
+        bias is ``offset + mean_error``. The offset is an EMA of that bias:
+
+            offset = 0.9 * offset + 0.1 * (offset + mean_error)
+
+        Feeding the EMA ``mean_error`` alone would settle at half the bias.
+        The first update sets the offset to ``mean_error``. No division by a
+        price, so the offset stays bounded when prices are zero or negative.
         """
         try:
             metrics = self.error_metrics.get(slot)
@@ -560,25 +570,21 @@ class ModelMixin(PredictorBase):
                 return
 
             mean_error = float(np.mean(metrics["errors"]))
-            mean_actual = float(np.mean(metrics["actuals"]))
+            old_offset = self.bias_correction.get(slot)
+            if old_offset is None:
+                self.bias_correction[slot] = mean_error
+            else:
+                raw_bias = old_offset + mean_error
+                self.bias_correction[slot] = (
+                    1 - self.learning_rate
+                ) * old_offset + self.learning_rate * raw_bias
 
-            if mean_actual > 0:
-                bias_ratio = 1.0 - (mean_error / mean_actual)
-
-                if slot in self.bias_correction:
-                    old_correction = self.bias_correction[slot]
-                    self.bias_correction[slot] = (
-                        1 - self.learning_rate
-                    ) * old_correction + self.learning_rate * bias_ratio
-                else:
-                    self.bias_correction[slot] = bias_ratio
-
-                _LOGGER.debug(
-                    "Updated bias correction for slot %d: %.3f (mean_error=%.2f)",
-                    slot,
-                    self.bias_correction[slot],
-                    mean_error,
-                )
+            _LOGGER.debug(
+                "Updated bias offset for slot %d: %.4f (mean_error=%.4f)",
+                slot,
+                self.bias_correction[slot],
+                mean_error,
+            )
 
         except Exception as err:
             _LOGGER.error("Error updating bias correction for slot %d: %s", slot, err)

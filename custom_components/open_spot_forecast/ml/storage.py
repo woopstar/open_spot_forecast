@@ -13,6 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
+from .bias_storage import migrate_bias_to_additive
 from .history_storage import HistoryStorageMixin
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
     Schema:
       predictions     — per-interval forecasts awaiting self-learning comparison
       error_metrics   — per-hour error tracking (JSON-serialized arrays)
-      bias_correction — per-hour multiplicative correction factors
+      bias_correction — per-slot additive bias offsets (0-95)
       price_history   — historical daily prices for model training
       meta            — key/value pairs (training_samples, is_trained, hpo_counter)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
@@ -95,7 +96,8 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
 
             predictions = data.get("prediction_history", [])
             error_metrics = data.get("error_metrics", {})
-            bias_correction = data.get("bias_correction", {})
+            # Legacy factors are multiplicative; bias offsets are additive (#15)
+            bias_correction: dict = {}
             price_history = data.get("price_history", [])
             training_samples = data.get("training_samples", 0)
             is_trained = data.get("is_trained", False)
@@ -319,6 +321,7 @@ class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
             )
             _LOGGER.info("Schema migration to v4 complete")
 
+        migrate_bias_to_additive(conn)
         self._create_lead_time_accuracy_schema(conn)
         conn.commit()
 
