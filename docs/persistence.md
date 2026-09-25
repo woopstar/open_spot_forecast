@@ -14,7 +14,7 @@ All learning data is stored in a single SQLite database:
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                            |
 | `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                      |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing |
-| `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), stored with UTC offset               |
+| `weather_history`    | `timestamp` (UTC slot key)  | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), keyed `YYYY-MM-DDTHH:MM:SSZ`         |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter` and the latest holdout metrics                |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error    |
 
@@ -71,6 +71,7 @@ Auto-migration runs at startup (no user intervention):
 | v3 → v4 | Added forecast weather columns to predictions                                      |
 | v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)      |
 | v5 → v6 | Discard consumer-price learning data: the model learns the raw spot price (#16)    |
+| v6 → v7 | Rewrite `weather_history` timestamps as UTC slot keys (#59)                        |
 
 The `meta` table tracks `schema_version` so migrations only run once.
 
@@ -79,6 +80,31 @@ The v6 migration deletes the rows of `price_history`, `predictions`,
 which held (or were learned from) Stromligning's consumer price, and logs how
 many days and predictions it discarded. `weather_history`,
 `nordpool_prognoses` and the hyperparameters in `meta` are kept.
+
+## Stored Timestamps
+
+A weather snapshot is keyed by the UTC start of its 15-minute slot,
+`YYYY-MM-DDTHH:MM:SSZ` (`utc_slot_key()` in `time_slots.py`), e.g. the
+snapshot taken at 10:00:01 local (CEST) is `2026-09-24T08:00:00Z`. Nordpool
+rows keep the UTC timestamps Nordpool publishes (`…Z`, one per hour).
+
+`find_weather_for_timestamp` (±30 minutes) and `find_nordpool_for_timestamp`
+(±1 hour) accept any ISO timestamp (naive = Home Assistant local time),
+normalize it to UTC and compare it with the stored rows as SQLite julian
+days, and so does the 30-day pruning. Before #59 they compared the stored
+strings with SQLite `datetime()` results (UTC with a space separator), which
+never matched a row on the same date: self-learning never recorded the
+forecast weather error, and the Nordpool backfill re-fetched every stored day
+at each startup. Training was not affected: it matches both tables on the UTC
+epoch in Python (`TrainingInputs`).
+
+The v7 migration rewrites the snapshots stored before: naive timestamps (as
+written before #17) are read as Home Assistant local time, one in the
+repeated hour of a DST fall-back day as its first pass, and the offset
+timestamps written since as their instant. Each becomes its slot's UTC key;
+when several fall into one slot the earliest is kept, as training does.
+Unreadable timestamps are dropped. The migration logs how many snapshots it
+rewrote, merged and dropped.
 
 ## Data Flow
 

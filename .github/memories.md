@@ -182,7 +182,10 @@ Slot boundary arithmetic lives in `time_slots.py`: `floor_to_slot()`, `ceil_to_s
 `first_prediction_slot()` (where predictions start), `slots_in_local_day()` (96, or 92/100 on
 DST days), `tomorrow_prices_complete()` (the only "tomorrow is available" check), and
 `slot_start_in_day()` / `slot_index_in_day()` (slot n of a local day and back, stepped in UTC
-from local midnight). Never build slot times as `date + n * 15 min` or index a day's prices
+from local midnight). Stored slot timestamps are written with `utc_slot_key()` (UTC slot start,
+`YYYY-MM-DDTHH:MM:SSZ`) and read with `parse_utc()` (naive = HA local time); storage lookups
+compare instants (SQLite `julianday()` on both sides), never ISO strings with different
+offsets. Never build slot times as `date + n * 15 min` or index a day's prices
 with `hour * 4 + minute // 15`, and never call naive `datetime.now()` — use `dt_util.now()`. They round on the UTC timeline, so
 never round with `dt.replace(minute=...)` or add minutes to a local datetime inline.
 
@@ -224,19 +227,20 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                  | Content                                                         |
-| -------------------- | -------------------- | --------------------------------------------------------------- |
-| `predictions`        | `id` (autoincrement) | Pending predictions awaiting comparison                         |
-| `error_metrics`      | `hour` (0-95)        | Per-slot error arrays                                           |
-| `bias_correction`    | `hour` (0-95)        | Per-slot additive bias offsets (schema v5)                      |
-| `price_history`      | `date` (YYYY-MM-DD)  | Daily raw spot prices, excl. VAT (92/96/100 slots, `null` gaps) |
-| `weather_history`    | `timestamp` (ISO)    | 15-min weather snapshots                                        |
-| `meta`               | `key`                | Training state, schema version                                  |
-| `lead_time_accuracy` | `(date, bucket)`     | Daily per-lead-time error sums (rolling 30 days)                |
+| Table                | Key                   | Content                                                         |
+| -------------------- | --------------------- | --------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement)  | Pending predictions awaiting comparison                         |
+| `error_metrics`      | `hour` (0-95)         | Per-slot error arrays                                           |
+| `bias_correction`    | `hour` (0-95)         | Per-slot additive bias offsets (schema v5)                      |
+| `price_history`      | `date` (YYYY-MM-DD)   | Daily raw spot prices, excl. VAT (92/96/100 slots, `null` gaps) |
+| `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)        |
+| `meta`               | `key`                 | Training state, schema version                                  |
+| `lead_time_accuracy` | `(date, bucket)`      | Daily per-lead-time error sums (rolling 30 days)                |
 
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning
-data (`ml/spot_migration.py`). The legacy JSON format
+data (`ml/spot_migration.py`), v7 rewrites weather snapshot timestamps as UTC slot keys
+(`ml/weather_migration.py`). The legacy JSON format
 (`open_spot_forecast_DK1_learning.json`) only contributes its training state.
 
 ## File Size Rules

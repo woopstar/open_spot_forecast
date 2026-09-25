@@ -205,8 +205,9 @@ wind_share = (wind_offshore + wind_onshore) / consumption
 
 Training reads both tables once per fit (`TrainingInputs` in
 `ml/training_inputs.py`) and matches rows to slots on their UTC epoch.
-Weather snapshots are stored with their UTC offset; older snapshots without
-one are read as local time. Prediction matches forecasts and prognoses on
+Weather snapshots are keyed by their slot's UTC start (`…Z`, see
+[persistence](persistence.md#stored-timestamps)); snapshots without an
+offset from before the v7 migration would be read as local time. Prediction matches forecasts and prognoses on
 the slot's UTC hour, so HA's UTC forecast timestamps line up with local slot
 times. Training never uses the current forecast's values.
 

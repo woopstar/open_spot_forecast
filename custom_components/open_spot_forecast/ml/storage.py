@@ -22,6 +22,7 @@ from .history_storage import HistoryStorageMixin
 from .prediction_storage import PredictionStorageMixin
 from .spot_migration import migrate_to_spot_prices
 from .state_storage import LearningStateStorageMixin
+from .weather_migration import migrate_weather_to_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class LearningStorage(
       meta            — key/value pairs (training_samples, is_trained,
                         hpo_counter) (all four: state_storage.py)
       price_history   — historical daily prices for model training
-      weather_history — 15-min weather snapshots
+      weather_history — 15-min weather snapshots, keyed by UTC slot start
       nordpool_prognoses — hourly Nordpool prognoses (all three:
                         history_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
@@ -345,6 +346,7 @@ class LearningStorage(
         migrate_bias_to_additive(conn)
         self._create_lead_time_accuracy_schema(conn)
         migrate_to_spot_prices(conn)
+        migrate_weather_to_utc(conn)
         conn.commit()
 
     def __del__(self) -> None:

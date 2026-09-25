@@ -8,12 +8,46 @@ cannot shift the result.
 
 from collections.abc import Sequence
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
+from typing import Any
 
 from homeassistant.util import dt as dt_util
 
 SLOT_MINUTES = 15
 
+# How stored slot timestamps are written: the slot's UTC start with a Z
+# suffix, e.g. 2026-09-24T08:00:00Z (weather snapshots, like Nordpool's rows)
+UTC_KEY_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
 _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def parse_utc(value: Any) -> datetime | None:
+    """Parse an ISO timestamp as UTC; a naive one is Home Assistant local time.
+
+    Args:
+        value: ISO 8601 string, with or without a UTC offset.
+
+    Returns:
+        The moment as a UTC datetime, or None if ``value`` is not a string
+        or does not parse.
+    """
+    if not isinstance(value, str):
+        return None
+    parsed = dt_util.parse_datetime(value)
+    return dt_util.as_utc(parsed) if parsed is not None else None
+
+
+def utc_slot_key(moment: datetime) -> str:
+    """Return the storage key of the slot containing ``moment``.
+
+    Args:
+        moment: Timezone-aware datetime.
+
+    Returns:
+        The slot's UTC start in ``UTC_KEY_FORMAT``, so every stored slot
+        timestamp has one format whatever the local offset or DST.
+    """
+    return floor_to_slot(moment).astimezone(UTC).strftime(UTC_KEY_FORMAT)
 
 
 def floor_to_slot(moment: datetime, interval_minutes: int = SLOT_MINUTES) -> datetime:
