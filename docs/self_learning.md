@@ -134,6 +134,18 @@ Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 | `slots_tracked`       | Number of 15-min slots with data                      |
 | `pending_predictions` | Predictions still waiting for their slot to arrive    |
 | `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offset         |
+| `holdout_mae`         | Latest training's holdout MAE (see below)             |
+| `holdout_rmse`        | Latest training's holdout RMSE                        |
+| `holdout_trained_at`  | When that training ran (UTC ISO)                      |
+
+The holdout metrics measure how well the current model generalizes: each
+training fits a copy of the model on the oldest 80 % of the price history
+and scores it on the newest 20 % (see
+[Training and Validation Split](ml_documentation.md#training-and-validation-split)).
+They are in the model's unit (raw spot price excl. VAT, currency/kWh), are
+persisted in `meta` so they survive a restart, and are `null` before the
+first successful training or after a failed one. `mae` and `rmse` above are
+the live errors of stored predictions against actual prices.
 
 ## Reset
 

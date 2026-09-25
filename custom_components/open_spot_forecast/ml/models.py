@@ -13,10 +13,13 @@ from homeassistant.util import dt as dt_util
 from ..price_series import known_prices
 from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
-from .features import build_feature_vector
+from .features import build_feature_vector, optional_float
 from .gbm import NumpyGradientBoosting
 
 _LOGGER = logging.getLogger(__name__)
+
+# meta keys of the latest training's holdout metrics (see _train_models)
+HOLDOUT_META_KEYS = ("holdout_mae", "holdout_rmse", "holdout_trained_at")
 
 # Production hyperparameters, chosen with the backtest (docs/ml_documentation.md);
 # hyperparameter optimization may replace the first three per installation
@@ -127,10 +130,63 @@ class ModelMixin(PredictorBase):
 
             self.is_trained = True
             self.training_samples = len(all_prices)
+            self._store_holdout_metrics(mae, rmse)
 
         except Exception as err:
             _LOGGER.error("Error training ML models: %s", err, exc_info=True)
             self.is_trained = False
+            self._store_holdout_metrics(None, None)
+
+    def _store_holdout_metrics(self, mae: float | None, rmse: float | None) -> None:
+        """Keep the latest training's holdout MAE/RMSE and persist them in meta.
+
+        ``None`` (a failed training) clears them, in memory and in meta, so a
+        stale error is never shown for a model that is not in use.
+        """
+        if mae is None or rmse is None:
+            self.holdout_mae = self.holdout_rmse = self.holdout_trained_at = None
+        else:
+            self.holdout_mae, self.holdout_rmse = mae, rmse
+            self.holdout_trained_at = dt_util.utcnow()
+        try:
+            if self.holdout_trained_at is None:
+                self.storage.delete_meta_keys(HOLDOUT_META_KEYS)
+            else:
+                self.storage.save_meta_dict(
+                    {
+                        "holdout_mae": mae,
+                        "holdout_rmse": rmse,
+                        "holdout_trained_at": self.holdout_trained_at.isoformat(),
+                    }
+                )
+        except Exception as err:
+            _LOGGER.warning("Could not store the holdout metrics: %s", err)
+
+    def _restore_holdout_metrics(self, data: dict[str, Any]) -> None:
+        """Restore the holdout metrics from loaded meta data (None if invalid)."""
+        mae = optional_float(data.get("holdout_mae"))
+        rmse = optional_float(data.get("holdout_rmse"))
+        trained_at = dt_util.parse_datetime(str(data.get("holdout_trained_at", "")))
+        if mae is None or rmse is None or trained_at is None:
+            self.holdout_mae = self.holdout_rmse = self.holdout_trained_at = None
+            return
+        self.holdout_mae, self.holdout_rmse = mae, rmse
+        self.holdout_trained_at = dt_util.as_utc(trained_at)
+
+    def holdout_metrics(self) -> dict[str, Any]:
+        """Return the latest training's holdout MAE/RMSE and when it ran.
+
+        The errors are in the model's unit (raw spot price excl. VAT,
+        currency/kWh), from a copy of the model fitted on the oldest 80 % of
+        the history and scored on the newest 20 %. All None before the first
+        successful training.
+        """
+        trained_at = self.holdout_trained_at
+        return {
+            "holdout_mae": self.holdout_mae,
+            "holdout_rmse": self.holdout_rmse,
+            "holdout_trained_at": trained_at.isoformat() if trained_at else None,
+        }
 
     def _optimize_hyperparameters(self) -> dict | None:
         """Run grid search for best GradientBoosting hyperparameters.

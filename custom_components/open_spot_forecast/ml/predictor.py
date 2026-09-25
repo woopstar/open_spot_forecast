@@ -67,6 +67,12 @@ class SpotPricePredictor(
         self._prices_updated_at: datetime | None = None
         self._hpo_counter = 0
 
+        # Holdout error of the last successful training (see
+        # ModelMixin._train_models), persisted in meta; None before one
+        self.holdout_mae: float | None = None
+        self.holdout_rmse: float | None = None
+        self.holdout_trained_at: datetime | None = None
+
         # A retrain can take minutes and forecast runs can overlap, so
         # serialize predict() — two threads must never fit the same model
         self._predict_lock = threading.Lock()
