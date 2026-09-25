@@ -6,7 +6,7 @@ description: Activate when making any change to the OSF ML layer — feature vec
 # OSF ML Change — Model, Features & Self-Learning
 
 Activate this skill when touching **any file under `custom_components/open_spot_forecast/ml/`**:
-`predictor.py`, `features.py`, `models.py`, `learning.py`, `numpy_models.py`, or
+`predictor.py`, `features.py`, `models.py`, `learning.py`, `gbm.py`, `numpy_models.py`, or
 `storage.py`.
 
 ## Step 1: Read the ML Documentation

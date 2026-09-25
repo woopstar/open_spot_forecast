@@ -49,8 +49,8 @@ from custom_components.open_spot_forecast.ml.features import (
     build_feature_vector,
     slot_time_features,
 )
+from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
-from custom_components.open_spot_forecast.ml.numpy_models import NumpyGradientBoosting
 
 SLOT_SECONDS = 15 * 60
 HOUR_SECONDS = 60 * 60

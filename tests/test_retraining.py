@@ -17,7 +17,7 @@ from custom_components.open_spot_forecast.const import (
     CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
 )
-from custom_components.open_spot_forecast.ml.numpy_models import NumpyGradientBoosting
+from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.retraining import HPO_INTERVAL_DAYS
 

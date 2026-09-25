@@ -629,26 +629,35 @@ class LearningMixin(PredictorBase):
             self._solar_scale_samples = data.get("solar_scale_samples", 0)
             self._restore_hpo_counter(data)
 
-            # Restore optimized hyperparameters if available
+            # Restore optimized hyperparameters if available. Results saved
+            # without hpo_max_depth were tuned for the old depth-1 stumps and
+            # are ignored until the next optimization run.
             hpo_n = data.get("hpo_n_estimators")
             hpo_lr = data.get("hpo_learning_rate")
-            if hpo_n and hpo_lr:
+            hpo_depth = data.get("hpo_max_depth")
+            if hpo_n and hpo_lr and hpo_depth:
                 try:
-                    from .numpy_models import NumpyGradientBoosting
+                    from .models import create_price_model
 
-                    self.price_model = NumpyGradientBoosting(
+                    self.price_model = create_price_model(
                         n_estimators=int(hpo_n),
                         learning_rate=float(hpo_lr),
-                        random_state=42,
+                        max_depth=int(hpo_depth),
                     )
                     self.is_trained = False  # Force re-train with new params
                     _LOGGER.info(
-                        "Restored optimized hyperparameters: n=%d, lr=%.2f",
+                        "Restored optimized hyperparameters: n=%d, lr=%.2f, depth=%d",
                         int(hpo_n),
                         float(hpo_lr),
+                        int(hpo_depth),
                     )
                 except ValueError, TypeError:
                     pass
+            elif hpo_n and hpo_lr:
+                _LOGGER.debug(
+                    "Ignoring hyperparameters tuned for the old stump model; "
+                    "using defaults until the next optimization"
+                )
 
             pred_count = data.get("prediction_count", 0)
 

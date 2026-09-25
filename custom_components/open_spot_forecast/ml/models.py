@@ -4,6 +4,7 @@ import contextlib
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 
@@ -13,18 +14,45 @@ from ..price_series import known_prices
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 from .features import build_feature_vector
-from .numpy_models import NumpyGradientBoosting
+from .gbm import NumpyGradientBoosting
 
 _LOGGER = logging.getLogger(__name__)
 
+# Production hyperparameters, chosen with the backtest (docs/ml_documentation.md);
+# hyperparameter optimization may replace the first three per installation
+DEFAULT_N_ESTIMATORS = 200
+DEFAULT_LEARNING_RATE = 0.05
+DEFAULT_MAX_DEPTH = 3
+# About one day of 15-minute slots: a leaf never describes a single day's noise
+MIN_SAMPLES_LEAF = 100
 
-def create_price_model() -> NumpyGradientBoosting:
-    """Return an untrained price model with the default production hyperparameters.
+# Hyperparameter search grid. n_estimators is scored from one fit per
+# (learning_rate, max_depth) pair with staged predictions, so the grid costs
+# len(HPO_LEARNING_RATES) * len(HPO_MAX_DEPTHS) fits, not the full product.
+HPO_N_ESTIMATORS = (100, 200, 300)
+HPO_LEARNING_RATES = (0.05, 0.1, 0.2)
+HPO_MAX_DEPTHS = (2, 3, 4, 6)
 
-    Used by ``SpotPricePredictor`` and the dev backtest (``scripts/backtest.py``),
-    so both always evaluate the same model configuration.
+
+def create_price_model(
+    n_estimators: int = DEFAULT_N_ESTIMATORS,
+    learning_rate: float = DEFAULT_LEARNING_RATE,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> NumpyGradientBoosting:
+    """Return an untrained price model; defaults are the production hyperparameters.
+
+    Used by ``SpotPricePredictor``, hyperparameter search and the dev backtest
+    (``scripts/backtest.py``), so all of them evaluate the same model
+    configuration. Leaf count and L2 regularization keep their
+    ``NumpyGradientBoosting`` defaults.
     """
-    return NumpyGradientBoosting(n_estimators=200, learning_rate=0.1, random_state=42)
+    return NumpyGradientBoosting(
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        max_depth=max_depth,
+        min_samples_leaf=MIN_SAMPLES_LEAF,
+        random_state=42,
+    )
 
 
 class ModelMixin(PredictorBase):
@@ -173,11 +201,7 @@ class ModelMixin(PredictorBase):
             X_train, X_test = X[:split_idx], X[split_idx:]
             y_train, y_test = y[:split_idx], y[split_idx:]
 
-            holdout_model = NumpyGradientBoosting(
-                n_estimators=self.price_model.n_estimators,
-                learning_rate=self.price_model.learning_rate,
-                random_state=self.price_model.random_state,
-            )
+            holdout_model = NumpyGradientBoosting(**self.price_model.get_params())
             holdout_model.fit(X_train, y_train)
 
             # Evaluate
@@ -207,10 +231,10 @@ class ModelMixin(PredictorBase):
     def _optimize_hyperparameters(self) -> dict | None:
         """Run grid search for best GradientBoosting hyperparameters.
 
-        Tests combinations of n_estimators and learning_rate using
-        the stored price history. Best parameters are saved to the
-        storage meta table. Returns the best param dict or None if
-        insufficient data.
+        Tests every combination of n_estimators, learning_rate and max_depth
+        in the HPO_* grids using the stored price history. Best parameters are
+        saved to the storage meta table. Returns the best param dict or None
+        if insufficient data.
 
         Called by RetrainMixin.retrain once per HPO_INTERVAL_DAYS new days
         of price data.
@@ -241,46 +265,55 @@ class ModelMixin(PredictorBase):
         X_train, X_val = X[:split_idx], X[split_idx:]
         y_train, y_val = y[:split_idx], y[split_idx:]
 
-        best_params = {"n_estimators": 200, "learning_rate": 0.1}
+        best_params: dict[str, Any] = {
+            "n_estimators": DEFAULT_N_ESTIMATORS,
+            "learning_rate": DEFAULT_LEARNING_RATE,
+            "max_depth": DEFAULT_MAX_DEPTH,
+        }
         best_score = float("inf")
 
-        param_grid = [(n, lr) for n in [100, 200, 300] for lr in [0.05, 0.1, 0.2]]
-
-        for n_est, lr in param_grid:
-            model = NumpyGradientBoosting(
-                n_estimators=n_est, learning_rate=lr, random_state=42
-            )
-            try:
-                model.fit(X_train, y_train)
-                y_pred = model.predict(X_val)
-                mae = float(np.mean(np.abs(y_val - y_pred)))
-            except Exception:
-                continue
-
-            if mae < best_score:
-                best_score = mae
-                best_params = {"n_estimators": n_est, "learning_rate": lr}
-                _LOGGER.debug(
-                    "HPO candidate: n=%d lr=%.2f MAE=%.4f",
-                    n_est,
-                    lr,
-                    mae,
+        for lr in HPO_LEARNING_RATES:
+            for depth in HPO_MAX_DEPTHS:
+                model = create_price_model(
+                    n_estimators=max(HPO_N_ESTIMATORS),
+                    learning_rate=lr,
+                    max_depth=depth,
                 )
+                try:
+                    model.fit(X_train, y_train)
+                    staged = model.staged_predict(X_val)
+                    for n_trees, y_pred in enumerate(staged, start=1):
+                        if n_trees not in HPO_N_ESTIMATORS:
+                            continue
+                        mae = float(np.mean(np.abs(y_val - y_pred)))
+                        if mae < best_score:
+                            best_score = mae
+                            best_params = {
+                                "n_estimators": n_trees,
+                                "learning_rate": lr,
+                                "max_depth": depth,
+                            }
+                            _LOGGER.debug(
+                                "HPO candidate: n=%d lr=%.2f depth=%d MAE=%.4f",
+                                n_trees,
+                                lr,
+                                depth,
+                                mae,
+                            )
+                except Exception:
+                    continue
 
         _LOGGER.info(
             "Hyperparameter optimization complete: n_estimators=%d learning_rate=%.2f "
-            "best_MAE=%.4f",
+            "max_depth=%d best_MAE=%.4f",
             best_params["n_estimators"],
             best_params["learning_rate"],
+            best_params["max_depth"],
             best_score,
         )
 
         # Apply best params to the live model
-        self.price_model = NumpyGradientBoosting(
-            n_estimators=int(best_params["n_estimators"]),
-            learning_rate=best_params["learning_rate"],
-            random_state=42,
-        )
+        self.price_model = create_price_model(**best_params)
         # The new model is unfitted until the caller retrains it
         self.is_trained = False
 
@@ -290,6 +323,7 @@ class ModelMixin(PredictorBase):
                 {
                     "hpo_n_estimators": str(best_params["n_estimators"]),
                     "hpo_learning_rate": str(best_params["learning_rate"]),
+                    "hpo_max_depth": str(best_params["max_depth"]),
                     "hpo_best_mae": str(best_score),
                 }
             )
@@ -320,8 +354,16 @@ class ModelMixin(PredictorBase):
                 sample_feature.get("price_mean"),
             )
 
+        # One batch call: walking every tree once per slot costs ~100x more
+        feature_vectors = [build_feature_vector(feature) for feature in features]
+        raw_prices = (
+            self.price_model.predict(np.array(feature_vectors))
+            if feature_vectors
+            else np.empty(0)
+        )
+
         for idx, feature in enumerate(features):
-            feature_vector = build_feature_vector(feature)
+            feature_vector = feature_vectors[idx]
 
             # Log first few feature vectors
             if idx < 3:
@@ -348,20 +390,17 @@ class ModelMixin(PredictorBase):
                     feature_vector,
                 )
 
-            # Predict price
-            feature_array = np.array([feature_vector])
-            price = float(self.price_model.predict(feature_array)[0])
+            price = float(raw_prices[idx])
 
             start = feature.get("start")
 
             # Log first few predictions
             if idx < 3:
                 _LOGGER.info(
-                    "Prediction %d: start=%s, raw_price=%.4f, feature_array_shape=%s",
+                    "Prediction %d: start=%s, raw_price=%.4f",
                     idx,
                     start,
                     price,
-                    feature_array.shape,
                 )
 
             # Apply bias correction if available (keyed by 15-min slot 0-95)
