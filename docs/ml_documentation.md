@@ -298,6 +298,19 @@ start. The state is unknown if every prediction is in the past, rather than
 showing a stale slot. The sensor is polled, so the state moves to the next
 slot within Home Assistant's polling interval.
 
+## Heuristic Fallback
+
+Until the price model is trained (e.g. during the first day of history),
+predictions come from `_generate_heuristic_predictions` in `ml/models.py`:
+the mean of the known prices times an hour-of-day factor, with confidence
+falling 0.1 per day ahead (floor 0.3). The factor for a local hour is that
+hour's mean price divided by the mean over all hours with prices
+(`_extract_hourly_pattern`). It reads the aligned price series (today, then
+tomorrow, on the 15-minute grid from local midnight) and takes each known
+slot's real local hour from `slot_start_in_day()`, so a `None` slot or a
+92/100-slot DST day never shifts the other slots. An hour without prices, or
+every hour when the mean is not positive, gets the neutral factor 1.0.
+
 ## Solar Scaling Factor
 
 A learned EMA ratio between Solcast's estimate for today and the actual
