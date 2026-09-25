@@ -9,7 +9,7 @@ prices and continuously improves accuracy via per-slot bias correction.
 
 - **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
   predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day).
-- **20-feature model** — time, wind, solar, temperature, and market-demand
+- **17-feature model** — time, wind, solar, temperature, and market-demand
   features, implemented in pure NumPy (no scikit-learn dependency).
 - **Real consumer prices** — Stromligning provides prices with tariffs, fees,
   and VAT (what you actually pay), with Nordpool as fallback.
@@ -29,7 +29,7 @@ prices and continuously improves accuracy via per-slot bias correction.
 ## Documentation
 
 - **[Architecture](architecture.md)** — System overview, data sources, data flow
-- **[ML Documentation](ml_documentation.md)** — Model, 20-feature vector, confidence
+- **[ML Documentation](ml_documentation.md)** — Model, 17-feature vector, confidence
 - **[Self-Learning](self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](persistence.md)** — SQLite storage schema and migrations
 - **[Stromligning Integration](stromligning_integration.md)** — Price-source priority

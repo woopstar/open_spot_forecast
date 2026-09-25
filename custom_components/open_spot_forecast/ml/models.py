@@ -3,7 +3,7 @@
 import contextlib
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -62,28 +62,11 @@ class ModelMixin(PredictorBase):
     referenced via self are provided by the owning class.
     """
 
-    @staticmethod
-    def _normalize_to_utc(iso_timestamp: str) -> str | None:
-        """Convert an ISO timestamp with timezone to UTC format.
+    def _train_models(self) -> None:
+        """Train the price model on all stored price history.
 
-        Nordpool API returns UTC timestamps (e.g. 2026-07-08T12:00:00Z).
-        Training timestamps may have local timezone offsets (e.g.
-        2026-07-08T14:00:00+02:00). This normalizes both to UTC so
-        lookups in the nordpool_prognoses table match reliably.
-        """
-        try:
-            dt = datetime.fromisoformat(iso_timestamp)
-            if dt.tzinfo is not None:
-                dt = dt.astimezone(UTC)
-            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-        except ValueError, TypeError:
-            return None
-
-    def _train_models(
-        self, historical_prices: Sequence[float | None], features: list[dict]
-    ) -> None:
-        """Train ML models on historical data.
-
+        Training rows come from ``get_all_historical_prices`` (stored
+        actuals and prognoses), never from the current forecast's features.
         Today's prices must already be in price_history (see
         RetrainMixin.record_training_prices).
         """
@@ -103,85 +86,6 @@ class ModelMixin(PredictorBase):
                 len(all_prices),
                 len(self.price_history),
             )
-
-            # Extract weather and price stats from provided features
-            if features:
-                sample_feature = features[0]
-                wind_features = {
-                    "wind_speed_mean": sample_feature.get("wind_speed_mean", 0),
-                    "wind_power_estimate": sample_feature.get("wind_power_estimate", 0),
-                    "wind_direction": sample_feature.get("wind_direction", 0),
-                }
-                solar_features = {
-                    "solar_radiation_mean": sample_feature.get(
-                        "solar_radiation_mean", 0
-                    ),
-                    "solar_power_estimate": sample_feature.get(
-                        "solar_power_estimate", 0
-                    ),
-                }
-                price_stats = {
-                    "price_mean": float(np.mean(all_prices)),
-                }
-                temperature = sample_feature.get("temperature", 15.0)
-            else:
-                wind_features = {
-                    "wind_speed_mean": 0,
-                    "wind_power_estimate": 0,
-                    "wind_direction": 0,
-                }
-                solar_features = {"solar_radiation_mean": 0, "solar_power_estimate": 0}
-                price_stats = {"price_mean": float(np.mean(all_prices))}
-                temperature = 15.0
-
-            # Add weather and price stats to all historical features
-            # Try to use stored historical weather and Nordpool prognoses for each slot
-            for feature in all_features:
-                start = feature.get("start", "")
-                hist_weather = (
-                    self.storage.find_weather_for_timestamp(start) if start else None
-                )
-
-                if hist_weather:
-                    feature["temperature"] = (
-                        hist_weather.get("temperature") or temperature
-                    )
-                    feature["wind_speed_mean"] = hist_weather.get(
-                        "wind_speed"
-                    ) or wind_features.get("wind_speed_mean", 0)
-                    feature["wind_direction"] = hist_weather.get(
-                        "wind_direction"
-                    ) or wind_features.get("wind_direction", 0)
-                    feature["cloud_coverage"] = hist_weather.get("cloud_coverage", 0)
-                    feature["humidity"] = hist_weather.get("humidity", 50)
-                    feature["solar_power_estimate"] = hist_weather.get(
-                        "solar_power"
-                    ) or solar_features.get("solar_power_estimate", 0)
-                else:
-                    feature.update(wind_features)
-                    feature.update(solar_features)
-                    feature["temperature"] = temperature
-                feature.update(price_stats)
-
-                # Look up stored Nordpool prognoses for this training slot
-                if start:
-                    utc_start = self._normalize_to_utc(start)
-                    np_data = (
-                        self.storage.find_nordpool_for_timestamp(utc_start)
-                        if utc_start
-                        else None
-                    )
-                    if np_data:
-                        cons = np_data.get("consumption") or 0
-                        sol = np_data.get("solar") or 0
-                        woff = np_data.get("wind_offshore") or 0
-                        won = np_data.get("wind_onshore") or 0
-                        feature["consumption_forecast"] = cons
-                        feature["solar_generation"] = sol
-                        feature["wind_offshore"] = woff
-                        feature["wind_onshore"] = won
-                        feature["net_demand"] = cons - sol - woff - won
-                        feature["wind_share"] = (woff + won) / cons if cons > 0 else 0
 
             # Prepare training data
             X_list: list[list[float]] = []
@@ -347,11 +251,11 @@ class ModelMixin(PredictorBase):
                 list(sample_feature.keys())[:10],
             )
             _LOGGER.info(
-                "Sample feature values: hour=%s, wind=%s, solar=%s, price_mean=%s",
+                "Sample feature values: hour=%s, wind=%s, solar=%s, consumption=%s",
                 sample_feature.get("hour"),
                 sample_feature.get("wind_speed_mean"),
-                sample_feature.get("solar_radiation_mean"),
-                sample_feature.get("price_mean"),
+                sample_feature.get("solar_generation"),
+                sample_feature.get("consumption_forecast"),
             )
 
         # One batch call: walking every tree once per slot costs ~100x more
@@ -368,24 +272,7 @@ class ModelMixin(PredictorBase):
             # Log first few feature vectors
             if idx < 3:
                 _LOGGER.info(
-                    "Feature vector %d (before sanitization): %s",
-                    idx,
-                    [
-                        feature.get("hour", 0),
-                        feature.get("day_of_week", 0),
-                        feature.get("is_weekend", 0),
-                        feature.get("hour_sin", 0),
-                        feature.get("hour_cos", 0),
-                        feature.get("wind_speed_mean", 0),
-                        feature.get("wind_power_estimate", 0),
-                        feature.get("solar_radiation_mean", 0),
-                        feature.get("solar_power_estimate", 0),
-                        feature.get("price_mean", 0),
-                        feature.get("temperature", 15.0),
-                    ],
-                )
-                _LOGGER.info(
-                    "Feature vector %d (after sanitization): %s",
+                    "Feature vector %d (NaN = unknown input): %s",
                     idx,
                     feature_vector,
                 )
@@ -615,9 +502,10 @@ class ModelMixin(PredictorBase):
         # Fallback: heuristic based on feature quality and forecast distance
         confidence = 0.8  # Base confidence
 
-        if feature.get("wind_speed_mean", 0) == 0:
+        # No weather forecast or market prognosis for the slot
+        if feature.get("wind_speed_mean") is None:
             confidence -= 0.2
-        if feature.get("solar_radiation_mean", 0) == 0:
+        if feature.get("solar_generation") is None:
             confidence -= 0.1
         if feature.get("is_weekend", 0) == 1:
             confidence -= 0.05

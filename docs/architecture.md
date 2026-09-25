@@ -15,8 +15,8 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                      |
 | `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud               |
 | `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction |
-| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar features for prediction                    |
-| `sensor.power_inverter_input_total`         | Current solar production         | Historical solar for training                    |
+| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)         |
+| `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)         |
 | `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training              |
 
 ## Component Architecture
@@ -96,17 +96,19 @@ Midnight ────→ Rotate tomorrow → today
 
 ## Model: Single Price Predictor
 
-The system uses **one model** — a Gradient Boosting regressor that takes 14
+The system uses **one model** — a Gradient Boosting regressor that takes 17
 features and directly predicts the spot price. Wind, solar, and temperature
-are input features, not separate sub-models.
+are input features, not separate sub-models. Training and prediction rows
+come from the same `build_feature_row()`; an unknown input is NaN (see
+[ML Documentation](ml_documentation.md#feature-vector-17-features)).
 
 ```
-Features (14):
+Features (17):
   [hour, day_of_week, is_weekend, hour_sin, hour_cos,
    wind_speed_mean, wind_power_estimate, wind_direction,
-   cloud_coverage, humidity,
-   solar_radiation_mean, solar_power_estimate,
-   price_mean, temperature]
+   cloud_coverage, humidity, temperature,
+   consumption_forecast, solar_generation, wind_offshore, wind_onshore,
+   net_demand, wind_share]
                     │
                     ▼
   GradientBoosting (200 depth-limited trees)
@@ -127,7 +129,9 @@ that isn't currently available.
 | **Prediction** | `weather.get_forecasts` (hourly forecast) | Predict future: "if wind WILL BE X, price should be Y"  |
 
 Forecasts are ephemeral — pulled fresh each run. Actual measurements are
-stored permanently in `weather_history` (one snapshot every 15 minutes).
+stored in `weather_history` (one snapshot every 15 minutes, kept 30 days)
+and Nordpool prognoses in `nordpool_prognoses`; training matches both to
+slots by UTC time. Both phases build their rows with the same function.
 
 ## No External API Dependencies
 

@@ -12,6 +12,7 @@ from custom_components.open_spot_forecast.price_series import known_prices
 from custom_components.open_spot_forecast.sensor_reader import (
     SensorReader,
     async_read_weather_forecast,
+    wind_speed_to_ms,
 )
 from custom_components.open_spot_forecast.time_slots import slot_index_in_day
 
@@ -679,3 +680,45 @@ class TestAsyncReadWeatherForecast:
         result = await async_read_weather_forecast(hass, "weather.test")
 
         assert result is None
+
+
+@pytest.mark.parametrize(
+    ("value", "unit", "expected"),
+    [
+        (36.0, "km/h", 10.0),
+        (36.0, None, 10.0),
+        (10.0, "m/s", 10.0),
+        ("10", "kn", 5.14444),
+        (7.0, "furlongs/fortnight", 7.0),
+    ],
+)
+def test_wind_speed_to_ms_converts_known_units(
+    value: object, unit: str | None, expected: float
+) -> None:
+    """Snapshots and forecasts share one conversion; unknown units pass through."""
+    assert wind_speed_to_ms(value, unit) == pytest.approx(expected, rel=1e-4)
+
+
+@pytest.mark.parametrize("value", [None, "calm", [3.0]])
+def test_wind_speed_to_ms_rejects_non_numbers(value: object) -> None:
+    assert wind_speed_to_ms(value, "km/h") is None
+
+
+@pytest.mark.asyncio
+async def test_forecast_wind_speed_is_converted_to_ms() -> None:
+    """The hourly forecast's wind speed matches the stored snapshots' unit (m/s)."""
+    forecast_list = [
+        {"datetime": "2026-06-01T10:00:00+00:00", "wind_speed": 36.0},
+        {"datetime": "2026-06-01T11:00:00+00:00"},
+    ]
+    hass = Mock()
+    hass.states.get.return_value = _state("20.0", {"wind_speed_unit": "km/h"})
+    hass.services.async_call = AsyncMock(
+        return_value={"weather.test": {"forecast": forecast_list}}
+    )
+
+    result = await async_read_weather_forecast(hass, "weather.test")
+
+    assert result is not None
+    assert result[0]["wind_speed"] == pytest.approx(10.0)
+    assert result[1] == forecast_list[1]

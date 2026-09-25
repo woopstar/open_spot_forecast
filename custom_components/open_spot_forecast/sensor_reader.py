@@ -5,8 +5,11 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from homeassistant.const import UnitOfSpeed
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
+from homeassistant.util.unit_conversion import SpeedConverter
 
 from .price_series import (
     PriceSample,
@@ -22,6 +25,37 @@ from .time_slots import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Weather entities without a wind_speed_unit attribute report km/h
+DEFAULT_WIND_SPEED_UNIT = UnitOfSpeed.KILOMETERS_PER_HOUR
+
+
+def wind_speed_to_ms(value: Any, unit: str | None) -> float | None:
+    """Convert a weather entity's wind speed to m/s.
+
+    Both the stored snapshots (training) and the hourly forecast (prediction)
+    go through here, so the model sees one unit. An unknown unit is assumed
+    to be m/s already.
+
+    Args:
+        value: Wind speed in ``unit``.
+        unit: The entity's ``wind_speed_unit`` (None: km/h).
+
+    Returns:
+        Wind speed in m/s, or None if ``value`` is not a number.
+    """
+    try:
+        speed = float(value)
+    except ValueError, TypeError:
+        return None
+    try:
+        return float(
+            SpeedConverter.convert(
+                speed, unit or DEFAULT_WIND_SPEED_UNIT, UnitOfSpeed.METERS_PER_SECOND
+            )
+        )
+    except HomeAssistantError:
+        return speed
 
 
 def _item_price(item: dict) -> Any:
@@ -360,13 +394,10 @@ class SensorReader:
             if wind_speed_entity.startswith("weather."):
                 state = self.hass.states.get(wind_speed_entity)
                 if state:
-                    wind_speed = state.attributes.get("wind_speed")
-                    if wind_speed is not None:
-                        unit = state.attributes.get("wind_speed_unit", "km/h")
-                        if unit == "km/h":
-                            weather_data["wind_speed"] = float(wind_speed) / 3.6
-                        else:
-                            weather_data["wind_speed"] = float(wind_speed)
+                    weather_data["wind_speed"] = wind_speed_to_ms(
+                        state.attributes.get("wind_speed"),
+                        state.attributes.get("wind_speed_unit"),
+                    )
             else:
                 weather_data["wind_speed"] = self.get_sensor_state(wind_speed_entity)
 
@@ -564,6 +595,9 @@ async def async_read_weather_forecast(
         datetime, wind_speed, wind_bearing, temperature,
         cloud_coverage, humidity, precipitation
 
+    ``wind_speed`` is converted from the entity's ``wind_speed_unit`` to m/s,
+    the unit of the stored weather snapshots the model is trained on.
+
     Returns None if the service call fails or entity doesn't exist.
     """
     try:
@@ -594,6 +628,13 @@ async def async_read_weather_forecast(
             _LOGGER.debug("Empty forecast list for %s", entity_id)
             return None
 
+        unit = state.attributes.get("wind_speed_unit")
+        forecast_list = [
+            entry | {"wind_speed": wind_speed_to_ms(entry["wind_speed"], unit)}
+            if isinstance(entry, dict) and "wind_speed" in entry
+            else entry
+            for entry in forecast_list
+        ]
         _LOGGER.info(
             "Read %d hourly weather forecasts from %s",
             len(forecast_list),

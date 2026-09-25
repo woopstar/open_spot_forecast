@@ -88,16 +88,14 @@ class RetrainMixin(PredictorBase):
         last_update = self.last_data_update
         return last_update is not None and last_update > self.last_trained_at
 
-    def retrain(
-        self, historical_prices: Sequence[float | None], features: list[dict]
-    ) -> None:
+    def retrain(self) -> None:
         """Train the price model and run hyperparameter optimization when due.
 
         ``last_trained_at`` is the time training *started*: data written while
         training runs is newer than it and triggers the next retrain.
         """
         started = dt_util.utcnow()
-        self._train_models(historical_prices, features)
+        self._train_models()
         if not self.is_trained:
             return
         self.last_trained_at = started
@@ -114,7 +112,7 @@ class RetrainMixin(PredictorBase):
         self._set_hpo_counter(0)
         # Optimization swaps in an unfitted model with the best params — fit it
         # now so this run still predicts with the ML model
-        self._train_models(historical_prices, features)
+        self._train_models()
 
     def _set_hpo_counter(self, value: int) -> None:
         """Set the HPO day counter and persist it in the meta table."""

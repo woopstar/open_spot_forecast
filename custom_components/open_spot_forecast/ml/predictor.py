@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
-from .features import FeatureMixin
+from .features import FeatureMixin, optional_float
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
 from .models import ModelMixin, create_price_model
@@ -149,52 +149,17 @@ class SpotPricePredictor(
                 )
                 return
 
-            # Extract features from weather data
-            wind_features = self._extract_wind_features(weather_data)
-            solar_features = self._extract_solar_features(weather_data)
-
-            # Learn solar scaling factor: how does actual output compare to Solcast?
-            actual_solar = weather_data.get("solar_power")
-            solcast_estimate = solar_features.get("solar_power_estimate", 0)
-            if (
-                actual_solar
-                and solcast_estimate
-                and actual_solar > 0
-                and solcast_estimate > 0
-            ):
-                ratio = float(actual_solar) / float(solcast_estimate)
-                if 0.1 < ratio < 10.0:  # Sanity check
-                    self._solar_scale_samples += 1
-                    alpha = min(0.3, 1.0 / max(1, self._solar_scale_samples))
-                    self.solar_scale = (1 - alpha) * self.solar_scale + alpha * ratio
-                    _LOGGER.debug(
-                        "Solar scale updated: %.3f (actual=%.0f, estimate=%.0f, samples=%d)",
-                        self.solar_scale,
-                        actual_solar,
-                        solcast_estimate,
-                        self._solar_scale_samples,
-                    )
-                # Apply scaling to solar features
-                solar_features["solar_power_estimate"] = (
-                    solar_features["solar_power_estimate"] * self.solar_scale
-                )
-                solar_features["solar_radiation_mean"] = (
-                    solar_features.get("solar_radiation_mean", 0) * self.solar_scale
-                )
+            # Learn the solar scaling factor: how does actual output compare
+            # to Solcast? Not a price model input (see docs/ml_documentation.md)
+            self._update_solar_scale(weather_data)
 
             # Generate time-based features
             time_features = self._generate_time_features(
                 forecast_days, interval_minutes, known_data_end_time
             )
 
-            # Combine all features
-            all_features = self._combine_features(
-                wind_features,
-                solar_features,
-                time_features,
-                historical_prices,
-                weather_data,
-            )
+            # Build every slot's row with the same builder training uses
+            all_features = self._combine_features(time_features, weather_data)
 
             _LOGGER.info(
                 "Generated %d feature sets, model trained: %s",
@@ -211,7 +176,7 @@ class SpotPricePredictor(
                         self.last_data_update,
                         self.last_trained_at,
                     )
-                    self.retrain(historical_prices, all_features)
+                    self.retrain()
                 else:
                     _LOGGER.debug("No new training data since %s", self.last_trained_at)
 
@@ -251,6 +216,33 @@ class SpotPricePredictor(
             _LOGGER.error("Error generating ML predictions: %s", err, exc_info=True)
             self.predictions = []
             self.confidence_scores = []
+
+    def _update_solar_scale(self, weather_data: dict) -> None:
+        """Update the EMA of actual solar output / Solcast's estimate for today."""
+        solcast = weather_data.get("solcast_forecast") or weather_data.get(
+            "solar_forecast"
+        )
+        estimate = (
+            optional_float(solcast.get("estimate_today"))
+            if isinstance(solcast, dict)
+            else None
+        )
+        actual = optional_float(weather_data.get("solar_power"))
+        if actual is None or estimate is None or actual <= 0 or estimate <= 0:
+            return
+        ratio = actual / estimate
+        if not 0.1 < ratio < 10.0:  # Sanity check
+            return
+        self._solar_scale_samples += 1
+        alpha = min(0.3, 1.0 / max(1, self._solar_scale_samples))
+        self.solar_scale = (1 - alpha) * self.solar_scale + alpha * ratio
+        _LOGGER.debug(
+            "Solar scale updated: %.3f (actual=%.0f, estimate=%.0f, samples=%d)",
+            self.solar_scale,
+            actual,
+            estimate,
+            self._solar_scale_samples,
+        )
 
     def get_predictions_for_day(self, day_offset: int = 0) -> list[dict]:
         """Get predictions for a specific day."""

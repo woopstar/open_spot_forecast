@@ -13,11 +13,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
+from .history_storage import HistoryStorageMixin
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class LearningStorage(LeadTimeAccuracyStorageMixin):
+class LearningStorage(LeadTimeAccuracyStorageMixin, HistoryStorageMixin):
     """Handles persistence of learning data to a SQLite database.
 
     Uses a single persistent connection with WAL journal mode.

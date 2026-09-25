@@ -252,7 +252,7 @@ def test_heuristic_confidence_drops_with_days_ahead(
 ) -> None:
     """The documented days_ahead penalty applies (it silently never did)."""
     now = dt_util.now()
-    feature = {"wind_speed_mean": 5.0, "solar_radiation_mean": 100.0}
+    feature = {"wind_speed_mean": 5.0, "solar_generation": 100.0}
 
     # The current slot started a few minutes ago: no bonus for "negative" days
     today = predictor._estimate_confidence(

@@ -84,9 +84,7 @@ class PredictorBase:
     ) -> None:
         raise NotImplementedError
 
-    def _train_models(
-        self, historical_prices: Sequence[float | None], features: list[dict]
-    ) -> None:
+    def _train_models(self) -> None:
         raise NotImplementedError
 
     def _optimize_hyperparameters(self) -> dict | None:
