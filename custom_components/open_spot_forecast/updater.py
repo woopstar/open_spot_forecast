@@ -39,7 +39,12 @@ from .const import (
 from .ml.predictor import SpotPricePredictor
 from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
-from .time_slots import floor_to_slot, slot_index_in_day, tomorrow_prices_complete
+from .time_slots import (
+    floor_to_slot,
+    slot_index_in_day,
+    tomorrow_prices_complete,
+    utc_slot_key,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -449,8 +454,8 @@ class ForecastUpdater:
     async def _store_weather_snapshot(self, ml_predictor: SpotPricePredictor) -> None:
         """Store the current weather for historical training."""
         try:
-            # With its UTC offset, so training can match it to a slot
-            now_ts = dt_util.now().isoformat()
+            # Keyed by the UTC slot start, the one stored timestamp format
+            now_ts = utc_slot_key(dt_util.utcnow())
             weather_now = self.sensor_reader.read_weather_sensors(
                 self.api_data["sensor_config"]
             )

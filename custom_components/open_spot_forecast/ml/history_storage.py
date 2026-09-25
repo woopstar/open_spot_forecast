@@ -5,6 +5,11 @@ connection and write lock. Covers the ``weather_history`` snapshots, the
 ``nordpool_prognoses`` rows and the daily ``price_history``. Training reads
 the weather and Nordpool tables once per fit and matches rows to slots in
 Python (``ml/training_inputs.py``), instead of one query per training row.
+
+Weather snapshots are keyed by their UTC slot start (``utc_slot_key``);
+Nordpool rows by the UTC hour Nordpool publishes. The single-row lookups and
+the pruning compare timestamps as SQLite julian days on both sides, so a row
+and a query only have to be the same instant, not the same string.
 """
 
 import json
@@ -13,7 +18,23 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+from ..time_slots import UTC_KEY_FORMAT, parse_utc, utc_slot_key
 from .storage_base import StorageMixinBase
+
+# Julian-day window around a looked-up timestamp
+_WEATHER_WINDOW_DAYS = 30 / (24 * 60)  # 30 minutes
+_NORDPOOL_WINDOW_DAYS = 1 / 24  # 1 hour
+
+
+def _utc_key(timestamp: str) -> str | None:
+    """Return an ISO timestamp as the UTC key format, or None if it does not parse."""
+    moment = parse_utc(timestamp)
+    return moment.strftime(UTC_KEY_FORMAT) if moment is not None else None
+
+
+def _utc_cutoff(max_age_days: int) -> str:
+    """Return the UTC key ``max_age_days`` before now (the pruning cutoff)."""
+    return utc_slot_key(dt_util.utcnow() - timedelta(days=max_age_days))
 
 
 class HistoryStorageMixin(StorageMixinBase):
@@ -55,18 +76,25 @@ class HistoryStorageMixin(StorageMixinBase):
             self.last_data_write = dt_util.utcnow()
 
     def find_weather_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
-        """Find weather snapshot closest to a given timestamp (blocking)."""
+        """Find the snapshot closest to a timestamp, within 30 minutes (blocking).
+
+        Args:
+            timestamp: ISO timestamp, with any UTC offset (naive = Home
+                Assistant local time).
+        """
+        key = _utc_key(timestamp)
+        if key is None:
+            return None
         with self._lock:
             conn = self._ensure_conn()
             row = conn.execute(
                 """SELECT temperature, wind_speed, wind_direction,
                           cloud_coverage, humidity, solar_power
                    FROM weather_history
-                   WHERE timestamp >= datetime(?, '-30 minutes')
-                     AND timestamp <= datetime(?, '+30 minutes')
-                   ORDER BY ABS(strftime('%s', timestamp) - strftime('%s', ?))
+                   WHERE ABS(julianday(timestamp) - julianday(?)) <= ?
+                   ORDER BY ABS(julianday(timestamp) - julianday(?))
                    LIMIT 1""",
-                (timestamp, timestamp, timestamp),
+                (key, _WEATHER_WINDOW_DAYS, key),
             ).fetchone()
 
         if row is None:
@@ -82,11 +110,12 @@ class HistoryStorageMixin(StorageMixinBase):
 
     def delete_old_weather(self, max_age_days: int = 30) -> int:
         """Delete weather snapshots older than max_age_days (blocking)."""
-        cutoff = (dt_util.now() - timedelta(days=max_age_days)).isoformat()
+        cutoff = _utc_cutoff(max_age_days)
         with self._lock:
             conn = self._ensure_conn()
             cursor = conn.execute(
-                "DELETE FROM weather_history WHERE timestamp < ?", (cutoff,)
+                "DELETE FROM weather_history WHERE julianday(timestamp) < julianday(?)",
+                (cutoff,),
             )
             conn.commit()
             return cursor.rowcount
@@ -101,7 +130,8 @@ class HistoryStorageMixin(StorageMixinBase):
     def load_weather_history(self) -> list[dict[str, Any]]:
         """Return every stored weather snapshot, oldest first (blocking).
 
-        Each row has ``timestamp`` (ISO; older rows are naive local time),
+        Each row has ``timestamp`` (UTC slot start, ``…Z``, see
+        ``utc_slot_key``),
         ``temperature``, ``wind_speed`` (m/s), ``wind_direction``,
         ``cloud_coverage`` and ``humidity``; any value may be None.
         """
@@ -186,17 +216,24 @@ class HistoryStorageMixin(StorageMixinBase):
                 self.last_data_write = dt_util.utcnow()
 
     def find_nordpool_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
-        """Find Nordpool prognosis closest to a timestamp (blocking)."""
+        """Find the prognosis closest to a timestamp, within an hour (blocking).
+
+        Args:
+            timestamp: ISO timestamp, with any UTC offset (naive = Home
+                Assistant local time).
+        """
+        key = _utc_key(timestamp)
+        if key is None:
+            return None
         with self._lock:
             conn = self._ensure_conn()
             row = conn.execute(
                 """SELECT consumption, solar, wind_offshore, wind_onshore
                    FROM nordpool_prognoses
-                   WHERE timestamp >= datetime(?, '-1 hour')
-                     AND timestamp <= datetime(?, '+1 hour')
-                   ORDER BY ABS(strftime('%s', timestamp) - strftime('%s', ?))
+                   WHERE ABS(julianday(timestamp) - julianday(?)) <= ?
+                   ORDER BY ABS(julianday(timestamp) - julianday(?))
                    LIMIT 1""",
-                (timestamp, timestamp, timestamp),
+                (key, _NORDPOOL_WINDOW_DAYS, key),
             ).fetchone()
 
         if row is None:
@@ -210,11 +247,13 @@ class HistoryStorageMixin(StorageMixinBase):
 
     def delete_old_nordpool(self, max_age_days: int = 30) -> int:
         """Delete old Nordpool prognoses (blocking)."""
-        cutoff = (dt_util.now() - timedelta(days=max_age_days)).isoformat()
+        cutoff = _utc_cutoff(max_age_days)
         with self._lock:
             conn = self._ensure_conn()
             cursor = conn.execute(
-                "DELETE FROM nordpool_prognoses WHERE timestamp < ?", (cutoff,)
+                "DELETE FROM nordpool_prognoses "
+                "WHERE julianday(timestamp) < julianday(?)",
+                (cutoff,),
             )
             conn.commit()
             return cursor.rowcount

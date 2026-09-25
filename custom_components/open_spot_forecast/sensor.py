@@ -37,17 +37,9 @@ from .const import (
     UPDATE_SIGNAL_FORECAST,
 )
 from .price_series import known_prices
-from .time_slots import SLOT_MINUTES
+from .time_slots import SLOT_MINUTES, parse_utc
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def _parse_utc(value: Any) -> datetime | None:
-    """Parse an ISO timestamp as UTC (naive = Home Assistant local time)."""
-    if not isinstance(value, str):
-        return None
-    parsed = dt_util.parse_datetime(value)
-    return dt_util.as_utc(parsed) if parsed is not None else None
 
 
 def current_prediction(
@@ -70,10 +62,10 @@ def current_prediction(
     first_future: dict[str, Any] | None = None
     first_future_start: datetime | None = None
     for prediction in predictions:
-        start = _parse_utc(prediction.get("start"))
+        start = parse_utc(prediction.get("start"))
         if start is None:
             continue
-        end = _parse_utc(prediction.get("end"))
+        end = parse_utc(prediction.get("end"))
         if end is None or end <= start:
             end = start + timedelta(minutes=SLOT_MINUTES)
         if start <= now < end:

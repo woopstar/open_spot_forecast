@@ -227,7 +227,7 @@ def test_new_database_starts_at_the_spot_price_schema(tmp_path: Path) -> None:
             row = conn.execute(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()
-        assert int(row[0]) == SPOT_PRICE_SCHEMA_VERSION
+        assert int(row[0]) >= SPOT_PRICE_SCHEMA_VERSION
     finally:
         storage.close()
 

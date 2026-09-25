@@ -455,11 +455,15 @@ async def test_new_quarter_stores_a_weather_snapshot_and_prunes(
     harness.predictor.storage.count_weather_snapshots.return_value = 100
     now = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
 
-    with patch("homeassistant.util.dt.now", return_value=now):
+    with (
+        patch("homeassistant.util.dt.now", return_value=now),
+        patch("homeassistant.util.dt.utcnow", return_value=now.astimezone(UTC)),
+    ):
         await harness.updater.new_quarter(now)
 
+    # Keyed by the UTC slot start (#59): 10:20 local is in the 08:15 UTC slot
     harness.predictor.storage.insert_weather_snapshot.assert_called_once_with(
-        now.isoformat(), 12.0, None, None, None, None, None
+        "2026-09-24T08:15:00Z", 12.0, None, None, None, None, None
     )
     harness.predictor.storage.delete_old_weather.assert_called_once_with(30)
     assert _signals(harness) == [UPDATE_SIGNAL]
