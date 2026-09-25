@@ -1,6 +1,8 @@
 """Sensor platform for Open Spot Forecast."""
 
 import logging
+from collections.abc import Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -12,7 +14,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import slugify as util_slugify
+from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .accuracy_sensor import build_lead_time_accuracy_sensors
 from .const import (
@@ -35,8 +37,50 @@ from .const import (
     UPDATE_SIGNAL_FORECAST,
 )
 from .price_series import known_prices
+from .time_slots import SLOT_MINUTES
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _parse_utc(value: Any) -> datetime | None:
+    """Parse an ISO timestamp as UTC (naive = Home Assistant local time)."""
+    if not isinstance(value, str):
+        return None
+    parsed = dt_util.parse_datetime(value)
+    return dt_util.as_utc(parsed) if parsed is not None else None
+
+
+def current_prediction(
+    predictions: Sequence[dict[str, Any]], now: datetime
+) -> dict[str, Any] | None:
+    """Return the prediction whose slot contains ``now``, else the first future one.
+
+    Slots are compared in UTC, so the repeated hour on the DST fall-back day
+    resolves to the right slot. A prediction without an ``end`` covers one
+    15-minute slot; one without a parseable ``start`` is skipped.
+
+    Args:
+        predictions: Predictions with ISO ``start`` / ``end`` timestamps.
+        now: The current time, timezone-aware.
+
+    Returns:
+        The prediction for the current slot; without one, the earliest
+        prediction that starts after ``now``; None if every prediction is past.
+    """
+    first_future: dict[str, Any] | None = None
+    first_future_start: datetime | None = None
+    for prediction in predictions:
+        start = _parse_utc(prediction.get("start"))
+        if start is None:
+            continue
+        end = _parse_utc(prediction.get("end"))
+        if end is None or end <= start:
+            end = start + timedelta(minutes=SLOT_MINUTES)
+        if start <= now < end:
+            return prediction
+        if now < start and (first_future_start is None or start < first_future_start):
+            first_future, first_future_start = prediction, start
+    return first_future
 
 
 async def async_setup_entry(
@@ -567,34 +611,22 @@ class MLPredictionSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
+        """Return the predicted price (VAT included) for the current slot.
+
+        Falls back to the first future slot when the predictions start later.
+        """
+        prediction = self._state_prediction()
+        if prediction is None:
+            return None
+        price = prediction.get("price")
+        return self._with_vat(price) if price is not None else None
+
+    def _state_prediction(self) -> dict[str, Any] | None:
+        """Return the prediction the state shows (see ``current_prediction``)."""
         ml_predictor = self.api_data.get("ml_predictor")
-        if ml_predictor:
-            predictions = ml_predictor.predictions
-            if predictions:
-                # Find the next prediction (closest future timestamp)
-                from datetime import datetime
-
-                now = datetime.now()
-                next_pred = None
-                for pred in predictions:
-                    start_str = pred.get("start")
-                    if start_str:
-                        try:
-                            pred_time = datetime.fromisoformat(start_str)
-                            if pred_time > now:
-                                next_pred = pred
-                                break
-                        except ValueError, TypeError:
-                            continue
-
-                # Fallback to first prediction if no future prediction found
-                if next_pred is None:
-                    next_pred = predictions[0]
-
-                price = next_pred.get("price")
-                if price is not None:
-                    return self._with_vat(price)
-        return None
+        if not ml_predictor or not ml_predictor.predictions:
+            return None
+        return current_prediction(ml_predictor.predictions, dt_util.utcnow())
 
     def _with_vat(self, spot_price: float) -> float:
         """Return a predicted spot price (currency/kWh excl. VAT) with VAT added."""
@@ -621,6 +653,11 @@ class MLPredictionSensor(SensorEntity):
                         }
                     )
             attrs["predictions"] = predictions_with_unit
+            # The slot whose prediction is the state
+            state_prediction = self._state_prediction()
+            attrs["state_slot_start"] = (
+                state_prediction.get("start") if state_prediction else None
+            )
             # Every price above and below: spot price + VAT, no tariffs
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = False
