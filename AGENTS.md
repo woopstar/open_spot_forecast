@@ -97,7 +97,7 @@ The agent MUST:
 
 1. **Read `docs/ml_documentation.md` before touching any ML code** — model, feature vector,
    self-learning, bias correction, confidence scoring, or storage schema.
-2. **Verify that every ML change is consistent with the docs** — 20-feature vector, 96-slot
+2. **Verify that every ML change is consistent with the docs** — 17-feature vector, 96-slot
    granularity, bias-correction EMA, solar-scaling factor, and confidence floor must all match.
 3. **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
    where relevant) whenever a change intentionally alters ML semantics. Docs and implementation
@@ -108,10 +108,11 @@ The agent MUST:
 
 Key invariants to verify for every ML PR:
 
-- Feature vector stays at 20 canonical features (any add/remove is a model change).
+- Feature vector stays at 17 canonical features (any add/remove is a model change).
 - Slot granularity is 96 (15-min), never hourly (0-23).
 - Bias correction uses the EMA formula `0.9 * old + 0.1 * bias_ratio`.
-- Solar scaling uses the EMA of `actual_power / solcast_estimate`.
+- Solar scaling uses the EMA of `actual_power / solcast_estimate` (learned, not a price-model input).
+- Training and prediction rows both come from `build_feature_row()`; unknown inputs are NaN.
 - Training uses `weather_history` actuals; prediction uses live forecasts.
 - Storage schema (predictions, error_metrics, bias_correction, price_history, weather_history,
   meta) is versioned and migrations run once.

@@ -97,49 +97,82 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (20 features)
+## Feature Vector (17 features)
 
-| #   | Feature                | Source         | Description                        |
-| --- | ---------------------- | -------------- | ---------------------------------- |
-| 0   | `hour`                 | Time           | Hour of day (0-23)                 |
-| 1   | `day_of_week`          | Time           | 0=Mon, 6=Sun                       |
-| 2   | `is_weekend`           | Time           | 1 if Saturday/Sunday               |
-| 3   | `hour_sin`             | Time           | sin(2π × hour / 24)                |
-| 4   | `hour_cos`             | Time           | cos(2π × hour / 24)                |
-| 5   | `wind_speed_mean`      | Weather entity | Wind speed (m/s)                   |
-| 6   | `wind_power_estimate`  | Derived        | Power curve(speed)                 |
-| 7   | `wind_direction`       | Weather entity | Wind bearing (0-360°)              |
-| 8   | `cloud_coverage`       | Weather entity | Cloud cover (%)                    |
-| 9   | `humidity`             | Weather entity | Relative humidity (%)              |
-| 10  | `solar_radiation_mean` | Solcast        | Average solar estimate             |
-| 11  | `solar_power_estimate` | Solcast        | Total daily solar estimate, scaled |
-| 12  | `price_mean`           | Stromligning   | Mean of all known prices           |
-| 13  | `temperature`          | Weather entity | Temperature (°C) per slot          |
-| 14  | `consumption_forecast` | Nordpool API   | DK1 demand forecast (MW)           |
-| 15  | `solar_generation`     | Nordpool API   | Solar generation forecast (MW)     |
-| 16  | `wind_offshore`        | Nordpool API   | Offshore wind forecast (MW)        |
-| 17  | `wind_onshore`         | Nordpool API   | Onshore wind forecast (MW)         |
-| 18  | `net_demand`           | Derived        | consumption - solar - wind (MW)    |
-| 19  | `wind_share`           | Derived        | (offshore + onshore) / consumption |
+| #   | Feature                | Source             | Description                                   |
+| --- | ---------------------- | ------------------ | --------------------------------------------- |
+| 0   | `hour`                 | Time               | Hour of day (0-23)                            |
+| 1   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                  |
+| 2   | `is_weekend`           | Time               | 1 if Saturday/Sunday                          |
+| 3   | `hour_sin`             | Time               | sin(2π × hour / 24)                           |
+| 4   | `hour_cos`             | Time               | cos(2π × hour / 24)                           |
+| 5   | `wind_speed_mean`      | Weather entity     | Wind speed in the slot (m/s)                  |
+| 6   | `wind_power_estimate`  | Derived            | Power curve(wind speed), 0-1                  |
+| 7   | `wind_direction`       | Weather entity     | Wind bearing (0-360°)                         |
+| 8   | `cloud_coverage`       | Weather entity     | Cloud cover (%)                               |
+| 9   | `humidity`             | Weather entity     | Relative humidity (%)                         |
+| 10  | `temperature`          | Weather entity     | Temperature in the slot                       |
+| 11  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)     |
+| 12  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW) |
+| 13  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW) |
+| 14  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)  |
+| 15  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW) |
+| 16  | `wind_share`           | Derived            | (offshore + onshore) / consumption            |
 
-Column order is `FEATURE_NAMES` in `ml/features.py`. Training, prediction,
-hyperparameter search and the backtest all build rows with
-`build_feature_vector()`, which fills a missing feature with 0 (humidity 50,
-temperature 15) and coerces non-numeric values to 0. Time features (0-4) come
-from `slot_time_features()`, which is shared by training and prediction.
+Column order is `FEATURE_NAMES` in `ml/features.py`.
+
+**One definition for training and prediction** (#17). Every row, for
+training, prediction, hyperparameter search and the backtest, is built by
+`build_feature_row(slot_start, SlotInputs)` in `ml/features.py` and turned
+into the model input by `build_feature_vector()`. The two phases differ only
+in where a slot's `SlotInputs` come from (see
+[Training vs Prediction Segmentation](#training-vs-prediction-segmentation)).
+Time features (0-4) come from `slot_time_features()`; derived features
+(6, 15, 16) are computed from the slot's own inputs.
+
+**Missing inputs are NaN.** An input that is unknown for a slot (no weather
+forecast that far ahead, no stored snapshot for a training slot, Nordpool
+prognoses only exist for today and tomorrow) is `None` in the feature dict
+and NaN in the model input, and so is every derived feature that needs it.
+The price model handles NaN natively (see [Model](#model)). Nothing is
+replaced by 0, 15 °C, 50 % humidity or the current observation. Rows whose
+target price is missing are not training rows.
+
+**Removed in #17**, because they meant different things in training and
+prediction:
+
+- `price_mean`: constant over all training rows (the mean of all history),
+  but the mean of today's and tomorrow's prices at prediction. The previous
+  day's mean price was tested as a consistent replacement: it lowered the
+  30-day 1d MAE from 3.27 to 3.17 ct/kWh but raised 2d/3d MAE from 3.30/3.31
+  to 4.16/4.13, because that day is not yet known two or more days ahead. It
+  was not kept.
+- `solar_radiation_mean` and `solar_power_estimate`: the inverter's
+  instantaneous output (W) in training, Solcast's daily kWh estimate
+  (constant over all slots) at prediction. The configured Solcast sensor
+  only covers today, and predictions start where confirmed prices end
+  (tomorrow or later), so a per-slot Solcast value would be unknown in every
+  prediction row. The model's solar input is Nordpool's per-slot solar
+  prognosis (`solar_generation`), the same source and unit in both phases.
+  Irradiance arrives with #22.
 
 ## Data Sources
 
-| Source                       | Type                | Resolution    | Used for                                |
-| ---------------------------- | ------------------- | ------------- | --------------------------------------- |
-| `sensor.stromligning_*`      | Confirmed prices    | 15-min        | Price history, self-learning target     |
-| `weather.get_forecasts`      | Weather forecast    | Hourly (~48h) | Per-slot wind, temp, cloud, humidity    |
-| `sensor.solcast_*`           | Solar forecast      | Hourly        | Solar features, scaled to actual output |
-| `weather.forecast_*` (state) | Current weather     | Scalar        | Defaults when forecast unavailable      |
-| `Nordpool Consumption API`   | Demand forecast     | Hourly        | Market demand prognosis (MW)            |
-| `Nordpool Production API`    | Generation forecast | 15-min        | Solar, wind offshore/onshore (MW)       |
-| `sensor.power_inverter_*`    | Actual solar        | Scalar        | Solar scaling factor calibration        |
-| `weather_history` (SQLite)   | Actual weather      | 15-min        | Training with ground truth              |
+| Source                        | Type                | Resolution   | Used for                                               |
+| ----------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
+| `sensor.stromligning_*`       | Confirmed prices    | 15-min       | Price history, self-learning target                    |
+| `weather.get_forecasts`       | Weather forecast    | Hourly       | Prediction: per-slot wind (m/s), temp, cloud, humidity |
+| `weather.forecast_*` (state)  | Current weather     | Every 15 min | `weather_history` snapshots (training)                 |
+| `Nordpool Consumption API`    | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |
+| `Nordpool Production API`     | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases         |
+| `sensor.solcast_*`            | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)          |
+| `sensor.power_inverter_*`     | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
+| `weather_history` (SQLite)    | Actual weather      | 15-min       | Training inputs                                        |
+| `nordpool_prognoses` (SQLite) | Stored prognoses    | Hourly       | Training inputs                                        |
+
+Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
+(default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
+snapshots and for the hourly forecast alike.
 
 ## Nordpool Prognoses
 
@@ -149,7 +182,12 @@ Two public APIs (no authentication) provide the market's own forecasts:
 - **ProductionDataPrognoses**: 15-min generation forecast per type (Solar, WindOffshore, WindOnshore)
 
 These are the same inputs used by market participants. They're fetched
-before each prediction run (every 6 hours) for today and tomorrow.
+before each prediction run (every 6 hours) for today and tomorrow, stored in
+`nordpool_prognoses` (one row per hour: the hour's consumption and the
+production of its first quarter), and backfilled for the days in
+`price_history` at startup. Training reads those stored rows; prediction
+reads the live prognoses at the same resolution: the hour's consumption and
+the production at the hour's start, for all four slots of the hour.
 
 Derived features:
 
@@ -160,10 +198,17 @@ wind_share = (wind_offshore + wind_onshore) / consumption
 
 ## Training vs Prediction Segmentation
 
-| Phase          | Weather source              | Nordpool source                         | Purpose                 |
-| -------------- | --------------------------- | --------------------------------------- | ----------------------- |
-| **Training**   | `weather_history` (actuals) | Not used (no historical NP data stored) | Learn real cause→effect |
-| **Prediction** | `weather.get_forecasts`     | Nordpool APIs (live)                    | Predict future price    |
+| Phase          | Weather source                                    | Nordpool source                       | Purpose                 |
+| -------------- | ------------------------------------------------- | ------------------------------------- | ----------------------- |
+| **Training**   | `weather_history` snapshot taken in the slot      | `nordpool_prognoses` row for the hour | Learn real cause→effect |
+| **Prediction** | `weather.get_forecasts` entry for the slot's hour | Live prognoses for the slot's hour    | Predict future price    |
+
+Training reads both tables once per fit (`TrainingInputs` in
+`ml/training_inputs.py`) and matches rows to slots on their UTC epoch.
+Weather snapshots are stored with their UTC offset; older snapshots without
+one are read as local time. Prediction matches forecasts and prognoses on
+the slot's UTC hour, so HA's UTC forecast timestamps line up with local slot
+times. Training never uses the current forecast's values.
 
 ## Slot Timestamps and DST
 
@@ -225,14 +270,18 @@ timeline so a DST change cannot shift it.
 
 ## Solar Scaling Factor
 
-A learned EMA ratio between Solcast's estimate and actual inverter output:
+A learned EMA ratio between Solcast's estimate for today and the actual
+inverter output:
 
 ```
 solar_scale = EMA(actual_power / solcast_estimate)
 ```
 
-Updated every prediction run. Applied to solar features before they enter
-the price model.
+Updated every prediction run (`_update_solar_scale`) and persisted. Since
+#17 it is **not applied to the price model**: the model no longer has a site
+solar feature (see [Feature Vector](#feature-vector-17-features)), and a
+factor applied to prediction rows only would make them differ from training
+rows again.
 
 ## Confidence Score
 
@@ -242,6 +291,8 @@ Confidence adapts based on actual prediction accuracy per 15-minute slot.
 
 ```
 base = 0.80 - wind_penalty - solar_penalty - weekend - 0.05 × days_ahead
+wind_penalty  = 0.20 if the slot has no wind forecast (wind_speed_mean unknown)
+solar_penalty = 0.10 if the slot has no Nordpool solar prognosis
 days_ahead = whole days until the slot starts (0 for the current slot)
 Floor: 0.30
 ```
@@ -307,18 +358,17 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 | Row                           | Model                                                                                                                                                                        |
 | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `naive (same slot last week)` | Price of the same local wall-clock slot seven days earlier. The bar every model must clear.                                                                                  |
-| `current (NumPy GBM)`         | `create_price_model()` fitted on rows from `slot_time_features()` + `build_feature_vector()`: the integration's own model and feature code.                                  |
+| `current (NumPy GBM)`         | `create_price_model()` fitted on rows from `build_feature_row()` + `build_feature_vector()`: the integration's own model and feature code.                                   |
 | `lightgbm (reference)`        | LightGBM (500 rounds, learning rate 0.05, 31 leaves, seed 42) on the same rows. Dev-only (`requirements_backtest.txt`): LightGBM has no musllinux wheels, so it cannot ship. |
 
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **No weather or Nordpool history.** Features 5-11 and 13-19 have no
-  historical source (`weather_history` and `nordpool_prognoses` hold 30 days
-  of actuals, not forecasts). They keep `build_feature_vector()`'s constant
-  defaults, and `price_mean` is constant within a window. Both GBMs therefore
-  see only the five time features. Historical weather forecasts arrive with
-  #22 and #23.
+- **No weather or Nordpool history.** Features 5-16 have no source for a
+  year of history (`weather_history` and `nordpool_prognoses` keep 30 days).
+  The backtest passes empty `SlotInputs`, so they are NaN in every row, and
+  both GBMs see only the five time features. Historical weather forecasts
+  arrive with #22 and #23.
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state), clamping negative predictions to 0, and
   hyperparameters restored from HPO are not applied.
@@ -339,7 +389,9 @@ and after every model or feature change, and put both tables in the PR.
 DK1, 365 daily origins from 2025-09-21 to 2026-09-20, retrained daily. MAE
 and RMSE in EUR ct/kWh. Recorded 2026-09-25 with `lightgbm==4.7.0`, after the
 histogram GBM (#14). The `stumps (before #14)` row is the depth-1 model it
-replaced, recorded 2026-09-24.
+replaced, recorded 2026-09-24. Re-run after the feature rework (#17) with
+identical results: the backtest has no weather or Nordpool history, and the
+removed `price_mean` was constant within every window.
 
 **180-day window** (EpexPredictor's setting and the target of #24):
 

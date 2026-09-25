@@ -12,7 +12,7 @@ Leakage is prevented by a strict horizon cutoff, after EpexPredictor's
 returned by ``PriceSeries.between(window_start, cutoff)``, so neither training
 nor feature building can see a price at or after the forecast origin.
 
-The "current" model is built from the integration's own ``slot_time_features``,
+The "current" model is built from the integration's own ``build_feature_row``,
 ``build_feature_vector`` and ``create_price_model``; no feature or model logic
 is duplicated here. This script is not shipped with the integration. Run it
 from the repository root::
@@ -46,8 +46,9 @@ import numpy as np
 from custom_components.open_spot_forecast.const import REGIONS
 from custom_components.open_spot_forecast.ml.features import (
     FEATURE_NAMES,
+    SlotInputs,
+    build_feature_row,
     build_feature_vector,
-    slot_time_features,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
@@ -273,18 +274,16 @@ def load_energy_charts_prices(
 # --- Models --------------------------------------------------------------------
 
 
-def feature_matrix(starts: np.ndarray, tz: tzinfo, price_mean: float) -> np.ndarray:
-    """Return the integration's 20-feature model input for each slot start.
+def feature_matrix(starts: np.ndarray, tz: tzinfo) -> np.ndarray:
+    """Return the integration's model input for each slot start.
 
-    OSF has no historical source for its weather and Nordpool features yet
-    (#22, #23), so those columns keep ``build_feature_vector``'s defaults and
-    are constant. ``price_mean`` is the mean of the visible history, as in
-    ``ModelMixin._train_models``.
+    Rows come from ``build_feature_row``, as in training and prediction. OSF
+    has no historical source for its weather and Nordpool inputs yet (#22,
+    #23), so those inputs are unknown (NaN) and only the time features vary.
     """
     rows = [
         build_feature_vector(
-            slot_time_features(datetime.fromtimestamp(start, tz))
-            | {"price_mean": price_mean}
+            build_feature_row(datetime.fromtimestamp(start, tz), SlotInputs())
         )
         for start in starts.tolist()
     ]
@@ -294,12 +293,8 @@ def feature_matrix(starts: np.ndarray, tz: tzinfo, price_mean: float) -> np.ndar
 def _feature_rows(
     history: PriceSeries, targets: np.ndarray, tz: tzinfo
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (training rows, target rows), both derived only from ``history``."""
-    price_mean = float(np.mean(history.prices))
-    return (
-        feature_matrix(history.starts, tz, price_mean),
-        feature_matrix(targets, tz, price_mean),
-    )
+    """Return (training rows, target rows); features depend only on the slot times."""
+    return feature_matrix(history.starts, tz), feature_matrix(targets, tz)
 
 
 class Forecaster(Protocol):

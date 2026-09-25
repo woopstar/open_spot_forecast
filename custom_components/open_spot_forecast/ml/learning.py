@@ -13,7 +13,8 @@ from homeassistant.util import dt as dt_util
 from ..price_series import is_invalid_price_series
 from ..time_slots import slot_start_in_day
 from .base import PredictorBase
-from .features import slot_time_features
+from .features import build_feature_row
+from .training_inputs import TrainingInputs
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,7 +109,12 @@ class LearningMixin(PredictorBase):
         return True
 
     def get_all_historical_prices(self) -> tuple[list[float], list[dict]]:
-        """Get all historical prices and their corresponding features.
+        """Get all historical prices and their training feature rows.
+
+        Every row comes from ``build_feature_row``, the function prediction
+        rows come from, with the slot's stored weather snapshot and Nordpool
+        prognoses as inputs (``TrainingInputs``). Inputs that were not stored
+        for a slot stay unknown (NaN for the model).
 
         Returns:
             Tuple of (all_prices, all_features) where:
@@ -117,6 +123,11 @@ class LearningMixin(PredictorBase):
         """
         all_prices = []
         all_features = []
+        inputs = TrainingInputs(
+            self.storage.load_weather_history(),
+            self.storage.load_nordpool_history(),
+            self.tz,
+        )
 
         for entry in self.price_history:
             date_str = entry.get("date")
@@ -139,12 +150,9 @@ class LearningMixin(PredictorBase):
                 # the slots after it keep their own times
                 if price is None:
                     continue
+                start = slot_start_in_day(date.date(), interval, self.tz)
                 all_prices.append(price)
-                all_features.append(
-                    slot_time_features(
-                        slot_start_in_day(date.date(), interval, self.tz)
-                    )
-                )
+                all_features.append(build_feature_row(start, inputs.for_slot(start)))
 
         _LOGGER.info(
             "Retrieved %d historical prices from %d days",

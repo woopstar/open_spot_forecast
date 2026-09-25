@@ -191,10 +191,8 @@ def test_training_start_is_the_data_snapshot(predictor: SpotPricePredictor) -> N
     """Data written while training runs is newer than last_trained_at."""
     real_train = predictor._train_models
 
-    def train_with_concurrent_write(
-        historical_prices: list[float], features: list[dict]
-    ) -> None:
-        real_train(historical_prices, features)
+    def train_with_concurrent_write() -> None:
+        real_train()
         # Simulates the 15-minute snapshot landing mid-training
         predictor.storage.insert_weather_snapshot(
             datetime.now().isoformat(), 10.0, 4.0, 180.0, 50.0, 70.0, 0.0

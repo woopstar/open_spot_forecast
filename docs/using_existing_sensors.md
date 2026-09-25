@@ -36,8 +36,11 @@ No DMI API key needed — Met.no is built into Home Assistant and free.
 ## Solcast
 
 Provides solar generation estimates via the Solcast Home Assistant integration.
-The integration reads the `detailed_hourly` attribute for per-hour pv_estimate
-values, which feed into the solar features.
+The integration compares today's estimate with the inverter's actual output to
+learn the solar scaling factor. It is not a price model input: the sensor only
+covers today, while forecasts start tomorrow or later, so the model's solar
+input is Nordpool's per-slot solar prognosis instead (see
+[ML Documentation](ml_documentation.md#feature-vector-17-features)).
 
 ## Stromligning
 

@@ -1,4 +1,4 @@
-"""Invariant tests for the canonical feature vector and time features (issue #34)."""
+"""Invariant tests for the canonical feature vector and feature rows (#34, #17)."""
 
 import math
 import re
@@ -64,10 +64,11 @@ def built_rows(monkeypatch: pytest.MonkeyPatch) -> list[list[float]]:
     return rows
 
 
-def test_feature_vector_has_20_unique_features():
-    """The model input stays at the 20 canonical features."""
-    assert len(FEATURE_NAMES) == 20
-    assert len(set(FEATURE_NAMES)) == 20
+def test_feature_vector_has_17_unique_features():
+    """The model input is the 17 canonical features."""
+    assert len(FEATURE_NAMES) == 17
+    assert len(set(FEATURE_NAMES)) == 17
+    assert "price_mean" not in FEATURE_NAMES
 
 
 def test_feature_names_match_the_documented_vector():
@@ -76,7 +77,7 @@ def test_feature_names_match_the_documented_vector():
         r"^\|\s*(\d+)\s*\|\s*`([a-z_]+)`", ML_DOC.read_text(encoding="utf-8"), re.M
     )
 
-    assert [int(index) for index, _ in documented] == list(range(20))
+    assert [int(index) for index, _ in documented] == list(range(len(FEATURE_NAMES)))
     assert [name for _, name in documented] == list(FEATURE_NAMES)
 
 
@@ -84,20 +85,20 @@ def test_build_feature_vector_follows_feature_names_order():
     """Each feature lands in its documented column."""
     feature = {name: index for index, name in enumerate(FEATURE_NAMES)}
 
-    assert build_feature_vector(feature) == pytest.approx(list(range(20)))
+    assert build_feature_vector(feature) == pytest.approx(
+        list(range(len(FEATURE_NAMES)))
+    )
 
 
-def test_build_feature_vector_defaults():
-    """Missing features default to 0, except humidity 50 % and temperature 15 °C."""
-    vector = dict(zip(FEATURE_NAMES, build_feature_vector({}), strict=True))
+def test_build_feature_vector_missing_features_are_nan():
+    """A missing feature reaches the model as NaN, never as 0, 15 °C or 50 %."""
+    vector = build_feature_vector({})
 
-    assert vector.pop("humidity") == pytest.approx(50.0)
-    assert vector.pop("temperature") == pytest.approx(15.0)
-    assert list(vector.values()) == pytest.approx([0.0] * 18)
+    assert all(math.isnan(value) for value in vector)
 
 
 def test_build_feature_vector_sanitizes_values():
-    """None and non-numeric values become 0.0; numeric strings are parsed."""
+    """None, non-numeric and non-finite values become NaN; numbers are parsed."""
     vector = dict(
         zip(
             FEATURE_NAMES,
@@ -108,19 +109,21 @@ def test_build_feature_vector_sanitizes_values():
                     "temperature": "21.5",
                     "is_weekend": True,
                     "wind_share": np.float64(0.25),
-                    "price_mean": [1.0],
+                    "net_demand": [1.0],
+                    "wind_onshore": math.inf,
                 }
             ),
             strict=True,
         )
     )
 
-    assert vector["hour"] == pytest.approx(0.0)
-    assert vector["humidity"] == pytest.approx(0.0)
+    assert math.isnan(vector["hour"])
+    assert math.isnan(vector["humidity"])
     assert vector["temperature"] == pytest.approx(21.5)
     assert vector["is_weekend"] == pytest.approx(1.0)
     assert vector["wind_share"] == pytest.approx(0.25)
-    assert vector["price_mean"] == pytest.approx(0.0)
+    assert math.isnan(vector["net_demand"])
+    assert math.isnan(vector["wind_onshore"])
     assert all(isinstance(value, float) for value in vector.values())
 
 
@@ -159,7 +162,8 @@ def test_training_and_prediction_share_time_features(tmp_path: Path) -> None:
     _, features = predictor.get_all_historical_prices()
 
     assert len(features) == 96
-    assert features[37] == slot_time_features(datetime(2026, 6, 1, 9, 15, tzinfo=TZ))
+    time_features = slot_time_features(datetime(2026, 6, 1, 9, 15, tzinfo=TZ))
+    assert time_features.items() <= features[37].items()
 
 
 def test_training_rows_come_from_build_feature_vector(
@@ -175,7 +179,7 @@ def test_training_rows_come_from_build_feature_vector(
     monkeypatch.setattr(predictor, "price_model", spy)
     monkeypatch.setattr(predictor, "store_daily_prices", lambda *args: None)
 
-    predictor._train_models([], [{"temperature": 7.5}])
+    predictor._train_models()
 
     assert len(built_rows) == 192
     np.testing.assert_array_equal(spy.fit_rows, np.array(built_rows))
@@ -191,7 +195,7 @@ def test_prediction_rows_come_from_build_feature_vector(
     monkeypatch.setattr(predictor, "price_model", spy)
     features = [
         slot_time_features(datetime(2026, 6, 1, 12, 15 * i, tzinfo=TZ))
-        | {"price_mean": 0.9, "wind_speed_mean": 6.0}
+        | {"wind_speed_mean": 6.0}
         for i in range(4)
     ]
 

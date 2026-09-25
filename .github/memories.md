@@ -89,8 +89,9 @@ via `record_training_prices()` and retrains only if `needs_retraining()` (untrai
 reach the model. HPO runs once per 7 new price days (`hpo_counter` in `meta`).
 
 Pure helpers shared by training, prediction and the dev backtest — never inline them:
-`build_feature_vector()` (model input row, column order `FEATURE_NAMES`) and
-`slot_time_features()` (per-slot time features) in `ml/features.py`, and
+`build_feature_row()` (the one definition of every feature), `build_feature_vector()`
+(model input row, column order `FEATURE_NAMES`) and `slot_time_features()` (per-slot time
+features) in `ml/features.py`, and
 `create_price_model()` (production GBM hyperparameters, also used by HPO) in `ml/models.py`.
 The price model handles NaN inputs natively (each split learns where missing values go),
 so a missing feature can reach it as NaN instead of an invented value.
@@ -113,12 +114,16 @@ raw `sqlite3` connection or write to the learning DB outside this class.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (20 features)
+## Feature Vector (17 features)
 
-The canonical feature vector is defined in `docs/ml_documentation.md`. Per-slot feature
-dicts come from `FeatureMixin._combine_features()` (prediction) and
-`get_all_historical_prices()` + `_train_models()` (training); every model input row is then
-built by `build_feature_vector()` in `FEATURE_NAMES` order:
+The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
+and prediction alike, comes from `build_feature_row(slot_start, SlotInputs)` in
+`ml/features.py`, then `build_feature_vector()` in `FEATURE_NAMES` order. Only the inputs
+differ: `TrainingInputs` (`ml/training_inputs.py`, stored `weather_history` +
+`nordpool_prognoses`, matched by UTC epoch) vs `FeatureMixin._combine_features()` (live
+forecast + prognoses, matched by UTC hour). Unknown inputs are `None` → NaN; never fill in
+0/15 °C/50 % or the current observation, and never copy prediction values into training rows.
+Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
 | #   | Feature                | Source         |
 | --- | ---------------------- | -------------- |
@@ -132,16 +137,13 @@ built by `build_feature_vector()` in `FEATURE_NAMES` order:
 | 7   | `wind_direction`       | Weather entity |
 | 8   | `cloud_coverage`       | Weather entity |
 | 9   | `humidity`             | Weather entity |
-| 10  | `solar_radiation_mean` | Solcast        |
-| 11  | `solar_power_estimate` | Solcast        |
-| 12  | `price_mean`           | Stromligning   |
-| 13  | `temperature`          | Weather entity |
-| 14  | `consumption_forecast` | Nordpool API   |
-| 15  | `solar_generation`     | Nordpool API   |
-| 16  | `wind_offshore`        | Nordpool API   |
-| 17  | `wind_onshore`         | Nordpool API   |
-| 18  | `net_demand`           | Derived        |
-| 19  | `wind_share`           | Derived        |
+| 10  | `temperature`          | Weather entity |
+| 11  | `consumption_forecast` | Nordpool API   |
+| 12  | `solar_generation`     | Nordpool API   |
+| 13  | `wind_offshore`        | Nordpool API   |
+| 14  | `wind_onshore`         | Nordpool API   |
+| 15  | `net_demand`           | Derived        |
+| 16  | `wind_share`           | Derived        |
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.
@@ -179,8 +181,8 @@ A learned EMA ratio between Solcast's estimate and actual inverter output:
 solar_scale = EMA(actual_power / solcast_estimate)
 ```
 
-Updated every prediction run and applied to solar features before they enter the price
-model.
+Updated every prediction run and persisted, but not applied to the price model since #17
+(there is no site-solar feature; scaling only prediction rows would break consistency).
 
 ## Confidence Score
 

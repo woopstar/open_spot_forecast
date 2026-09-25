@@ -7,6 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from custom_components.open_spot_forecast.ml.features import wind_power_curve
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 
 
@@ -32,71 +33,21 @@ class TestSpotPricePredictor:
 
     def test_wind_power_curve(self):
         """Test wind turbine power curve."""
-        hass = _make_hass()
-        predictor = SpotPricePredictor(hass, "DK1")
-
         # Below cut-in speed
-        assert predictor._wind_power_curve(2) == 0
+        assert wind_power_curve(2) == 0
 
         # Between cut-in and rated
-        power = predictor._wind_power_curve(8)
+        power = wind_power_curve(8)
         assert 0 < power < 1
 
         # At rated speed
-        assert predictor._wind_power_curve(12) == 1.0
+        assert wind_power_curve(12) == 1.0
 
         # Above rated but below cut-out
-        assert predictor._wind_power_curve(20) == 1.0
+        assert wind_power_curve(20) == 1.0
 
         # Above cut-out
-        assert predictor._wind_power_curve(30) == 0
-
-    def test_extract_wind_features(self):
-        """Test wind feature extraction."""
-        hass = _make_hass()
-        predictor = SpotPricePredictor(hass, "DK1")
-
-        # Empty weather data
-        features = predictor._extract_wind_features({})
-        assert features["wind_speed_mean"] == 0
-        assert features["wind_power_estimate"] == 0
-
-        # With wind forecast
-        weather_data = {
-            "wind_forecast": [
-                {"wind_speed": 5},
-                {"wind_speed": 10},
-                {"wind_speed": 15},
-            ]
-        }
-        features = predictor._extract_wind_features(weather_data)
-
-        assert features["wind_speed_mean"] == 10
-        assert features["wind_speed_max"] == 15
-        assert features["wind_power_estimate"] > 0
-
-    def test_extract_solar_features(self):
-        """Test solar feature extraction."""
-        hass = _make_hass()
-        predictor = SpotPricePredictor(hass, "DK1")
-
-        # Empty weather data
-        features = predictor._extract_solar_features({})
-        assert features["solar_radiation_mean"] == 0
-        assert features["solar_power_estimate"] == 0
-
-        # With solar forecast
-        weather_data = {
-            "solar_forecast": [
-                {"radiation": 500, "cloud_cover": 0.2},
-                {"radiation": 600, "cloud_cover": 0.3},
-                {"radiation": 700, "cloud_cover": 0.1},
-            ]
-        }
-        features = predictor._extract_solar_features(weather_data)
-
-        assert features["solar_radiation_mean"] == 600
-        assert features["solar_power_estimate"] > 0
+        assert wind_power_curve(30) == 0
 
     def test_generate_time_features(self):
         """Test time feature generation."""
@@ -142,17 +93,17 @@ class TestSpotPricePredictor:
         # Good features
         feature = {
             "wind_speed_mean": 10,
-            "solar_radiation_mean": 500,
+            "solar_generation": 500,
             "is_weekend": 0,
             "timestamp": datetime.now().isoformat(),
         }
         confidence = predictor._estimate_confidence(feature)
         assert 0.7 <= confidence <= 1.0
 
-        # Missing weather data
+        # Missing weather forecast and market prognosis
         feature = {
-            "wind_speed_mean": 0,
-            "solar_radiation_mean": 0,
+            "wind_speed_mean": None,
+            "solar_generation": None,
             "is_weekend": 0,
             "timestamp": datetime.now().isoformat(),
         }
@@ -162,7 +113,7 @@ class TestSpotPricePredictor:
         # Weekend
         feature = {
             "wind_speed_mean": 10,
-            "solar_radiation_mean": 500,
+            "solar_generation": 500,
             "is_weekend": 1,
             "timestamp": datetime.now().isoformat(),
         }

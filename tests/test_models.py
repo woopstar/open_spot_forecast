@@ -59,7 +59,7 @@ def predictor(tmp_path: Path) -> Iterator[SpotPricePredictor]:
 def _train(predictor: SpotPricePredictor) -> None:
     """Train on the fixture history without appending today's prices."""
     with patch.object(predictor, "store_daily_prices"):
-        predictor._train_models([], [])
+        predictor._train_models()
 
 
 def test_live_model_is_fitted_on_all_rows_and_follows_level_shift(

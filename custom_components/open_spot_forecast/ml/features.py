@@ -1,21 +1,30 @@
-"""Feature engineering for the spot price predictor."""
+"""Feature engineering for the spot price predictor.
+
+Every model input row, for training and for prediction, is built by
+``build_feature_row`` from a slot start and that slot's ``SlotInputs``. The
+two phases only differ in where the inputs come from: stored actuals and
+prognoses for training (``ml/training_inputs.py``), live forecasts and
+prognoses for prediction (``FeatureMixin._combine_features``). An input that
+is not known for a slot is ``None`` in the row and NaN in the model input;
+it is never replaced by an invented value.
+"""
 
 import logging
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+import math
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta, tzinfo
 from typing import Any
 
 import numpy as np
 
 from homeassistant.util import dt as dt_util
 
-from ..price_series import known_prices
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 20-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 17-feature model input, in column order (docs/ml_documentation.md).
 FEATURE_NAMES: tuple[str, ...] = (
     "hour",
     "day_of_week",
@@ -27,9 +36,6 @@ FEATURE_NAMES: tuple[str, ...] = (
     "wind_direction",
     "cloud_coverage",
     "humidity",
-    "solar_radiation_mean",
-    "solar_power_estimate",
-    "price_mean",
     "temperature",
     "consumption_forecast",
     "solar_generation",
@@ -39,18 +45,87 @@ FEATURE_NAMES: tuple[str, ...] = (
     "wind_share",
 )
 
-# Value for a feature missing from the feature dict; unlisted features default to 0.
-_FEATURE_DEFAULTS: dict[str, float] = {"humidity": 50.0, "temperature": 15.0}
+HOUR_SECONDS = 3600
+
+
+@dataclass(frozen=True)
+class SlotInputs:
+    """Raw inputs for one 15-minute slot; ``None`` means unknown.
+
+    Weather values are for the slot, wind speed in m/s (training: the stored
+    snapshot, taken every 15 minutes; prediction: the hourly forecast for the
+    slot's hour). Nordpool values are the day-ahead prognoses for the slot's
+    hour, in MW.
+    """
+
+    temperature: float | None = None
+    wind_speed: float | None = None
+    wind_direction: float | None = None
+    cloud_coverage: float | None = None
+    humidity: float | None = None
+    consumption: float | None = None
+    solar_generation: float | None = None
+    wind_offshore: float | None = None
+    wind_onshore: float | None = None
+
+
+def optional_float(value: Any) -> float | None:
+    """Return ``value`` as a finite float, or None if missing or not a number."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except ValueError, TypeError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def floor_epoch(moment: datetime, tz: tzinfo, step_seconds: int = 900) -> int:
+    """Return the UTC epoch of ``moment`` floored to ``step_seconds``.
+
+    A naive ``moment`` is local time in ``tz``. Slots, forecasts and stored
+    history are all matched on this one UTC key, so neither a DST change nor
+    a timestamp's format can shift a value onto the wrong slot.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=tz)
+    epoch = int(moment.timestamp())
+    return epoch - epoch % step_seconds
+
+
+def utc_epoch(timestamp: Any, tz: tzinfo, step_seconds: int = 900) -> int | None:
+    """Return ``floor_epoch`` of an ISO timestamp, or None if it does not parse.
+
+    A timestamp without an offset is local time in ``tz`` (weather snapshots
+    were stored that way before #17).
+    """
+    try:
+        moment = datetime.fromisoformat(str(timestamp))
+    except ValueError:
+        return None
+    return floor_epoch(moment, tz, step_seconds)
+
+
+def hour_epoch(timestamp: Any, tz: tzinfo) -> int | None:
+    """Return the UTC epoch of the start of an ISO timestamp's hour."""
+    return utc_epoch(timestamp, tz, HOUR_SECONDS)
+
+
+def wind_power_curve(wind_speed: float) -> float:
+    """Return a simplified turbine power curve (0-1) for a wind speed in m/s."""
+    if wind_speed < 3:
+        return 0.0
+    if wind_speed < 12:
+        return ((wind_speed - 3) / 9) ** 3
+    if wind_speed < 25:
+        return 1.0
+    return 0.0
 
 
 def _to_float(value: Any) -> float:
-    """Coerce a feature value to float, mapping None and non-numerics to 0.0."""
-    if value is None:
-        return 0.0
-    try:
-        return float(value)
-    except ValueError, TypeError:
-        return 0.0
+    """Coerce a feature value to float; None and non-numerics become NaN."""
+    number = optional_float(value)
+    return math.nan if number is None else number
 
 
 def build_feature_vector(feature: dict[str, Any]) -> list[float]:
@@ -58,19 +133,16 @@ def build_feature_vector(feature: dict[str, Any]) -> list[float]:
 
     Training, prediction, hyperparameter search and the dev backtest
     (``scripts/backtest.py``) all build rows here, so ``FEATURE_NAMES`` is
-    the single source of truth for the column order.
+    the single source of truth for the column order. A missing or unknown
+    feature is NaN, which the price model handles natively.
 
     Args:
-        feature: Feature dict for one slot, as produced by
-            ``slot_time_features`` plus weather/price/Nordpool keys.
+        feature: Feature dict for one slot, as produced by ``build_feature_row``.
 
     Returns:
-        20 floats in ``FEATURE_NAMES`` order.
+        ``len(FEATURE_NAMES)`` floats in ``FEATURE_NAMES`` order.
     """
-    return [
-        _to_float(feature.get(name, _FEATURE_DEFAULTS.get(name, 0)))
-        for name in FEATURE_NAMES
-    ]
+    return [_to_float(feature.get(name)) for name in FEATURE_NAMES]
 
 
 def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str, Any]:
@@ -104,6 +176,50 @@ def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str,
     }
 
 
+def build_feature_row(
+    start: datetime, inputs: SlotInputs, interval_minutes: int = 15
+) -> dict[str, Any]:
+    """Return the feature dict of one slot: its time features plus its inputs.
+
+    The single definition of every model feature, used for training rows and
+    for prediction rows alike. A derived feature is None when any input it
+    needs is unknown.
+
+    Args:
+        start: Timezone-aware slot start in the price region's local time.
+        inputs: The slot's raw inputs.
+        interval_minutes: Slot length.
+
+    Returns:
+        ``slot_time_features(start)`` plus every non-time feature.
+    """
+    wind = inputs.wind_speed
+    consumption = inputs.consumption
+    offshore, onshore = inputs.wind_offshore, inputs.wind_onshore
+    net_demand = None
+    wind_share = None
+    if consumption is not None and offshore is not None and onshore is not None:
+        if inputs.solar_generation is not None:
+            net_demand = consumption - inputs.solar_generation - offshore - onshore
+        if consumption > 1e-9:
+            wind_share = (offshore + onshore) / consumption
+
+    return slot_time_features(start, interval_minutes) | {
+        "wind_speed_mean": wind,
+        "wind_power_estimate": wind_power_curve(wind) if wind is not None else None,
+        "wind_direction": inputs.wind_direction,
+        "cloud_coverage": inputs.cloud_coverage,
+        "humidity": inputs.humidity,
+        "temperature": inputs.temperature,
+        "consumption_forecast": consumption,
+        "solar_generation": inputs.solar_generation,
+        "wind_offshore": offshore,
+        "wind_onshore": onshore,
+        "net_demand": net_demand,
+        "wind_share": wind_share,
+    }
+
+
 class FeatureMixin(PredictorBase):
     """Feature extraction and engineering methods.
 
@@ -111,122 +227,6 @@ class FeatureMixin(PredictorBase):
     referenced via self (e.g. self.predictions) are provided by the
     owning class.
     """
-
-    def _extract_wind_features(self, weather_data: dict) -> dict:
-        """Extract wind-related features from weather data."""
-        wind_forecast = weather_data.get("wind_forecast", [])
-
-        if wind_forecast:
-            wind_speeds = [
-                f.get("wind_speed", 0) for f in wind_forecast if f.get("wind_speed")
-            ]
-            if wind_speeds:
-                wind_power = [self._wind_power_curve(v) for v in wind_speeds]
-                return {
-                    "wind_speed_mean": float(np.mean(wind_speeds)),
-                    "wind_speed_max": float(np.max(wind_speeds)),
-                    "wind_speed_std": float(np.std(wind_speeds)),
-                    "wind_power_mean": float(np.mean(wind_power)),
-                    "wind_power_max": float(np.max(wind_power)),
-                    "wind_power_estimate": float(sum(wind_power)),
-                    "wind_direction": float(weather_data.get("wind_direction", 0)),
-                }
-
-        # Fallback: use current wind speed from HA sensor (scalar)
-        wind_speed = weather_data.get("wind_speed", 0)
-        if isinstance(wind_speed, (int, float)) and wind_speed > 0:
-            wind_power_scalar = self._wind_power_curve(wind_speed)
-            return {
-                "wind_speed_mean": float(wind_speed),
-                "wind_speed_max": float(wind_speed),
-                "wind_speed_std": 0.0,
-                "wind_power_mean": float(wind_power_scalar),
-                "wind_power_max": float(wind_power_scalar),
-                "wind_power_estimate": float(wind_power_scalar),
-                "wind_direction": float(weather_data.get("wind_direction", 0)),
-            }
-
-        return {
-            "wind_speed_mean": 0,
-            "wind_speed_max": 0,
-            "wind_power_estimate": 0,
-            "wind_direction": 0,
-        }
-
-    def _extract_solar_features(self, weather_data: dict) -> dict:
-        """Extract solar-related features from weather data."""
-        # Check both key names (solcast_forecast from HA sensor, solar_forecast from DMI)
-        solar_forecast = weather_data.get(
-            "solcast_forecast", weather_data.get("solar_forecast", [])
-        )
-        solar_power = weather_data.get("solar_power", 0)
-
-        if not solar_forecast and not solar_power:
-            return {"solar_radiation_mean": 0, "solar_power_estimate": 0}
-
-        # Handle Solcast dict format
-        if isinstance(solar_forecast, dict):
-            detailed_hourly = solar_forecast.get("detailed_hourly", [])
-            if detailed_hourly:
-                radiation = [
-                    h.get("pv_estimate", 0)
-                    for h in detailed_hourly
-                    if h.get("pv_estimate") is not None
-                ]
-                if radiation:
-                    return {
-                        "solar_radiation_mean": float(np.mean(radiation)),
-                        "solar_radiation_max": float(np.max(radiation)),
-                        "cloud_cover_mean": 0,
-                        "solar_power_mean": float(np.mean(radiation)),
-                        "solar_power_estimate": solar_forecast.get(
-                            "estimate_today", float(sum(radiation))
-                        ),
-                    }
-
-            estimate = solar_forecast.get("estimate_today", 0)
-            return {
-                "solar_radiation_mean": estimate / 24 if estimate else 0,
-                "solar_radiation_max": estimate / 12 if estimate else 0,
-                "cloud_cover_mean": 0,
-                "solar_power_mean": estimate / 24 if estimate else 0,
-                "solar_power_estimate": float(estimate),
-            }
-
-        # Handle list format (original DMI format)
-        if isinstance(solar_forecast, list) and solar_forecast:
-            radiation = [
-                f.get("radiation", 0) for f in solar_forecast if f.get("radiation")
-            ]
-            cloud_cover = [
-                f.get("cloud_cover", 0) for f in solar_forecast if f.get("cloud_cover")
-            ]
-
-            if not radiation:
-                return {"solar_radiation_mean": 0, "solar_power_estimate": 0}
-
-            avg_cloud = float(np.mean(cloud_cover)) if cloud_cover else 0
-            solar_power_list = [r * 0.15 * (1 - avg_cloud * 0.7) for r in radiation]
-
-            return {
-                "solar_radiation_mean": float(np.mean(radiation)),
-                "solar_radiation_max": float(np.max(radiation)),
-                "cloud_cover_mean": avg_cloud,
-                "solar_power_mean": float(np.mean(solar_power_list)),
-                "solar_power_estimate": float(sum(solar_power_list)),
-            }
-
-        # Fallback to solar_power sensor
-        if solar_power:
-            return {
-                "solar_radiation_mean": float(solar_power),
-                "solar_radiation_max": float(solar_power),
-                "cloud_cover_mean": 0,
-                "solar_power_mean": float(solar_power),
-                "solar_power_estimate": float(solar_power),
-            }
-
-        return {"solar_radiation_mean": 0, "solar_power_estimate": 0}
 
     def _generate_time_features(
         self,
@@ -265,133 +265,54 @@ class FeatureMixin(PredictorBase):
         return features
 
     def _combine_features(
-        self,
-        wind_features: dict,
-        solar_features: dict,
-        time_features: list[dict],
-        historical_prices: Sequence[float | None],
-        weather_data: dict,
+        self, time_features: list[dict], weather_data: dict
     ) -> list[dict]:
-        """Combine all features into a single feature set.
+        """Build the prediction feature rows from live forecasts and prognoses.
 
-        When hourly weather forecast data is available in weather_data
-        (key: 'weather_forecast'), each time slot gets its own matching
-        wind/temperature/humidity/cloud values instead of sharing a
-        single scalar.
-
-        Nordpool prognoses (consumption, production) are matched per slot
-        when available in weather_data keys:
-          'consumption_prognosis' — hourly demand (MW)
-          'production_prognosis'  — 15-min generation per type (MW)
+        Each slot is matched on its UTC hour to the hourly weather forecast
+        (``weather_forecast``: datetime, temperature, wind_speed in m/s,
+        wind_bearing, cloud_coverage, humidity), the Nordpool consumption
+        prognosis (``consumption_prognosis``: UTC hour → MW) and the Nordpool
+        production prognosis at the start of that hour
+        (``production_prognosis``: deliveryStart, solar, wind_offshore,
+        wind_onshore), the resolution training reads from storage. A slot
+        outside a forecast's horizon gets None for those inputs, not a
+        default or the current observation.
         """
+        tz = self.tz
+        weather_by_hour: dict[int, dict] = {}
+        for entry in weather_data.get("weather_forecast") or []:
+            key = hour_epoch(entry.get("datetime", ""), tz)
+            if key is not None:
+                weather_by_hour.setdefault(key, entry)
+        consumption_by_hour: dict[int, Any] = {}
+        consumption = weather_data.get("consumption_prognosis") or {}
+        for timestamp, volume in consumption.items():
+            key = hour_epoch(timestamp, tz)
+            if key is not None:
+                consumption_by_hour.setdefault(key, volume)
+        production_by_start: dict[int, dict] = {}
+        for entry in weather_data.get("production_prognosis") or []:
+            key = utc_epoch(entry.get("deliveryStart", ""), tz, 1)
+            if key is not None:
+                production_by_start.setdefault(key, entry)
+
         combined = []
-        weather_forecast = weather_data.get("weather_forecast")
-        consumption_data = weather_data.get("consumption_prognosis", {})
-        production_data = weather_data.get("production_prognosis", [])
-
-        # Build production lookup by timestamp
-        prod_by_ts: dict[str, dict] = {}
-        for entry in production_data:
-            ts = entry.get("deliveryStart", "")
-            if ts:
-                prod_by_ts[ts] = entry
-
-        # Build a lookup: hour-key -> forecast entry
-        forecast_by_hour: dict[str, dict] = {}
-        if weather_forecast:
-            for entry in weather_forecast:
-                dt_str = entry.get("datetime", "")
-                if dt_str:
-                    hour_key = dt_str[:13] if len(dt_str) >= 13 else dt_str
-                    forecast_by_hour[hour_key] = entry
-
-        known = known_prices(historical_prices)
-        price_stats = {
-            "price_mean": float(np.mean(known)) if known else 0,
-            "price_std": float(np.std(known)) if known else 0,
-            "price_min": float(np.min(known)) if known else 0,
-            "price_max": float(np.max(known)) if known else 0,
-        }
-
-        default_temp = weather_data.get("temperature") or 15.0
-        default_wind = float(weather_data.get("wind_speed") or 0)
-        default_wind_dir = float(weather_data.get("wind_direction") or 0)
-
         for tf in time_features:
-            start = tf.get("start", "")
-
-            slot_temp = default_temp
-            slot_wind = default_wind
-            slot_wind_dir = default_wind_dir
-            slot_cloud = 0.0
-            slot_humidity = 50.0
-
-            if start and forecast_by_hour:
-                hour_key = start[:13] if len(start) >= 13 else start
-                fc = forecast_by_hour.get(hour_key)
-                if fc:
-                    slot_temp = float(fc.get("temperature", slot_temp))
-                    slot_wind = float(fc.get("wind_speed", slot_wind))
-                    slot_wind_dir = float(fc.get("wind_bearing", slot_wind_dir))
-                    slot_cloud = float(fc.get("cloud_coverage", 0))
-                    slot_humidity = float(fc.get("humidity", 50))
-
-            slot_wind_power = self._wind_power_curve(slot_wind)
-
-            # --- Nordpool prognoses: match consumption (hourly) and production (15-min) ---
-            consumption = 0.0
-            solar_gen = 0.0
-            wind_off = 0.0
-            wind_on = 0.0
-
-            # Nordpool returns UTC timestamps; convert the local prediction
-            # start back to UTC so the lookups match.
-            start_dt = dt_util.parse_datetime(start) if start else None
-            utc_start = dt_util.as_utc(start_dt) if start_dt else None
-
-            if utc_start and consumption_data:
-                hour_key = utc_start.strftime("%Y-%m-%dT%H:00:00Z")
-                consumption = consumption_data.get(hour_key, 0.0)
-
-            if utc_start and prod_by_ts:
-                prod = prod_by_ts.get(utc_start.strftime("%Y-%m-%dT%H:%M:%SZ"))
-                if prod:
-                    solar_gen = prod.get("solar", 0.0)
-                    wind_off = prod.get("wind_offshore", 0.0)
-                    wind_on = prod.get("wind_onshore", 0.0)
-
-            net_demand = consumption - solar_gen - wind_off - wind_on
-            wind_share = (wind_off + wind_on) / consumption if consumption > 0 else 0.0
-
-            feature = {
-                **tf,
-                **wind_features,
-                **solar_features,
-                **price_stats,
-                "wind_speed_mean": slot_wind,
-                "wind_power_estimate": slot_wind_power,
-                "wind_direction": slot_wind_dir,
-                "cloud_coverage": slot_cloud,
-                "humidity": slot_humidity,
-                "temperature": slot_temp,
-                "consumption_forecast": consumption,
-                "solar_generation": solar_gen,
-                "wind_offshore": wind_off,
-                "wind_onshore": wind_on,
-                "net_demand": net_demand,
-                "wind_share": wind_share,
-            }
-            combined.append(feature)
-
+            start = datetime.fromisoformat(tf["start"])
+            hour = floor_epoch(start, tz, HOUR_SECONDS)
+            weather = weather_by_hour.get(hour, {})
+            production = production_by_start.get(hour, {})
+            inputs = SlotInputs(
+                temperature=optional_float(weather.get("temperature")),
+                wind_speed=optional_float(weather.get("wind_speed")),
+                wind_direction=optional_float(weather.get("wind_bearing")),
+                cloud_coverage=optional_float(weather.get("cloud_coverage")),
+                humidity=optional_float(weather.get("humidity")),
+                consumption=optional_float(consumption_by_hour.get(hour)),
+                solar_generation=optional_float(production.get("solar")),
+                wind_offshore=optional_float(production.get("wind_offshore")),
+                wind_onshore=optional_float(production.get("wind_onshore")),
+            )
+            combined.append(build_feature_row(start, inputs))
         return combined
-
-    def _wind_power_curve(self, wind_speed: float) -> float:
-        """Simplified wind turbine power curve."""
-        if wind_speed < 3:
-            return 0.0
-        elif wind_speed < 12:
-            return ((wind_speed - 3) / 9) ** 3
-        elif wind_speed < 25:
-            return 1.0
-        else:
-            return 0.0

@@ -14,7 +14,7 @@ All learning data is stored in a single SQLite database:
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                         |
 | `bias_correction`    | `hour` (0-95)               | Per-slot multiplicative correction factors                                                           |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily price arrays: one per 15-min slot from local midnight (92/96/100), `null` for a missing slot   |
-| `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind, cloud, humidity, solar)                                        |
+| `weather_history`    | `timestamp` (ISO)           | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), stored with UTC offset            |
 | `meta`               | `key`                       | Training state, schema version, HPO params and `hpo_counter`                                         |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error |
 

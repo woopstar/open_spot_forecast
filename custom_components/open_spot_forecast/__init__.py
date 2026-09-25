@@ -709,8 +709,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # --- Collect weather snapshot for historical training ---
         if ml_predictor and wind_speed_sensor:
             try:
-                now = datetime.now()
-                now_ts = now.isoformat()
+                # With its UTC offset, so training can match it to a slot
+                now_ts = dt_util.now().isoformat()
                 weather_now = sensor_reader.read_weather_sensors(
                     api_data["sensor_config"]
                 )
