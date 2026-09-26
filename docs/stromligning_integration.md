@@ -125,44 +125,62 @@ startup, it is read again on every 15-minute update.
 Some zero or negative prices are normal (for example on windy, sunny days)
 and keep a day valid. A price of exactly 0 is kept as a price, not skipped.
 
-### Priority Logic
+### Price Sources
 
-```python
-# Priority 1: Stromligning (real consumer prices)
-if stromligning_sensor:
-    stromligning_data = sensor_reader.read_stromligning_sensor(stromligning_sensor)
-    if stromligning_data["today"]:
-        prices_today = stromligning_data["today"]
-        prices_tomorrow = stromligning_data["tomorrow"]
-    else:
-        # Fall through to Nordpool
-        pass
+The price source is chosen when the integration is set up (**Price source**,
+`price_source`, #27):
 
-# Priority 2: Nordpool (spot prices only)
-if not stromligning_sensor and nordpool_sensor:
-    nordpool_data = sensor_reader.read_nordpool_sensor(nordpool_sensor)
-    if nordpool_data["today"]:
-        prices_today = nordpool_data["today"]
-        prices_tomorrow = nordpool_data["tomorrow"]
+| Source                   | Regions            | Displayed price                         | The model's price                         |
+| ------------------------ | ------------------ | --------------------------------------- | ----------------------------------------- |
+| `stromligning` (default) | DK1, DK2           | Stromligning's consumer price (all-in)  | Stromligning's `spotprice_ex_vat` sensors |
+| `dayahead`               | All 13 OSF regions | Day-ahead spot price + VAT (no tariffs) | The same day-ahead spot price, excl. VAT  |
 
-# Priority 3: API fallback
-elif not stromligning_sensor and not nordpool_sensor:
-    await nordpool_api.update_prices()
-    prices_today = nordpool_api.today
-    prices_tomorrow = nordpool_api.tomorrow
-```
+The config flow rejects `stromligning` for a region outside Denmark
+(`stromligning_region`). With `dayahead`, the Stromligning sensors are not
+read, even if they are still configured.
 
-## Comparison: Stromligning vs Nordpool
+**Day-ahead prices** (`api/dayahead_prices.py`) are the day-ahead auction
+results:
 
-| Feature                  | Stromligning        | Nordpool            |
-| ------------------------ | ------------------- | ------------------- |
-| **Price Type**           | Real consumer price | Spot price only     |
-| **Includes Tariffs**     | ✅ Yes              | ❌ No               |
-| **Includes VAT**         | ✅ Yes              | ❌ No               |
-| **Includes Fees**        | ✅ Yes              | ❌ No               |
-| **Matches Bill**         | ✅ Yes              | ❌ No               |
-| **Region-Specific**      | ✅ Yes              | ❌ No               |
-| **Automation Decisions** | ✅ Accurate         | ⚠️ Needs conversion |
+- [energy-charts.info](https://api.energy-charts.info/) is asked first (no
+  key). Its licence differs per zone and comes with every response: CC BY
+  4.0 from Bundesnetzagentur | SMARD.de for e.g. DK1, DK2, NO2, NL, FR and
+  DE-LU, and "private and internal use only" for e.g. SE3, FI, EE, LT and LV.
+- The [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) is
+  the fallback when a security token is configured (**ENTSO-E API key**):
+  it is asked when energy-charts fails or does not cover a request, and
+  energy-charts wins where both have a price. The token is stored in the
+  config entry, sent as a query parameter and never logged.
+- Requests span whole local days of the region, so zones east of UTC (e.g.
+  FI and EE, whose day starts at 21:00/22:00 UTC) are not cut off. Hourly
+  prices fill their four quarter-hours.
+- Prices are stored raw in `dayahead_prices` (EUR/MWh per UTC 15-minute
+  slot) through the gap-aware time-series source (#32): only missing slots
+  are requested, tomorrow from 12:45 CET (when the auction results are due)
+  and then every 5 minutes until it is complete.
+- They are converted to the configured currency per kWh with the ECB
+  reference rate of each day (the latest one on or before it, fetched from
+  the ECB data API once a day, `api/exchange_rates.py`). If the ECB cannot
+  be reached, DKK uses its ERM II central rate (7.46038); SEK and NOK have
+  no prices until the ECB answers.
+- With the ML model, the training window's missing days are backfilled at
+  setup and after midnight and added to the price history, so the model
+  trains on 30 days of prices from the first day.
+
+Without the ML model the day-ahead prices are stored in the same learning
+database, which is then opened for them alone.
+
+## Comparison: Stromligning vs Day-Ahead Price
+
+| Feature                  | Stromligning        | Day-ahead price              |
+| ------------------------ | ------------------- | ---------------------------- |
+| **Price Type**           | Real consumer price | Spot price + VAT             |
+| **Includes Tariffs**     | ✅ Yes              | ❌ No                        |
+| **Includes VAT**         | ✅ Yes              | ✅ Yes (configured VAT rate) |
+| **Includes Fees**        | ✅ Yes              | ❌ No                        |
+| **Matches Bill**         | ✅ Yes              | ❌ No                        |
+| **Regions**              | DK1, DK2            | All OSF regions              |
+| **History for training** | Accumulates daily   | Backfilled (training window) |
 
 ## Example Use Cases
 

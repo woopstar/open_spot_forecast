@@ -31,13 +31,13 @@ from .const import (
     DEFAULT_REGION,
     DEFAULT_VAT,
     DOMAIN,
-    PRICE_IN,
+    PRICE_SOURCE_DAYAHEAD,
     SLOTS_PER_HOUR,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
 from .price_series import known_prices
-from .time_slots import SLOT_MINUTES, parse_utc
+from .time_slots import SLOT_MINUTES, parse_utc, slot_index_in_day
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +73,18 @@ def current_prediction(
         if now < start and (first_future_start is None or start < first_future_start):
             first_future, first_future_start = prediction, start
     return first_future
+
+
+def displayed_prices(api_data: dict[str, Any], day: str) -> list[float]:
+    """Return the known prices the price sensors show for ``today``/``tomorrow``.
+
+    Stromligning's all-in consumer prices, or the day-ahead spot prices with
+    VAT (#27).
+    """
+    if api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
+        return known_prices(api_data.get(f"prices_{day}") or [])
+    stromligning_data = api_data.get("stromligning_data") or {}
+    return known_prices(stromligning_data.get(day) or [])
 
 
 async def async_setup_entry(
@@ -177,20 +189,20 @@ class SpotPriceSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current price."""
-        # Priority: Stromligning (real price with tariffs/VAT) > Nordpool > API
+        """Return the current price.
+
+        Stromligning's all-in consumer price, or the day-ahead spot price of
+        the current slot with VAT (#27).
+        """
+        if self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
+            prices = self.api_data.get("prices_today") or []
+            index = slot_index_in_day(dt_util.now())
+            price = prices[index] if index < len(prices) else None
+            return None if price is None else float(round(price, self.precision))
         stromligning_data = self.api_data.get("stromligning_data")
         if stromligning_data and stromligning_data.get("current_price") is not None:
             # Stromligning already includes tariffs and VAT
             return float(round(stromligning_data["current_price"], self.precision))
-
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            price = nordpool.get_current_price()
-            if price is not None:
-                # Convert from MWh to kWh and apply VAT
-                converted = price / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
         return None
 
     @property
@@ -207,20 +219,20 @@ class SpotPriceSensor(SensorEntity):
         # the raw dict arrays (prices_15min / raw_today / raw_tomorrow) — they
         # are large and push the attribute payload past HA's 16 KB limit.
         stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data:
+        if self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
+            attrs["today_prices"] = self.api_data.get("prices_today", [])
+            attrs["tomorrow_prices"] = self.api_data.get("prices_tomorrow", [])
+            attrs["price_source"] = PRICE_SOURCE_DAYAHEAD
+            # The day-ahead spot price with VAT; tariffs are not included
+            attrs["includes_vat"] = True
+            attrs["includes_tariffs"] = False
+        elif stromligning_data:
             attrs["today_prices"] = stromligning_data.get("today", [])
             attrs["tomorrow_prices"] = stromligning_data.get("tomorrow", [])
             attrs["price_source"] = "stromligning"
             # The state is Stromligning's all-in consumer price
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = True
-        else:
-            # Fall back to Nordpool
-            nordpool = self.api_data.get("nordpool")
-            if nordpool:
-                attrs["today_prices"] = nordpool.today
-                attrs["tomorrow_prices"] = nordpool.tomorrow
-                attrs["price_source"] = "nordpool"
 
         return attrs
 
@@ -260,23 +272,8 @@ class TodayMinSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("today"):
-            prices = known_prices(stromligning_data["today"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                min_price = min(prices)
-                return float(round(min_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_today_stats()
-            if stats and "min" in stats:
-                converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "today")
+        return float(round(min(prices), self.precision)) if prices else None
 
 
 class TodayMaxSensor(SensorEntity):
@@ -314,23 +311,8 @@ class TodayMaxSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("today"):
-            prices = known_prices(stromligning_data["today"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                max_price = max(prices)
-                return float(round(max_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_today_stats()
-            if stats and "max" in stats:
-                converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "today")
+        return float(round(max(prices), self.precision)) if prices else None
 
 
 class TodayMeanSensor(SensorEntity):
@@ -368,23 +350,10 @@ class TodayMeanSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("today"):
-            prices = known_prices(stromligning_data["today"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                mean_price = sum(prices) / len(prices)
-                return float(round(mean_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_today_stats()
-            if stats and "mean" in stats:
-                converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "today")
+        return (
+            float(round(sum(prices) / len(prices), self.precision)) if prices else None
+        )
 
 
 class TomorrowMinSensor(SensorEntity):
@@ -422,23 +391,8 @@ class TomorrowMinSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = known_prices(stromligning_data["tomorrow"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                min_price = min(prices)
-                return float(round(min_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_tomorrow_stats()
-            if stats and "min" in stats:
-                converted = stats["min"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "tomorrow")
+        return float(round(min(prices), self.precision)) if prices else None
 
 
 class TomorrowMaxSensor(SensorEntity):
@@ -476,23 +430,8 @@ class TomorrowMaxSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = known_prices(stromligning_data["tomorrow"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                max_price = max(prices)
-                return float(round(max_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_tomorrow_stats()
-            if stats and "max" in stats:
-                converted = stats["max"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "tomorrow")
+        return float(round(max(prices), self.precision)) if prices else None
 
 
 class TomorrowMeanSensor(SensorEntity):
@@ -530,23 +469,10 @@ class TomorrowMeanSensor(SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        # Try Stromligning first (priority)
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("tomorrow"):
-            prices = known_prices(stromligning_data["tomorrow"])
-            if prices:
-                # Stromligning prices already include VAT and tariffs
-                mean_price = sum(prices) / len(prices)
-                return float(round(mean_price, self.precision))
-
-        # Fallback to Nordpool
-        nordpool = self.api_data.get("nordpool")
-        if nordpool:
-            stats = nordpool.get_tomorrow_stats()
-            if stats and "mean" in stats:
-                converted = stats["mean"] / PRICE_IN.get(self.price_type, 1000)
-                return float(round(converted * (1 + self.vat), self.precision))
-        return None
+        prices = displayed_prices(self.api_data, "tomorrow")
+        return (
+            float(round(sum(prices) / len(prices), self.precision)) if prices else None
+        )
 
 
 class MLPredictionSensor(SensorEntity):

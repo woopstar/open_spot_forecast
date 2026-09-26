@@ -6,9 +6,9 @@ refresh and the 6-hourly update all go through it.
 """
 
 import re
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -27,6 +27,7 @@ from custom_components.open_spot_forecast.const import (
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from custom_components.open_spot_forecast.price_source import PriceSettings
 from custom_components.open_spot_forecast.updater import (
     FORECAST_DAYS,
     INTERVAL_MINUTES,
@@ -47,6 +48,16 @@ NP_ROW = {
     "wind_offshore": 100.0,
     "wind_onshore": 200.0,
 }
+
+
+def _dayahead_spot(tomorrow: Sequence[float | None] = ()) -> dict[str, list]:
+    """Day-ahead prices (DKK/kWh excl. VAT) as ``DayAheadPrices.async_read`` returns."""
+    return {
+        "today": [0.4] * 96,
+        "tomorrow": list(tomorrow),
+        "raw_today": [{"start": "2026-09-24T21:45:00+00:00"}],
+        "raw_tomorrow": [],
+    }
 
 
 def _sensors(**overrides: str | None) -> SensorEntities:
@@ -80,6 +91,7 @@ class Harness:
     api_data: dict[str, Any]
     nordpool: Mock
     nordpool_class: Mock
+    dayahead: Mock
     read_forecast: AsyncMock
     dispatch: Mock
 
@@ -91,16 +103,25 @@ def make() -> Iterator[Callable[..., Harness]]:
     nordpool.async_update = AsyncMock(return_value=True)
     nordpool.async_load = AsyncMock(return_value=[NP_ROW])
     nordpool.async_prune = AsyncMock(return_value=3)
+    dayahead = Mock()
+    dayahead.async_read = AsyncMock(return_value=_dayahead_spot())
+    dayahead.async_history = AsyncMock(return_value={})
+    dayahead.async_prune = AsyncMock(return_value=5)
     read_forecast = AsyncMock(return_value=None)
     dispatch = Mock()
     with (
         patch(f"{MODULE}.NordpoolPrognosisSource", return_value=nordpool) as source,
+        patch(f"{MODULE}.DayAheadPrices", return_value=dayahead),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
     ):
 
-        def build(sensors: SensorEntities | None = None, ml: bool = True) -> Harness:
+        def build(
+            sensors: SensorEntities | None = None,
+            ml: bool = True,
+            price_source: str = "stromligning",
+        ) -> Harness:
             sensors = sensors or _sensors()
 
             async def run_inline(func: Callable[..., Any], *args: Any) -> Any:
@@ -136,7 +157,14 @@ def make() -> Iterator[Callable[..., Harness]]:
                 "sensor_config": sensors.sensor_config(),
             }
             updater = ForecastUpdater(
-                hass, entry, api_data, sensors, reader, predictor if ml else None
+                hass,
+                entry,
+                api_data,
+                sensors,
+                reader,
+                predictor if ml else None,
+                PriceSettings(price_source, "DKK", 0.25),
+                predictor.storage if ml else Mock(),
             )
             return Harness(
                 updater,
@@ -146,6 +174,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 api_data,
                 nordpool,
                 source,
+                dayahead,
                 read_forecast,
                 dispatch,
             )
@@ -699,3 +728,155 @@ async def test_without_ml_there_is_no_history_to_keep(
 
     harness.nordpool_class.assert_not_called()
     assert _background_tasks(harness) == []
+
+
+# --- The day-ahead price source (#27) ------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dayahead_prices_are_shown_with_vat_and_are_the_models(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+
+    assert await harness.updater.async_read_prices() is True
+
+    api_data = harness.api_data
+    assert api_data["spot_data"] == _dayahead_spot()
+    assert api_data["prices_today"] == [pytest.approx(0.5)] * 96
+    assert api_data["prices_tomorrow"] == []
+    assert api_data["price_source"] == "dayahead"
+    # Stromligning is not read, even with its sensor configured
+    harness.reader.read_stromligning_sensor.assert_not_called()
+    harness.updater.read_spot_prices()
+    harness.reader.read_spot_prices.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_without_todays_dayahead_prices_the_previous_are_kept(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make(price_source="dayahead")
+    harness.api_data["prices_today"] = [1.0]
+    harness.dayahead.async_read.return_value = {"today": [], "tomorrow": []}
+
+    assert await harness.updater.async_read_prices() is False
+    harness.dayahead.async_read.side_effect = RuntimeError("locked")
+    assert await harness.updater.async_read_prices() is False
+
+    assert harness.api_data["prices_today"] == [1.0]
+    assert "Could not read the day-ahead prices: locked" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_the_dayahead_source_needs_its_storage(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+    updater = ForecastUpdater(
+        harness.updater.hass,
+        harness.entry,
+        harness.api_data,
+        _sensors(),
+        harness.reader,
+        None,
+        PriceSettings("dayahead", "DKK", 0.25),
+        None,
+    )
+
+    assert updater.dayahead is None
+
+
+@pytest.mark.asyncio
+async def test_initial_fetch_reads_dayahead_prices(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make(price_source="dayahead")
+    harness.dayahead.async_read.return_value = {"today": [], "tomorrow": []}
+
+    await harness.updater.async_initial_fetch()
+
+    assert "No day-ahead prices for today yet" in caplog.text
+    assert "Spot price sensor" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_quarters_and_midnight_read_dayahead_prices(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+    harness.api_data["prices_tomorrow"] = [2.0] * 96
+
+    await harness.updater.new_day(NOW)
+    assert harness.api_data["prices_tomorrow"] == []
+
+    # Tomorrow's prices are published: the forecast refreshes
+    harness.dayahead.async_read.return_value = _dayahead_spot([0.8] * 96)
+    await harness.updater.new_quarter(NOW)
+
+    assert harness.api_data["tomorrow_available"] is True
+    assert "open_spot_forecast_tomorrow_prices" in _background_tasks(harness)
+    assert harness.dayahead.async_read.await_count == 2
+    harness.reader.read_stromligning_sensor.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_the_backfill_adds_missing_dayahead_days_and_retrains(
+    make: Callable[..., Harness],
+) -> None:
+    """The training window's missing price days become training data at once."""
+    harness = make(price_source="dayahead")
+    harness.predictor.price_history = [{"date": "2026-09-23"}]
+    harness.dayahead.async_history.return_value = {
+        date(2026, 9, 23): [0.3] * 96,
+        date(2026, 9, 22): [0.2] * 96,
+    }
+
+    with (
+        patch("homeassistant.util.dt.now", return_value=NOW),
+        patch.object(ForecastUpdater, "refresh_forecast", autospec=True) as refresh,
+    ):
+        await harness.updater.backfill_history()
+
+    harness.dayahead.async_history.assert_awaited_once_with(
+        date(2026, 8, 25), date(2026, 9, 24)
+    )
+    harness.predictor.record_training_prices.assert_called_once_with(
+        [0.2] * 96, "2026-09-22"
+    )
+    refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_dayahead_backfill_is_logged(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make(price_source="dayahead")
+    harness.dayahead.async_history.side_effect = RuntimeError("offline")
+
+    await harness.updater.backfill_history()
+
+    assert "Day-ahead price backfill failed: offline" in caplog.text
+    harness.predictor.record_training_prices.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_dayahead_prices_are_pruned_with_and_without_ml(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.prune_history()
+    harness.dayahead.async_prune.assert_awaited_once_with(
+        datetime(2026, 8, 23, tzinfo=CPH)
+    )
+
+    without_ml = make(ml=False, price_source="dayahead")
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await without_ml.updater.prune_history()
+    # Only the margin is kept without the model
+    without_ml.dayahead.async_prune.assert_awaited_with(
+        datetime(2026, 9, 22, tzinfo=CPH)
+    )

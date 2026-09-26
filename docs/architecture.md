@@ -19,6 +19,8 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)         |
 | `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)         |
 | `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training              |
+| energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors  |
+| ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                  |
 
 ## Component Architecture
 
@@ -143,11 +145,17 @@ training window plus 2 days)
 and Nordpool prognoses in `nordpool_prognoses`; training matches both to
 slots by UTC time. Both phases build their rows with the same function.
 
-## No External API Dependencies
+## External APIs
 
-Prices and weather come from Home Assistant entities: HA's built-in weather
-entity (Met.no), Stromligning sensors, Solcast, and inverter power readings.
-No API key is needed. The only external requests are Nordpool's public
-consumption and production prognoses: today and tomorrow on each forecast
-run, older delivery days only while they are incomplete (see
-[persistence](persistence.md#time-series-sources)).
+Weather comes from Home Assistant entities: HA's built-in weather entity
+(Met.no), Solcast and inverter power readings. Prices come from the
+Stromligning sensors or, with the `dayahead` price source, from
+energy-charts.info (ENTSO-E as fallback with an API key) and the ECB's
+exchange rates (see
+[price sources](stromligning_integration.md#price-sources)). The other
+external requests are Nordpool's public consumption and production
+prognoses: today and tomorrow on each forecast run, older delivery days only
+while they are incomplete (see
+[persistence](persistence.md#time-series-sources)). Every API client uses
+the shared `api/http.py` (`async_get`: retries with backoff, `Retry-After`,
+never logs a URL or its parameters).

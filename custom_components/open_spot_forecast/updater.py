@@ -7,18 +7,18 @@ minutes, ``update_forecasts`` every 6 hours, ``new_day`` at midnight and
 pipeline (weather → Nordpool prognoses → known-data end → predict → save)
 exists once, in ``run_forecast``.
 
-Stored history is kept by gap-aware sources (``api/time_series_source.py``,
-#32): the forecast refreshes today's and tomorrow's prognoses, the older
-history the model trains on is filled in the background at setup and after
-midnight (complete days are never requested again), and history older than
-the training window (plus a margin) is pruned once a day.
+Prices come from Stromligning's sensors or, with the day-ahead source
+(#27), from energy-charts / ENTSO-E through ``DayAheadPrices``. Stored
+history is kept by gap-aware sources (``api/time_series_source.py``, #32):
+the forecast refreshes today's and tomorrow's prognoses, and the history the
+model trains on is backfilled and pruned by ``HistoryUpdaterMixin``.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -39,10 +39,14 @@ from .const import (
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
+    PRICE_SOURCE_DAYAHEAD,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .history_updater import HistoryUpdaterMixin
 from .ml.predictor import SpotPricePredictor
+from .ml.storage import LearningStorage
+from .price_source import DayAheadPrices, PriceSettings, with_vat
 from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
 from .time_slots import (
@@ -58,8 +62,6 @@ _LOGGER = logging.getLogger(__name__)
 # How far ahead the model predicts, and its slot length
 FORECAST_DAYS = 7
 INTERVAL_MINUTES = 15
-# Stored history is kept this many days beyond the training window
-HISTORY_MARGIN_DAYS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,7 +129,7 @@ class SensorEntities:
         )
 
 
-class ForecastUpdater:
+class ForecastUpdater(HistoryUpdaterMixin):
     """Keeps a config entry's ``api_data`` current and runs the forecast."""
 
     def __init__(
@@ -138,6 +140,8 @@ class ForecastUpdater:
         sensors: SensorEntities,
         sensor_reader: SensorReader,
         ml_predictor: SpotPricePredictor | None,
+        settings: PriceSettings | None = None,
+        storage: LearningStorage | None = None,
     ) -> None:
         """Initialize the updater; nothing is read until a method is called.
 
@@ -148,6 +152,9 @@ class ForecastUpdater:
             sensors: The entities to read.
             sensor_reader: Reads every external entity.
             ml_predictor: The price model, or None with ML prediction disabled.
+            settings: The price source; Stromligning's sensors if None.
+            storage: The learning database the day-ahead prices are stored
+                in (the model's, or a separate one without ML).
         """
         self.hass = hass
         self.entry = entry
@@ -162,6 +169,12 @@ class ForecastUpdater:
             if ml_predictor
             else None
         )
+        self.settings = settings or PriceSettings.from_entry(entry)
+        self.dayahead = (
+            DayAheadPrices(hass, storage, self.region, self.settings)
+            if self.settings.dayahead and storage is not None
+            else None
+        )
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -172,8 +185,12 @@ class ForecastUpdater:
     # ------------------------------------------------------------------
 
     def read_spot_prices(self) -> None:
-        """Read the raw spot price (the ML model's prices) into api_data."""
-        if self.ml_predictor:
+        """Read the raw spot price (the ML model's prices) into api_data.
+
+        With the day-ahead source they are read with the prices
+        (``async_read_prices``).
+        """
+        if self.ml_predictor and self.dayahead is None:
             self.api_data["spot_data"] = self.sensor_reader.read_spot_prices(
                 self.sensors.spot_price, self.sensors.spot_price_tomorrow
             )
@@ -220,6 +237,33 @@ class ForecastUpdater:
 
         self.read_spot_prices()
         return loaded
+
+    async def async_read_prices(self) -> bool:
+        """Read today's and tomorrow's prices from the configured source.
+
+        The day-ahead source fetches what is missing, converts the prices
+        into the configured currency and shows them with VAT; its raw spot
+        prices are the model's. Without today's prices the previous ones are
+        kept.
+
+        Returns:
+            Whether today's prices were read.
+        """
+        if self.dayahead is None:
+            return self.read_prices()
+        try:
+            spot_data = await self.dayahead.async_read(dt_util.now().date())
+        except Exception as err:
+            _LOGGER.warning("Could not read the day-ahead prices: %s", err)
+            return False
+        if not spot_data["today"]:
+            return False
+        vat = self.settings.vat
+        self.api_data["spot_data"] = spot_data
+        self.api_data["prices_today"] = with_vat(spot_data["today"], vat)
+        self.api_data["prices_tomorrow"] = with_vat(spot_data["tomorrow"], vat)
+        self.api_data["price_source"] = PRICE_SOURCE_DAYAHEAD
+        return True
 
     def update_tomorrow_available(self) -> bool:
         """Recompute tomorrow_available; return True if tomorrow just became complete."""
@@ -323,79 +367,15 @@ class ForecastUpdater:
             return
         weather_data.update(forecast_prognoses(rows))
 
-    # ------------------------------------------------------------------
-    # Stored history
-    # ------------------------------------------------------------------
-
-    def _first_price_day(self) -> date | None:
-        """Return the oldest day of the model's price history, if any."""
-        days = []
-        for entry in self.ml_predictor.price_history if self.ml_predictor else []:
-            try:
-                days.append(date.fromisoformat(str(entry.get("date"))))
-            except ValueError:
-                continue
-        return min(days, default=None)
-
-    async def backfill_history(self) -> None:
-        """Fetch the history the model trains on that is still missing.
-
-        Covers the stored price days up to today; only missing delivery days
-        are requested, so an interrupted backfill resumes where it stopped.
-        """
-        first = self._first_price_day()
-        if self.nordpool is None or first is None:
-            return
-        try:
-            await self.nordpool.async_update(
-                local_midnight(first), local_midnight(dt_util.now().date())
-            )
-        except Exception as err:
-            _LOGGER.warning("Nordpool history backfill failed: %s", err)
-
-    def start_history_backfill(self) -> None:
-        """Run ``backfill_history`` in the background (it can take minutes)."""
-        if self.nordpool is not None:
-            self.entry.async_create_background_task(
-                self.hass,
-                self.backfill_history(),
-                "open_spot_forecast_history_backfill",
-            )
-
-    async def prune_history(self) -> None:
-        """Delete stored history older than the training window plus a margin."""
-        ml_predictor = self.ml_predictor
-        if ml_predictor is None or self.nordpool is None:
-            return
-        keep_days = ml_predictor.max_history_days + HISTORY_MARGIN_DAYS
-        cutoff_day = dt_util.now().date() - timedelta(days=keep_days)
-        storage = ml_predictor.storage
-        try:
-            weather = await self.hass.async_add_executor_job(
-                storage.delete_old_weather, keep_days
-            )
-            prices = await self.hass.async_add_executor_job(
-                storage.delete_old_prices, cutoff_day.isoformat()
-            )
-            prognoses = await self.nordpool.async_prune(local_midnight(cutoff_day))
-        except Exception as err:
-            _LOGGER.warning("Could not prune the stored history: %s", err)
-            return
-        _LOGGER.debug(
-            "Pruned history before %s: %d weather snapshots, %d price days, "
-            "%d prognosis rows",
-            cutoff_day,
-            weather,
-            prices,
-            prognoses,
-        )
-
     async def async_initial_fetch(self) -> None:
         """Read the prices and weather and run the first forecast at setup."""
         _LOGGER.info("Starting initial data fetch for Open Spot Forecast")
         api_data = self.api_data
 
-        if self.sensors.stromligning:
+        if self.dayahead is not None:
+            if not await self.async_read_prices():
+                _LOGGER.warning("No day-ahead prices for today yet")
+        elif self.sensors.stromligning:
             _LOGGER.info(
                 "Reading prices from Stromligning sensor: %s",
                 self.sensors.stromligning,
@@ -414,7 +394,11 @@ class ForecastUpdater:
         )
         self.update_tomorrow_available()
 
-        if self.ml_predictor and not api_data["spot_data"]["today"]:
+        if (
+            self.ml_predictor
+            and self.dayahead is None
+            and not api_data["spot_data"]["today"]
+        ):
             _LOGGER.warning(
                 "Spot price sensor %s has no prices: the ML forecast needs the raw "
                 "spot price excl. VAT (Stromligning's spotprice_ex_vat sensor)",
@@ -440,7 +424,7 @@ class ForecastUpdater:
 
     async def refresh_forecast(self) -> None:
         """Re-read the prices and re-run the forecast (the model retrains on new data)."""
-        self.read_prices()
+        await self.async_read_prices()
         self.update_tomorrow_available()
         self.api_data["last_update"] = datetime.now()
         if self.ml_predictor:
@@ -459,7 +443,7 @@ class ForecastUpdater:
         Called by TomorrowPriceChecker from 13:00 local until tomorrow's
         prices are complete. Returns whether they are.
         """
-        self.read_prices()
+        await self.async_read_prices()
         self.api_data["last_update"] = datetime.now()
         if self.update_tomorrow_available() and self.ml_predictor:
             self.start_forecast_refresh()
@@ -483,7 +467,11 @@ class ForecastUpdater:
         _LOGGER.debug("New day - rotating prices")
         api_data = self.api_data
 
-        if self.sensors.stromligning:
+        if self.dayahead is not None:
+            # Today's prices are stored since yesterday; tomorrow's come later
+            api_data["prices_tomorrow"] = []
+            await self.async_read_prices()
+        elif self.sensors.stromligning:
             stromligning_data = self.sensor_reader.read_stromligning_sensor(
                 self.sensors.stromligning
             )
@@ -510,8 +498,11 @@ class ForecastUpdater:
         _LOGGER.info("15-minute update triggered for self-learning")
         api_data = self.api_data
 
-        # Read the consumer prices (displayed; also the tomorrow check)
-        if self.sensors.stromligning:
+        # Read the prices (displayed; also the tomorrow check). The day-ahead
+        # source only requests missing prices, when they are due
+        if self.dayahead is not None:
+            await self.async_read_prices()
+        elif self.sensors.stromligning:
             stromligning_data = self.sensor_reader.read_stromligning_sensor(
                 self.sensors.stromligning
             )

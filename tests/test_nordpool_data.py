@@ -1,8 +1,10 @@
 """Tests for the Nordpool data portal API client."""
 
+import json
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
 
 from custom_components.open_spot_forecast.api.nordpool_data import (
@@ -16,18 +18,22 @@ def _response(status: int, payload: dict) -> MagicMock:
     """Build a mock aiohttp response with the given status and JSON body."""
     resp = MagicMock()
     resp.status = status
-    resp.json = AsyncMock(return_value=payload)
+    resp.headers = {}
+    resp.text = AsyncMock(return_value=json.dumps(payload))
     resp.__aenter__ = AsyncMock(return_value=resp)
     resp.__aexit__ = AsyncMock(return_value=False)
     return resp
 
 
-def _session(response: MagicMock) -> MagicMock:
-    """Build a mock aiohttp session that returns a single response."""
+def _session(*responses: MagicMock | Exception) -> MagicMock:
+    """Build a mock aiohttp session answering each attempt in turn.
+
+    The shared ``async_get`` retries on the same session (#27).
+    """
     session = MagicMock()
     # aiohttp's session.get() returns an async context manager synchronously,
     # so it must be a plain MagicMock (not AsyncMock).
-    session.get = MagicMock(return_value=response)
+    session.get = MagicMock(side_effect=list(responses))
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=False)
     return session
@@ -75,17 +81,13 @@ async def test_retry_on_transient_status_then_success():
             }
         ]
     }
-    sessions = [
-        _session(_response(429, {})),
-        _session(_response(200, payload)),
-    ]
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
-            side_effect=sessions,
+            return_value=_session(_response(429, {}), _response(200, payload)),
         ),
         patch(
-            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            "custom_components.open_spot_forecast.api.http.asyncio.sleep",
             new=AsyncMock(),
         ),
     ):
@@ -97,14 +99,14 @@ async def test_retry_on_transient_status_then_success():
 @pytest.mark.asyncio
 async def test_persistent_failure_returns_none():
     """A persistent transient failure exhausts retries and returns None."""
-    sessions = [_session(_response(503, {})) for _ in range(4)]
+    responses = [_response(503, {}) for _ in range(4)]
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
-            side_effect=sessions,
+            return_value=_session(*responses),
         ),
         patch(
-            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            "custom_components.open_spot_forecast.api.http.asyncio.sleep",
             new=AsyncMock(),
         ),
     ):
@@ -121,17 +123,17 @@ async def test_auth_error_not_retried(status):
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
-            side_effect=[_session(_response(status, {}))],
+            return_value=_session(_response(status, {})),
         ) as client_session,
         patch(
-            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            "custom_components.open_spot_forecast.api.http.asyncio.sleep",
             new=AsyncMock(),
         ) as sleep_mock,
     ):
         result, _ = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
 
     assert result is None
-    client_session.assert_called_once()
+    client_session.return_value.get.assert_called_once()
     sleep_mock.assert_not_called()
 
 
@@ -226,10 +228,10 @@ async def test_request_exception_retries_then_succeeds():
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
-            side_effect=[Exception("boom"), _session(_response(200, payload))],
+            return_value=_session(aiohttp.ClientError("boom"), _response(200, payload)),
         ),
         patch(
-            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            "custom_components.open_spot_forecast.api.http.asyncio.sleep",
             new=AsyncMock(),
         ),
     ):
@@ -244,10 +246,10 @@ async def test_request_exception_exhausts_retries():
     with (
         patch(
             "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
-            side_effect=[Exception("boom") for _ in range(4)],
+            return_value=_session(*(aiohttp.ClientError("boom") for _ in range(4))),
         ),
         patch(
-            "custom_components.open_spot_forecast.api.nordpool_data.asyncio.sleep",
+            "custom_components.open_spot_forecast.api.http.asyncio.sleep",
             new=AsyncMock(),
         ),
     ):
@@ -344,3 +346,31 @@ async def test_production_uses_defaults_when_prognosis_missing():
             "total": 1753.97,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_returns_none(caplog: pytest.LogCaptureFixture) -> None:
+    """A 200 response that is not JSON is logged and yields no data."""
+    response = _response(200, {})
+    response.text = AsyncMock(return_value="<html>blocked</html>")
+    with patch(
+        "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
+        return_value=_session(response),
+    ):
+        result, updated_at = await fetch_consumption_prognosis(date(2026, 9, 22), "DK1")
+
+    assert (result, updated_at) == (None, None)
+    assert "Consumption prognosis API returned invalid JSON" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_failed_production_request_returns_none() -> None:
+    """A failed production request yields neither data nor updatedAt."""
+    with patch(
+        "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
+        return_value=_session(_response(404, {})),
+    ):
+        assert await fetch_production_prognosis(date(2026, 9, 22), "DK1") == (
+            None,
+            None,
+        )

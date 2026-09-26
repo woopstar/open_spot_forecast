@@ -1,69 +1,43 @@
 """Nordpool data portal API client for consumption and production prognoses."""
 
-import asyncio
+import json
 import logging
 from datetime import date
 from typing import cast
 
 import aiohttp
-from aiohttp import ClientTimeout
 
-from ..const import (
-    MAX_RETRIES,
-    NORDPOOL_API,
-    RETRY_BASE_DELAY,
-    RETRYABLE_STATUS,
-    USER_AGENT,
-)
+from ..const import NORDPOOL_API, USER_AGENT
+from .http import async_get
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def _get_json(url: str, label: str) -> dict | None:
-    """GET a Nordpool endpoint, retrying transient failures with backoff.
+    """GET a Nordpool endpoint (retried by ``async_get``) and decode its JSON.
+
+    Nordpool gets its own session: its Cloudflare protection needs the
+    browser-like ``USER_AGENT``.
 
     Args:
         url: Full API URL to request.
         label: Human-readable endpoint name used in log messages.
 
     Returns:
-        Parsed JSON body on success, or None if all attempts fail.
+        Parsed JSON body on success, or None if the request failed.
     """
-    headers = {"User-Agent": USER_AGENT}
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            async with aiohttp.ClientSession(headers=headers) as session:  # noqa: SIM117
-                async with session.get(url, timeout=ClientTimeout(total=30)) as resp:
-                    if resp.status == 200:
-                        return cast(dict, await resp.json())
-                    if resp.status in RETRYABLE_STATUS and attempt < MAX_RETRIES:
-                        delay = RETRY_BASE_DELAY * (2**attempt)
-                        _LOGGER.warning(
-                            "%s API returned %d (attempt %d/%d), retrying in %.1fs",
-                            label,
-                            resp.status,
-                            attempt + 1,
-                            MAX_RETRIES + 1,
-                            delay,
-                        )
-                        await asyncio.sleep(delay)
-                        continue
-                    _LOGGER.warning("%s API returned %d", label, resp.status)
-                    return None
-        except Exception as err:
-            if attempt < MAX_RETRIES:
-                delay = RETRY_BASE_DELAY * (2**attempt)
-                _LOGGER.warning(
-                    "%s API request failed (%s), retrying in %.1fs",
-                    label,
-                    err,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                continue
-            _LOGGER.warning("Failed to fetch %s: %s", label, err)
-            return None
-    return None
+    async with aiohttp.ClientSession(headers={"User-Agent": USER_AGENT}) as session:
+        response = await async_get(session, url, label)
+    if response is None:
+        return None
+    if response.status != 200:
+        _LOGGER.warning("%s API returned %d", label, response.status)
+        return None
+    try:
+        return cast(dict, json.loads(response.text))
+    except ValueError:
+        _LOGGER.warning("%s API returned invalid JSON", label)
+        return None
 
 
 async def fetch_consumption_prognosis(

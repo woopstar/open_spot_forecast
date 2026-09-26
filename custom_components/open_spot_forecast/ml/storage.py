@@ -55,6 +55,8 @@ class LearningStorage(
       nordpool_prognoses — hourly Nordpool prognoses (all three:
                         history_storage.py; kept current by the Nordpool
                         time-series source through series_storage.py)
+      dayahead_prices — raw day-ahead prices, EUR/MWh per UTC 15-min slot
+                        (series_storage.py; energy-charts / ENTSO-E source)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 
@@ -252,6 +254,11 @@ class LearningStorage(
 
             CREATE INDEX IF NOT EXISTS idx_nordpool_timestamp
                 ON nordpool_prognoses(timestamp);
+
+            CREATE TABLE IF NOT EXISTS dayahead_prices (
+                timestamp       TEXT    PRIMARY KEY,
+                price           REAL
+            );
 
             CREATE TABLE IF NOT EXISTS volatility (
                 slot    INTEGER PRIMARY KEY,

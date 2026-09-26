@@ -104,7 +104,9 @@ class LearningMixin(PredictorBase):
             }
         )
 
-        # Keep only max_history_days
+        # Keep the newest max_history_days. Days can arrive out of order (a
+        # backfill of older days, #27), so sort by date before trimming
+        self.price_history.sort(key=lambda entry: str(entry.get("date", "")))
         if len(self.price_history) > self.max_history_days:
             self.price_history = self.price_history[-self.max_history_days :]
 

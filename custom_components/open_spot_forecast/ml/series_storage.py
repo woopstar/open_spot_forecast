@@ -52,6 +52,14 @@ NORDPOOL_PROGNOSES = SeriesSpec(
     step_minutes=60,
 )
 
+# Day-ahead auction prices (EUR/MWh, raw: no VAT or tariffs), per 15-min slot
+DAYAHEAD_PRICES = SeriesSpec(
+    name="dayahead",
+    table="dayahead_prices",
+    columns=("price",),
+    step_minutes=15,
+)
+
 
 def _utc_key(moment: datetime) -> str:
     """Return a datetime as the stored ``…Z`` key."""

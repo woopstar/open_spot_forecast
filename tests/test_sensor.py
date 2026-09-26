@@ -1,7 +1,8 @@
 """Tests for the Open Spot Forecast sensor platform."""
 
-from datetime import timedelta
-from unittest.mock import MagicMock, Mock
+from datetime import datetime, timedelta
+from unittest.mock import MagicMock, Mock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -10,7 +11,7 @@ from homeassistant.util import dt as dt_util
 from custom_components.open_spot_forecast.accuracy_sensor import (
     LeadTimeAccuracySensor,
 )
-from custom_components.open_spot_forecast.const import DOMAIN, PRICE_IN
+from custom_components.open_spot_forecast.const import DOMAIN
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
     MLPredictionSensor,
@@ -25,6 +26,7 @@ from custom_components.open_spot_forecast.sensor import (
     async_setup_entry,
 )
 
+CPH = ZoneInfo("Europe/Copenhagen")
 VAT = 0.25
 PRECISION = 3
 PRICE_TYPE = "kWh"
@@ -86,7 +88,6 @@ async def test_async_setup_entry_adds_accuracy_sensors_with_ml():
     entry.options = {"vat": VAT, "precision": PRECISION, "price_type": PRICE_TYPE}
     api_data = {
         "stromligning_data": {"current_price": 1.0},
-        "nordpool": MagicMock(),
         "ml_predictor": MagicMock(),
         "last_update": "now",
     }
@@ -177,22 +178,30 @@ def test_spot_price_native_value_stromligning():
     assert sensor.native_value == pytest.approx(100.0)
 
 
-def test_spot_price_native_value_nordpool():
-    """Nordpool fallback converts MWh -> kWh and applies VAT."""
-    nordpool = MagicMock()
-    nordpool.get_current_price.return_value = 2000.0
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_spot_price_native_value_dayahead() -> None:
+    """The day-ahead source shows the current slot's spot price with VAT (#27)."""
+    # 10:20 local is slot 41 of the day
+    now = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
+    prices: list[float | None] = [float(slot) for slot in range(96)]
+    prices[40] = None
+    api_data = {
+        "price_source": "dayahead",
+        "prices_today": prices,
+        # Stromligning data of an earlier configuration is not shown
+        "stromligning_data": {"current_price": 100.0},
+    }
     sensor = SpotPriceSensor(
-        _hass(),
-        _entry(),
-        {"nordpool": nordpool},
-        "DK1",
-        "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
     )
-    expected = 2000.0 / PRICE_IN[PRICE_TYPE] * (1 + VAT)
-    assert sensor.native_value == pytest.approx(expected)
+
+    with patch("homeassistant.util.dt.now", return_value=now):
+        assert sensor.native_value == pytest.approx(41.0)
+        sensor.api_data["prices_today"] = prices[:40]
+        assert sensor.native_value is None
+    with patch("homeassistant.util.dt.now", return_value=now - timedelta(minutes=15)):
+        sensor.api_data["prices_today"] = prices
+        assert sensor.native_value is None
 
 
 def test_spot_price_native_value_none():
@@ -203,44 +212,24 @@ def test_spot_price_native_value_none():
     assert sensor.native_value is None
 
 
-def test_spot_price_native_value_nordpool_returns_none():
-    """Nordpool present but reporting no price yields None."""
-    nordpool = MagicMock()
-    nordpool.get_current_price.return_value = None
+def test_spot_price_attributes_dayahead() -> None:
+    """Day-ahead prices are the spot price with VAT, without tariffs."""
+    api_data = {
+        "price_source": "dayahead",
+        "prices_today": [1.0, 2.0],
+        "prices_tomorrow": [3.0, 4.0],
+    }
     sensor = SpotPriceSensor(
-        _hass(),
-        _entry(),
-        {"nordpool": nordpool},
-        "DK1",
-        "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
-    )
-    assert sensor.native_value is None
-
-
-def test_spot_price_attributes_nordpool_fallback():
-    """Attributes fall back to Nordpool lists when Stromligning is absent."""
-    nordpool = MagicMock()
-    nordpool.today = [1.0, 2.0]
-    nordpool.tomorrow = [3.0, 4.0]
-    sensor = SpotPriceSensor(
-        _hass(),
-        _entry(),
-        {"nordpool": nordpool},
-        "DK1",
-        "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
     )
 
     attrs = sensor.extra_state_attributes
 
     assert attrs["today_prices"] == [1.0, 2.0]
     assert attrs["tomorrow_prices"] == [3.0, 4.0]
-    assert attrs["price_source"] == "nordpool"
+    assert attrs["price_source"] == "dayahead"
+    assert attrs["includes_vat"] is True
+    assert attrs["includes_tariffs"] is False
 
 
 def test_spot_price_attributes_stromligning():
@@ -282,21 +271,17 @@ def _mean(values):
 
 
 PRICE_STAT_SENSORS = [
-    (TodayMinSensor, "get_today_stats", "min", "today", _min),
-    (TodayMaxSensor, "get_today_stats", "max", "today", _max),
-    (TodayMeanSensor, "get_today_stats", "mean", "today", _mean),
-    (TomorrowMinSensor, "get_tomorrow_stats", "min", "tomorrow", _min),
-    (TomorrowMaxSensor, "get_tomorrow_stats", "max", "tomorrow", _max),
-    (TomorrowMeanSensor, "get_tomorrow_stats", "mean", "tomorrow", _mean),
+    (TodayMinSensor, "today", _min),
+    (TodayMaxSensor, "today", _max),
+    (TodayMeanSensor, "today", _mean),
+    (TomorrowMinSensor, "tomorrow", _min),
+    (TomorrowMaxSensor, "tomorrow", _max),
+    (TomorrowMeanSensor, "tomorrow", _mean),
 ]
 
 
-@pytest.mark.parametrize(
-    "cls, stats_method, stat_key, list_key, reducer", PRICE_STAT_SENSORS
-)
-def test_price_stat_native_value_stromligning(
-    cls, stats_method, stat_key, list_key, reducer
-):
+@pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
+def test_price_stat_native_value_stromligning(cls, list_key, reducer):
     """Stromligning list prices drive the aggregate directly."""
     prices = [10.0, 20.0, 30.0]
     sensor = cls(
@@ -311,66 +296,40 @@ def test_price_stat_native_value_stromligning(
     assert sensor.native_value == pytest.approx(round(reducer(prices), PRECISION))
 
 
-@pytest.mark.parametrize(
-    "cls, stats_method, stat_key, list_key, reducer", PRICE_STAT_SENSORS
-)
-def test_price_stat_native_value_nordpool(
-    cls, stats_method, stat_key, list_key, reducer
-):
-    """Nordpool stats provide the aggregate with MWh -> kWh + VAT conversion."""
-    nordpool = MagicMock()
-    getattr(nordpool, stats_method).return_value = {stat_key: 2000.0}
-    sensor = cls(
-        _hass(), _entry(), {"nordpool": nordpool}, "DKK", VAT, PRECISION, PRICE_TYPE
-    )
-
-    expected = 2000.0 / PRICE_IN[PRICE_TYPE] * (1 + VAT)
-    assert sensor.native_value == pytest.approx(expected)
-
-
-@pytest.mark.parametrize(
-    "cls, stats_method, stat_key, list_key, reducer", PRICE_STAT_SENSORS
-)
-def test_price_stat_native_value_none(cls, stats_method, stat_key, list_key, reducer):
-    """No data yields None."""
-    sensor = cls(_hass(), _entry(), {}, "DKK", VAT, PRECISION, PRICE_TYPE)
-    assert sensor.native_value is None
-
-
-@pytest.mark.parametrize(
-    "cls, stats_method, stat_key, list_key, reducer", PRICE_STAT_SENSORS
-)
-def test_price_stat_native_value_empty_stromligning_falls_back_to_nordpool(
-    cls, stats_method, stat_key, list_key, reducer
-):
-    """An empty Stromligning list falls through to the Nordpool stats."""
-    nordpool = MagicMock()
-    getattr(nordpool, stats_method).return_value = {stat_key: 4000.0}
+@pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
+def test_price_stat_native_value_dayahead(cls, list_key, reducer):
+    """Day-ahead prices (with VAT, missing slots skipped) drive the aggregate."""
+    prices = [10.0, None, 30.0]
     sensor = cls(
         _hass(),
         _entry(),
-        {"stromligning_data": {list_key: []}, "nordpool": nordpool},
+        {"price_source": "dayahead", f"prices_{list_key}": prices},
         "DKK",
         VAT,
         PRECISION,
         PRICE_TYPE,
     )
-
-    expected = 4000.0 / PRICE_IN[PRICE_TYPE] * (1 + VAT)
-    assert sensor.native_value == pytest.approx(expected)
+    assert sensor.native_value == pytest.approx(round(reducer([10.0, 30.0]), PRECISION))
 
 
-@pytest.mark.parametrize(
-    "cls, stats_method, stat_key, list_key, reducer", PRICE_STAT_SENSORS
-)
-def test_price_stat_native_value_nordpool_missing_stat(
-    cls, stats_method, stat_key, list_key, reducer
-):
-    """Nordpool stats without the expected key yield None."""
-    nordpool = MagicMock()
-    getattr(nordpool, stats_method).return_value = {"unrelated": 1.0}
+@pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
+def test_price_stat_native_value_none(cls, list_key, reducer):
+    """No data yields None."""
+    sensor = cls(_hass(), _entry(), {}, "DKK", VAT, PRECISION, PRICE_TYPE)
+    assert sensor.native_value is None
+
+
+@pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
+def test_price_stat_native_value_empty_stromligning(cls, list_key, reducer):
+    """An empty Stromligning list has no aggregate."""
     sensor = cls(
-        _hass(), _entry(), {"nordpool": nordpool}, "DKK", VAT, PRECISION, PRICE_TYPE
+        _hass(),
+        _entry(),
+        {"stromligning_data": {list_key: []}},
+        "DKK",
+        VAT,
+        PRECISION,
+        PRICE_TYPE,
     )
     assert sensor.native_value is None
 

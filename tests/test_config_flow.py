@@ -1,15 +1,23 @@
 """Tests for the Open Spot Forecast config and options flows."""
 
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
 from custom_components.open_spot_forecast.config_flow import (
     OpenSpotForecastConfigFlow,
     OpenSpotForecastOptionsFlow,
+    price_regions,
+    validate_price_source,
 )
-from custom_components.open_spot_forecast.const import CONF_REGION, DEFAULT_REGION
+from custom_components.open_spot_forecast.const import (
+    CONF_ENTSOE_API_KEY,
+    CONF_PRICE_SOURCE,
+    CONF_REGION,
+    DEFAULT_REGION,
+    REGIONS,
+)
 
 
 def _config_flow() -> Any:
@@ -39,6 +47,64 @@ def _options_flow() -> Any:
 
 
 # --- async_step_user ---------------------------------------------------------
+
+
+def test_regions_offered_are_those_with_a_price_source() -> None:
+    """Every OSF region has an energy-charts zone and an ENTSO-E code (#27)."""
+    assert price_regions() == sorted(REGIONS)
+
+
+@pytest.mark.parametrize(
+    ("user_input", "error"),
+    [
+        ({CONF_REGION: "DK2"}, None),
+        ({CONF_REGION: "SE3"}, "stromligning_region"),
+        ({CONF_REGION: "SE3", CONF_PRICE_SOURCE: "dayahead"}, None),
+        ({CONF_REGION: "XX", CONF_PRICE_SOURCE: "dayahead"}, "invalid_region"),
+    ],
+)
+def test_the_price_source_must_cover_the_region(
+    user_input: dict[str, Any], error: str | None
+) -> None:
+    assert validate_price_source(user_input) == error
+
+
+def test_a_region_only_entsoe_covers_needs_a_key() -> None:
+    zones = {"XX": {"entsoe": "10Y-TEST", "tz": "UTC"}}
+    with patch.dict(REGIONS, zones):
+        assert (
+            validate_price_source({CONF_REGION: "XX", CONF_PRICE_SOURCE: "dayahead"})
+            == "entsoe_key_required"
+        )
+        assert (
+            validate_price_source(
+                {
+                    CONF_REGION: "XX",
+                    CONF_PRICE_SOURCE: "dayahead",
+                    CONF_ENTSOE_API_KEY: "token",
+                }
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_step_user_offers_the_price_source_and_entsoe_key() -> None:
+    flow = _config_flow()
+    await flow.async_step_user()
+
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    assert CONF_PRICE_SOURCE in [str(key) for key in schema]
+    assert CONF_ENTSOE_API_KEY in [str(key) for key in schema]
+
+
+@pytest.mark.asyncio
+async def test_step_user_rejects_stromligning_outside_denmark() -> None:
+    flow = _config_flow()
+    await flow.async_step_user({CONF_REGION: "SE3", CONF_PRICE_SOURCE: "stromligning"})
+
+    assert flow._errors == {"base": "stromligning_region"}
+    assert flow.async_show_form.call_args.kwargs["step_id"] == "user"
 
 
 @pytest.mark.asyncio
