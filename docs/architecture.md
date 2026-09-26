@@ -146,6 +146,18 @@ training window plus 2 days)
 and Nordpool prognoses in `nordpool_prognoses`; training matches both to
 slots by UTC time. Both phases build their rows with the same function.
 
+## Attribution
+
+Entities credit the external sources of their values in Home Assistant's
+`attribution` (`attribution.py`, #41): the price entities
+(`PriceAttributionMixin`) credit energy-charts.info with the licence it
+reports for the zone, and ENTSO-E when its fallback is configured; the
+model's entities (`ModelAttributionMixin`: forecast, confidence, learning
+metrics, accuracy, model trained) add Open-Meteo (CC BY 4.0) when the zone
+weather is used, and Nord Pool. The sources, their licences and the credit
+to EpexPredictor are listed in the
+[README](../README.md#data-sources-and-attribution).
+
 ## External APIs
 
 Weather comes from Home Assistant entities: HA's built-in weather entity

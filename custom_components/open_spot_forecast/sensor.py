@@ -17,6 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .accuracy_sensor import build_lead_time_accuracy_sensors
+from .attribution import ModelAttributionMixin, PriceAttributionMixin
 from .const import (
     CONF_CURRENCY,
     CONF_PRECISION,
@@ -136,7 +137,7 @@ async def async_setup_entry(
     async_add_entities(sensors, True)
 
 
-class SpotPriceSensor(SensorEntity):
+class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for current spot price."""
 
     _attr_has_entity_name = True
@@ -237,7 +238,7 @@ class SpotPriceSensor(SensorEntity):
         return attrs
 
 
-class TodayMinSensor(SensorEntity):
+class TodayMinSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for today's minimum price."""
 
     _attr_has_entity_name = True
@@ -276,7 +277,7 @@ class TodayMinSensor(SensorEntity):
         return float(round(min(prices), self.precision)) if prices else None
 
 
-class TodayMaxSensor(SensorEntity):
+class TodayMaxSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for today's maximum price."""
 
     _attr_has_entity_name = True
@@ -315,7 +316,7 @@ class TodayMaxSensor(SensorEntity):
         return float(round(max(prices), self.precision)) if prices else None
 
 
-class TodayMeanSensor(SensorEntity):
+class TodayMeanSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for today's mean price."""
 
     _attr_has_entity_name = True
@@ -356,7 +357,7 @@ class TodayMeanSensor(SensorEntity):
         )
 
 
-class TomorrowMinSensor(SensorEntity):
+class TomorrowMinSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for tomorrow's minimum price."""
 
     _attr_has_entity_name = True
@@ -395,7 +396,7 @@ class TomorrowMinSensor(SensorEntity):
         return float(round(min(prices), self.precision)) if prices else None
 
 
-class TomorrowMaxSensor(SensorEntity):
+class TomorrowMaxSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for tomorrow's maximum price."""
 
     _attr_has_entity_name = True
@@ -434,7 +435,7 @@ class TomorrowMaxSensor(SensorEntity):
         return float(round(max(prices), self.precision)) if prices else None
 
 
-class TomorrowMeanSensor(SensorEntity):
+class TomorrowMeanSensor(PriceAttributionMixin, SensorEntity):
     """Sensor for tomorrow's mean price."""
 
     _attr_has_entity_name = True
@@ -475,7 +476,7 @@ class TomorrowMeanSensor(SensorEntity):
         )
 
 
-class MLPredictionSensor(SensorEntity):
+class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     """Sensor for ML-based price predictions (replaces Carnot).
 
     The model predicts the raw spot price excl. VAT and tariffs (#16). VAT is
@@ -594,7 +595,7 @@ class MLPredictionSensor(SensorEntity):
         return attrs
 
 
-class PredictionConfidenceSensor(SensorEntity):
+class PredictionConfidenceSensor(ModelAttributionMixin, SensorEntity):
     """Sensor for prediction confidence score."""
 
     _attr_has_entity_name = True
@@ -632,7 +633,7 @@ class PredictionConfidenceSensor(SensorEntity):
         return None
 
 
-class LearningMetricsSensor(SensorEntity):
+class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
     """Sensor for self-learning metrics and error tracking."""
 
     _attr_has_entity_name = True
@@ -672,12 +673,12 @@ class LearningMetricsSensor(SensorEntity):
         metric aggregation twice and keeps the update under HA's 0.5 s
         slow-update threshold.
         """
-        if self._cached_metrics is None:
+        metrics = self._cached_metrics
+        if metrics is None:
             ml_predictor = self.api_data.get("ml_predictor")
-            self._cached_metrics = (
-                ml_predictor.get_learning_metrics() if ml_predictor else {}
-            )
-        return self._cached_metrics
+            metrics = ml_predictor.get_learning_metrics() if ml_predictor else {}
+            self._cached_metrics = metrics
+        return metrics
 
     @property
     def native_value(self) -> int | None:

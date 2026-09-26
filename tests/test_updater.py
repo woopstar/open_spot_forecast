@@ -944,3 +944,22 @@ async def test_zone_weather_is_pruned_with_the_history(
 
 def test_zone_weather_needs_the_model(make: Callable[..., Harness]) -> None:
     assert make(ml=False).updater.weather is None
+
+
+# --- Attribution (#41) ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_the_active_sources_are_recorded_for_attribution(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+    harness.dayahead.license_info = "CC BY 4.0 from SMARD.de"
+
+    await harness.updater.async_read_prices()
+
+    assert harness.api_data["price_license"] == "CC BY 4.0 from SMARD.de"
+    assert harness.api_data["zone_weather"] is True
+    # No ENTSO-E key in the harness's settings
+    assert harness.api_data["entsoe_fallback"] is False
+    assert make(ml=False).api_data["zone_weather"] is False
