@@ -989,3 +989,27 @@ async def test_the_active_sources_are_recorded_for_attribution(
     # No ENTSO-E key in the harness's settings
     assert harness.api_data["entsoe_fallback"] is False
     assert make(ml=False).api_data["zone_weather"] is False
+
+
+# --- Training history (#24) ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stromligning_installs_backfill_day_ahead_history(
+    make: Callable[..., Harness],
+) -> None:
+    """The model's history comes from the day-ahead APIs whatever the display."""
+    harness = make()
+    harness.dayahead.async_history.return_value = {date(2026, 9, 22): [0.2] * 96}
+
+    with patch.object(ForecastUpdater, "refresh_forecast", autospec=True) as refresh:
+        await harness.updater.backfill_history()
+
+    assert harness.updater.dayahead is None
+    assert harness.updater.history_prices is harness.dayahead
+    assert harness.api_data["history_prices"] is True
+    harness.predictor.record_training_prices.assert_called_once_with(
+        [0.2] * 96, "2026-09-22"
+    )
+    refresh.assert_awaited_once()
+    assert make(ml=False).api_data["history_prices"] is False

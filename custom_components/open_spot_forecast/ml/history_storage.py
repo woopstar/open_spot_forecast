@@ -2,7 +2,8 @@
 
 Mixed into ``LearningStorage`` so the learning database keeps a single
 connection and write lock. Covers the ``weather_history`` snapshots, the
-``nordpool_prognoses`` rows and the daily ``price_history``. Training reads
+``nordpool_prognoses`` rows and the price history (per UTC slot in
+``spot_prices`` since #24, see ``price_storage.py``). Training reads
 the weather and Nordpool tables once per fit and matches rows to slots in
 Python (``ml/training_inputs.py``), instead of one query per training row.
 
@@ -14,13 +15,13 @@ bounds are computed in Python and compared with ``julianday()`` of the stored
 key, so a row exactly on a bound is always inside (#46).
 """
 
-import json
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
 from ..time_slots import UTC_KEY_FORMAT, floor_to_slot, parse_utc, utc_slot_key
+from .price_storage import delete_days_before, read_days, write_changed_days
 from .storage_base import StorageMixinBase
 
 # How far from a looked-up time a weather snapshot may be (inclusive)
@@ -255,36 +256,25 @@ class HistoryStorageMixin(StorageMixinBase):
     # ------------------------------------------------------------------
 
     def save_price_history(self, price_history: list[dict]) -> None:
-        """Persist price history to the database (blocking)."""
+        """Persist the changed days of the price history (blocking)."""
         with self._lock:
             conn = self._ensure_conn()
-            for entry in price_history:
-                date = entry.get("date")
-                prices = entry.get("prices", [])
-                if date is None:
-                    continue
-                conn.execute(
-                    "INSERT OR REPLACE INTO price_history (date, prices) VALUES (?, ?)",
-                    (date, json.dumps(prices)),
-                )
+            write_changed_days(conn, price_history, self._saved_price_days)
             conn.commit()
 
     def load_price_history(self) -> list[dict]:
-        """Load all price history from the database (blocking)."""
+        """Load the price history as day entries, oldest first (blocking)."""
         with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute(
-                "SELECT date, prices FROM price_history ORDER BY date ASC"
-            ).fetchall()
-        return [
-            {"date": date, "prices": json.loads(prices_json)}
-            for date, prices_json in rows
-        ]
+            days = read_days(self._ensure_conn())
+        self._saved_price_days = {day["date"]: list(day["prices"]) for day in days}
+        return days
 
     def delete_old_prices(self, before: str) -> int:
-        """Delete the price days before ``before`` (YYYY-MM-DD) (blocking)."""
+        """Delete the price slots of the days before ``before`` (YYYY-MM-DD) (blocking)."""
         with self._lock:
             conn = self._ensure_conn()
-            cursor = conn.execute("DELETE FROM price_history WHERE date < ?", (before,))
+            deleted = delete_days_before(conn, date.fromisoformat(before))
             conn.commit()
-            return cursor.rowcount
+        for day in [day for day in self._saved_price_days if day < before]:
+            del self._saved_price_days[day]
+        return deleted

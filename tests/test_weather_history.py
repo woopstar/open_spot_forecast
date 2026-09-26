@@ -256,7 +256,7 @@ def test_existing_snapshots_are_rewritten_as_utc_slot_keys(
         weather = migrated.find_weather_for_timestamp("2026-09-24T10:00:00+02:00")
         assert weather is not None
         assert weather["solar_power"] == pytest.approx(100.0)
-        assert _schema_version(db_path) == WEATHER_UTC_SCHEMA_VERSION
+        assert _schema_version(db_path) >= WEATHER_UTC_SCHEMA_VERSION
         assert "rewrote 3, merged 1" in caplog.text
         assert "dropped 1 unreadable" in caplog.text
     finally:
@@ -280,4 +280,4 @@ def test_new_database_starts_at_the_utc_weather_schema(tmp_path: Path) -> None:
     storage = LearningStorage(_hass(tmp_path), "DK1")
     storage.close()
 
-    assert _schema_version(storage.db_path) == WEATHER_UTC_SCHEMA_VERSION
+    assert _schema_version(storage.db_path) >= WEATHER_UTC_SCHEMA_VERSION

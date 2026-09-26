@@ -10,6 +10,9 @@ CONF_VAT = "vat"
 CONF_PRICE_TYPE = "price_type"
 CONF_PRECISION = "precision"
 CONF_PREDICTION_HOURS = "prediction_hours"
+# Days of price history the model trains on (#24); history older than this
+# (plus a margin) is pruned, and missing days are backfilled
+CONF_TRAINING_DAYS = "training_days"
 
 # Weather sensor configuration keys
 CONF_WIND_SPEED_SENSOR = "wind_speed_sensor"
@@ -50,6 +53,9 @@ DEFAULT_VAT = 0.25
 DEFAULT_PRECISION = 3
 DEFAULT_PRICE_TYPE = "kWh"
 DEFAULT_PREDICTION_HOURS = 48
+# The backtest's best window with the zone weather (docs/ml_documentation.md)
+DEFAULT_TRAINING_DAYS = 60
+TRAINING_DAYS_OPTIONS = [30, 60, 90, 120, 180]
 
 # Platforms
 PLATFORMS = ["sensor", "binary_sensor"]

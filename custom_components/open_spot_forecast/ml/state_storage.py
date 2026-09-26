@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Any
 
+from .price_storage import read_days, write_changed_days
 from .storage_base import StorageMixinBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -203,16 +204,9 @@ class LearningStateStorageMixin(StorageMixinBase):
                         (int(hour), float(correction)),
                     )
 
-                # Price history
+                # Price history: only the days that changed (#24)
                 price_history = data.get("price_history", [])
-                for entry in price_history:
-                    date = entry.get("date")
-                    prices = entry.get("prices", [])
-                    if date:
-                        conn.execute(
-                            "INSERT OR REPLACE INTO price_history (date, prices) VALUES (?, ?)",
-                            (date, json.dumps(prices)),
-                        )
+                write_changed_days(conn, price_history, self._saved_price_days)
 
                 # Predictions (backward compat — typically inserted individually)
                 predictions = data.get("prediction_history", [])
@@ -343,12 +337,11 @@ class LearningStateStorageMixin(StorageMixinBase):
             ).fetchall():
                 bias_correction[hour] = correction
 
-            # Price history
-            price_history: list[dict] = []
-            for date, prices_json in conn.execute(
-                "SELECT date, prices FROM price_history ORDER BY date ASC"
-            ).fetchall():
-                price_history.append({"date": date, "prices": json.loads(prices_json)})
+            # Price history, stored per UTC slot (#24)
+            price_history = read_days(conn)
+            self._saved_price_days = {
+                day["date"]: list(day["prices"]) for day in price_history
+            }
 
             # Volatility
             volatility_mae: dict[int, float] = {}

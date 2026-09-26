@@ -351,3 +351,33 @@ async def test_an_unexpected_energy_charts_status_is_logged(
 
     assert "energy-charts returned 404" in caplog.text
     assert date(2026, 9, 24).isoformat() not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_an_interrupted_backfill_resumes_with_the_missing_days(
+    storage: LearningStorage, apis: FakeApis
+) -> None:
+    """60 days are two requests; after a failure only the failed one is repeated (#24)."""
+    start = DAY_START - timedelta(days=59)
+    failing = {"second": True}
+
+    def energy_charts(params: dict) -> HttpResponse | None:
+        first = _start(params)
+        if failing["second"] and first > DAY_START - timedelta(days=30):
+            return None
+        last = datetime.fromisoformat(params["end"])
+        count = int((last - first) / QUARTER) + 1
+        return HttpResponse(200, json.dumps(_payload(first, count)))
+
+    apis.energy_charts = energy_charts
+    source = _source(storage)
+
+    await source.async_update(start, DAY_END)
+    failing["second"] = False
+    await source.async_update(start, DAY_END)
+    await source.async_update(start, DAY_END)
+
+    starts = [params["start"] for _, params in apis.calls]
+    assert len(starts) == 3
+    assert starts[2] == starts[1]
+    assert len(storage.load_series(DAYAHEAD_PRICES, start, DAY_END)) == 60 * 96

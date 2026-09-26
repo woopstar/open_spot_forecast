@@ -223,3 +223,31 @@ async def test_options_init_falls_back_to_default_region():
     await flow.async_step_init({"vat": 0.25})
 
     assert flow.async_create_entry.call_args.kwargs["title"] == DEFAULT_REGION
+
+
+@pytest.mark.asyncio
+async def test_the_training_window_is_configurable() -> None:
+    """Default 60 days (the backtest's best), up to 180 (#24)."""
+    flow = _config_flow()
+    await flow.async_step_sensors()
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    key = next(k for k in schema if str(k) == "training_days")
+    assert key.default() == 60
+    assert schema[key].container == [30, 60, 90, 120, 180]
+
+    options = _options_flow()
+    await options.async_step_init()
+    schema = options.async_show_form.call_args.kwargs["data_schema"].schema
+    assert "training_days" in [str(k) for k in schema]
+
+
+def test_the_predictor_keeps_the_configured_window(tmp_path: Any) -> None:
+    from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    predictor = SpotPricePredictor(hass, "DK1", training_days=90)
+    try:
+        assert predictor.max_history_days == 90
+    finally:
+        predictor.storage.close()

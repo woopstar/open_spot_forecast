@@ -21,6 +21,7 @@ from .accuracy_storage import LeadTimeAccuracyStorageMixin
 from .bias_storage import migrate_bias_to_additive
 from .history_storage import HistoryStorageMixin
 from .prediction_storage import PredictionStorageMixin
+from .price_storage import migrate_price_history_to_rows
 from .series_storage import SeriesStorageMixin
 from .spot_migration import migrate_to_spot_prices
 from .state_storage import LearningStateStorageMixin
@@ -50,7 +51,9 @@ class LearningStorage(
       volatility      — per-slot volatility MAE
       meta            — key/value pairs (training_samples, is_trained,
                         hpo_counter) (all four: state_storage.py)
-      price_history   — historical daily prices for model training
+      spot_prices     — the model's price history per UTC 15-min slot (#24;
+                        price_storage.py); price_history is its legacy,
+                        emptied JSON-per-day form
       weather_history — 15-min weather snapshots, keyed by UTC slot start
       nordpool_prognoses — hourly Nordpool prognoses (all three:
                         history_storage.py; kept current by the Nordpool
@@ -79,6 +82,7 @@ class LearningStorage(
         # When training inputs (weather/Nordpool rows) last changed (UTC);
         # the predictor retrains when this is newer than its last training
         self.last_data_write: datetime | None = None
+        self._saved_price_days: dict[str, list[float | None]] = {}
 
         storage_dir = Path(hass.config.path(".storage"))
         storage_dir.mkdir(exist_ok=True)
@@ -257,6 +261,11 @@ class LearningStorage(
             CREATE INDEX IF NOT EXISTS idx_nordpool_timestamp
                 ON nordpool_prognoses(timestamp);
 
+            CREATE TABLE IF NOT EXISTS spot_prices (
+                timestamp       TEXT    PRIMARY KEY,
+                price           REAL    NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS dayahead_prices (
                 timestamp       TEXT    PRIMARY KEY,
                 price           REAL
@@ -371,6 +380,7 @@ class LearningStorage(
         self._create_lead_time_accuracy_schema(conn)
         migrate_to_spot_prices(conn)
         migrate_weather_to_utc(conn)
+        migrate_price_history_to_rows(conn)
         conn.commit()
 
     def __del__(self) -> None:
@@ -426,6 +436,7 @@ class LearningStorage(
                     DROP TABLE IF EXISTS error_metrics;
                     DROP TABLE IF EXISTS bias_correction;
                     DROP TABLE IF EXISTS price_history;
+                    DROP TABLE IF EXISTS spot_prices;
                     DROP TABLE IF EXISTS volatility;
                     DROP TABLE IF EXISTS lead_time_accuracy;
                     DROP TABLE IF EXISTS meta;
@@ -433,6 +444,7 @@ class LearningStorage(
                 )
                 self._create_schema(conn)
                 conn.commit()
+                self._saved_price_days = {}
             except Exception:
                 conn.rollback()
                 _LOGGER.exception("Failed to clear learning data — rolled back")

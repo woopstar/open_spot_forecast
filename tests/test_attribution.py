@@ -108,3 +108,20 @@ def test_entities_show_the_attribution() -> None:
     # Stromligning's prices are credited by the Stromligning integration
     api_data["price_source"] = "stromligning"
     assert price_entities[0].attribution is None
+
+
+def test_the_model_credits_its_day_ahead_history_with_stromligning() -> None:
+    """Stromligning shows the prices; the training history is day-ahead (#24)."""
+    api_data = {
+        "price_source": "stromligning",
+        "price_license": SMARD,
+        "history_prices": True,
+        "ml_predictor": Mock(),
+        "zone_weather": True,
+    }
+
+    assert price_attribution(api_data) is None
+    assert model_attribution(api_data) == (
+        "Price history: energy-charts.info (CC BY 4.0, Bundesnetzagentur | SMARD.de)"
+        f" · {WEATHER} · {PROGNOSES}"
+    )

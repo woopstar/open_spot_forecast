@@ -263,20 +263,20 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                   | Content                                                         |
-| -------------------- | --------------------- | --------------------------------------------------------------- |
-| `predictions`        | `id` (autoincrement)  | Pending predictions awaiting comparison                         |
-| `error_metrics`      | `hour` (0-95)         | Per-slot error arrays                                           |
-| `bias_correction`    | `hour` (0-95)         | Per-slot additive bias offsets (schema v5)                      |
-| `price_history`      | `date` (YYYY-MM-DD)   | Daily raw spot prices, excl. VAT (92/96/100 slots, `null` gaps) |
-| `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)        |
-| `meta`               | `key`                 | Training state, schema version                                  |
-| `lead_time_accuracy` | `(date, bucket)`      | Daily per-lead-time error sums (rolling 30 days)                |
+| Table                | Key                   | Content                                                                 |
+| -------------------- | --------------------- | ----------------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement)  | Pending predictions awaiting comparison                                 |
+| `error_metrics`      | `hour` (0-95)         | Per-slot error arrays                                                   |
+| `bias_correction`    | `hour` (0-95)         | Per-slot additive bias offsets (schema v5)                              |
+| `spot_prices`        | `timestamp` (UTC key) | The model's price history per UTC slot (#24); `price_history` is legacy |
+| `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
+| `meta`               | `key`                 | Training state, schema version                                          |
+| `lead_time_accuracy` | `(date, bucket)`      | Daily per-lead-time error sums (rolling 30 days)                        |
 
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning
 data (`ml/spot_migration.py`), v7 rewrites weather snapshot timestamps as UTC slot keys
-(`ml/weather_migration.py`). The legacy JSON format
+(`ml/weather_migration.py`), v8 stores the price history per UTC slot (`ml/price_storage.py`). The legacy JSON format
 (`open_spot_forecast_DK1_learning.json`) only contributes its training state.
 
 ## File Size Rules
