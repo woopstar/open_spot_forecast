@@ -30,6 +30,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `updater.py`         | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline; `SensorEntities` (configured entity ids) |
 | `history_updater.py` | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                               |
 | `price_source.py`    | `PriceSettings` (price source, currency, VAT, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source                        |
+| `attribution.py`     | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                         |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 

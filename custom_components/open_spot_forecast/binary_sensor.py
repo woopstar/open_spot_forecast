@@ -14,6 +14,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
+from .attribution import ModelAttributionMixin, PriceAttributionMixin
 from .const import DOMAIN, UPDATE_SIGNAL
 from .price_series import known_prices
 from .time_slots import slots_in_local_day, tomorrow_prices_complete
@@ -37,7 +38,7 @@ async def async_setup_entry(
     async_add_entities(binary_sensors, True)
 
 
-class TomorrowAvailableSensor(BinarySensorEntity):
+class TomorrowAvailableSensor(PriceAttributionMixin, BinarySensorEntity):
     """Binary sensor indicating if tomorrow's prices are available."""
 
     _attr_has_entity_name = True
@@ -85,7 +86,7 @@ class TomorrowAvailableSensor(BinarySensorEntity):
         }
 
 
-class MLModelTrainedSensor(BinarySensorEntity):
+class MLModelTrainedSensor(ModelAttributionMixin, BinarySensorEntity):
     """Binary sensor indicating if ML model is trained."""
 
     _attr_has_entity_name = True

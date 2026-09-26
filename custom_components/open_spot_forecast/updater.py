@@ -184,6 +184,11 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if self.settings.dayahead and storage is not None
             else None
         )
+        # The active sources, for the entities' attribution (#41)
+        api_data["entsoe_fallback"] = bool(
+            self.dayahead and self.settings.entsoe_api_key
+        )
+        api_data["zone_weather"] = self.weather is not None
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -272,6 +277,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         self.api_data["prices_today"] = with_vat(spot_data["today"], vat)
         self.api_data["prices_tomorrow"] = with_vat(spot_data["tomorrow"], vat)
         self.api_data["price_source"] = PRICE_SOURCE_DAYAHEAD
+        self.api_data["price_license"] = self.dayahead.license_info
         return True
 
     def update_tomorrow_available(self) -> bool:

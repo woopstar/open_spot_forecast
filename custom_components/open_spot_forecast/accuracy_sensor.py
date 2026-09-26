@@ -9,6 +9,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import slugify as util_slugify
 
+from .attribution import ModelAttributionMixin
 from .const import DOMAIN, LEAD_TIME_BUCKETS, LEAD_TIME_WINDOW_DAYS, UPDATE_SIGNAL
 
 LEAD_TIME_METRICS = ("mae", "rmse")
@@ -42,7 +43,7 @@ def build_lead_time_accuracy_sensors(
     ]
 
 
-class LeadTimeAccuracySensor(SensorEntity):
+class LeadTimeAccuracySensor(ModelAttributionMixin, SensorEntity):
     """Live MAE or RMSE of the ML forecast for one lead-time bucket."""
 
     _attr_has_entity_name = True
