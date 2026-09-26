@@ -28,6 +28,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `tomorrow_prices.py` | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                          |
 | `__init__.py`        | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                     |
 | `updater.py`         | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline; `SensorEntities` (configured entity ids) |
+| `history_updater.py` | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                               |
+| `price_source.py`    | `PriceSettings` (price source, currency, VAT, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source                        |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
@@ -57,6 +59,9 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                |
 | `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day |
 | `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                     |
+| `dayahead_prices.py`    | `DayAheadPriceSource` — energy-charts (+ ENTSO-E fallback) day-ahead prices as `dayahead_prices` rows (#27)       |
+| `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                               |
+| `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params      |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -80,6 +85,12 @@ from `read_spot_prices()` (Stromligning's `spotprice_ex_vat` sensors) via `ml_pr
 training target, self-learning actual and prediction. Stromligning's all-in consumer price
 is display-only; never feed it to the model. VAT is added once, in `MLPredictionSensor`
 (`_with_vat`); never add tariffs or VAT in `ml/`.
+
+With the `dayahead` price source (#27) the model's prices are the stored day-ahead auction
+prices (`dayahead_prices`, EUR/MWh) converted by `dayahead_spot_data()` / `dayahead_prices_by_day()`
+(`spot_prices.py`) with the day's ECB rate: the same currency/kWh excl. VAT series. The displayed
+prices are these with VAT (`with_vat()`); Stromligning is not read. Every HTTP client uses
+`api/http.py` `async_get`; never add another retry loop.
 
 A day's prices are one value per 15-min slot from local midnight (92/96/100), `None` for a
 slot missing in the source: the readers place items by their own timestamps with

@@ -161,6 +161,7 @@ prediction:
 | Source                                              | Type                | Resolution   | Used for                                               |
 | --------------------------------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
 | `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min       | Training target, self-learning actuals (excl. VAT)     |
+| `dayahead_prices` (SQLite, `dayahead` source, #27)  | Raw spot price      | 15-min       | The same, instead of Stromligning; backfilled 30 days  |
 | `weather.get_forecasts`                             | Weather forecast    | Hourly       | Prediction: per-slot wind (m/s), temp, cloud, humidity |
 | `weather.forecast_*` (state)                        | Current weather     | Every 15 min | `weather_history` snapshots (training)                 |
 | `Nordpool Consumption API`                          | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |

@@ -52,6 +52,10 @@ and continuously improves accuracy via per-slot bias correction.
 ### Data Sources
 
 - **Stromligning** — confirmed consumer prices (96/day) and the raw spot price
+- **Day-ahead prices** — [energy-charts.info](https://energy-charts.info/)
+  for every region without an extra integration, with the
+  [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) as
+  fallback (API key) and ECB exchange rates for DKK/SEK/NOK
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
 - **Solcast** — solar generation forecast
 - **Nordpool prognoses** — market demand and generation forecasts
@@ -62,7 +66,9 @@ and continuously improves accuracy via per-slot bias correction.
 
 1. **Install** Open Spot Forecast via HACS or manually.
 2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
-3. **Add a price source** — Stromligning (recommended) or Nordpool.
+3. **Choose a price source** — Stromligning's sensors (DK1/DK2, consumer
+   prices with tariffs) or the day-ahead price (all regions, spot price +
+   VAT; optionally an ENTSO-E API key as fallback).
 4. **Add weather sensors** (optional but recommended) to improve ML accuracy.
 5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.
 
@@ -74,10 +80,10 @@ For detailed documentation, see the [`docs/`](docs/) directory.
 
 To use this package, you need the following integrations:
 
-- [Stromligning](https://github.com/MTrab/stromligning) — real consumer prices (recommended)
+- [Stromligning](https://github.com/MTrab/stromligning) — real consumer prices
+  (DK1/DK2; not needed with the day-ahead price source)
 - A weather entity (Met.no is built into Home Assistant and free)
 - [Solcast](https://github.com/BJReplay/ha-solcast-solar) — solar forecast (optional)
-- Any electricity price integration ([Nordpool](https://github.com/custom-components/nordpool), etc.)
 
 ---
 
@@ -127,7 +133,7 @@ Full documentation is available in the [`docs/`](docs/) directory:
 - **[ML Documentation](docs/ml_documentation.md)** — Model, 17-feature vector, confidence
 - **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
-- **[Stromligning Integration](docs/stromligning_integration.md)** — Price-source priority
+- **[Stromligning Integration](docs/stromligning_integration.md)** — Price sources (Stromligning, day-ahead)
 - **[Using Existing Sensors](docs/using_existing_sensors.md)** — Sensor wiring reference
 
 ---

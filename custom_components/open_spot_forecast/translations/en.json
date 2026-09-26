@@ -9,12 +9,18 @@
           "currency": "Currency",
           "vat": "VAT Rate (e.g., 0.25 for 25%)",
           "precision": "Decimal Precision",
-          "price_type": "Price Unit (kWh, MWh, or Wh)"
+          "price_type": "Price Unit (kWh, MWh, or Wh)",
+          "price_source": "Price source",
+          "entsoe_api_key": "ENTSO-E API key (optional fallback)"
+        },
+        "data_description": {
+          "price_source": "Stromligning's sensors (DK1 and DK2 only, consumer prices with tariffs) or the day-ahead auction price from energy-charts.info (all regions, spot price with VAT).",
+          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Used when energy-charts.info has no prices. Stored in the config entry and never logged."
         }
       },
       "sensors": {
         "title": "Open Spot Forecast - Sensor Configuration",
-        "description": "Configure data sources (all optional). Leave empty to use API fallback.\n\n**Price Source** (priority: Stromligning > Nordpool > API)\n**Weather Sensors** (optional - improves ML accuracy)",
+        "description": "Configure data sources (all optional).\n\n**Price sensors** (only used with the Stromligning price source)\n**Weather sensors** (optional - improves ML accuracy)",
         "data": {
           "stromligning_sensor": "Stromligning Sensor (real prices with tariffs/VAT)",
           "stromligning_tomorrow_sensor": "Stromligning Tomorrow Sensor (tomorrow's prices)",
@@ -33,7 +39,9 @@
       }
     },
     "error": {
-      "invalid_region": "Invalid region selected"
+      "invalid_region": "Invalid region selected",
+      "stromligning_region": "Stromligning only covers DK1 and DK2: choose the day-ahead price source for this region",
+      "entsoe_key_required": "energy-charts.info does not cover this region: enter an ENTSO-E API key"
     },
     "abort": {
       "already_configured": "This region is already configured"
@@ -89,6 +97,14 @@
       },
       "forecast_rmse_day_4_plus": {
         "name": "Forecast RMSE day 4+"
+      }
+    }
+  },
+  "selector": {
+    "price_source": {
+      "options": {
+        "stromligning": "Stromligning sensors (DK1/DK2)",
+        "dayahead": "Day-ahead price (energy-charts.info, ENTSO-E fallback)"
       }
     }
   }

@@ -23,6 +23,8 @@ from .const import (
     STARTUP,
 )
 from .ml.predictor import SpotPricePredictor
+from .ml.storage import LearningStorage
+from .price_source import PriceSettings
 from .sensor_reader import SensorReader
 from .tomorrow_prices import TomorrowPriceChecker
 from .updater import ForecastUpdater, SensorEntities
@@ -44,6 +46,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Sensor configuration - options first (reconfiguration), then data (initial setup)
     sensors = SensorEntities.from_entry(entry)
+    price_settings = PriceSettings.from_entry(entry)
+    _LOGGER.info(
+        "Price source: %s (ENTSO-E fallback: %s)",
+        price_settings.source,
+        "configured" if price_settings.entsoe_api_key else "not configured",
+    )
     _LOGGER.info(
         "Sensor configuration: stromligning=%s, stromligning_tomorrow=%s, spot=%s, "
         "spot_tomorrow=%s, wind_speed=%s, wind_direction=%s, solar_power=%s, "
@@ -71,6 +79,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await ml_predictor._load_learning_data()
         await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)
 
+    # The day-ahead prices are stored in the learning database, which exists
+    # without the ML model too
+    storage: LearningStorage | None = ml_predictor.storage if ml_predictor else None
+    own_storage = None
+    if storage is None and price_settings.dayahead:
+        own_storage = storage = await hass.async_add_executor_job(
+            LearningStorage, hass, region
+        )
+
     # Store API data
     api_data = {
         "ml_predictor": ml_predictor,
@@ -84,12 +101,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "tomorrow_available": False,
         "last_update": None,
         "sensor_config": sensors.sensor_config(),
+        # Closed at unload: the day-ahead prices' database without ML
+        "price_storage": own_storage,
     }
 
     hass.data[DOMAIN][entry.entry_id] = api_data
 
     updater = ForecastUpdater(
-        hass, entry, api_data, sensors, sensor_reader, ml_predictor
+        hass,
+        entry,
+        api_data,
+        sensors,
+        sensor_reader,
+        ml_predictor,
+        price_settings,
+        storage,
     )
     try:
         await updater.async_initial_fetch()
@@ -141,10 +167,13 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         for unsub in api_data.get("listeners", []):
             unsub()
 
-        # Close persistent SQLite connection
+        # Close persistent SQLite connections
         ml_predictor = api_data.get("ml_predictor")
         if ml_predictor is not None:
             await hass.async_add_executor_job(ml_predictor.storage.close)
+        price_storage = api_data.get("price_storage")
+        if price_storage is not None:
+            await hass.async_add_executor_job(price_storage.close)
 
     return unload_ok
 

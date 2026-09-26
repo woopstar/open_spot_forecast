@@ -22,6 +22,17 @@ CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 CONF_STROMLIGNING_SENSOR = "stromligning_sensor"
 CONF_STROMLIGNING_TOMORROW_SENSOR = "stromligning_tomorrow_sensor"
 
+# Where prices come from (#27): Stromligning's sensors (DK1/DK2 only), or the
+# day-ahead auction prices from energy-charts.info, with the ENTSO-E
+# Transparency Platform as fallback when an API key is configured
+CONF_PRICE_SOURCE = "price_source"
+CONF_ENTSOE_API_KEY = "entsoe_api_key"
+PRICE_SOURCE_STROMLIGNING = "stromligning"
+PRICE_SOURCE_DAYAHEAD = "dayahead"
+PRICE_SOURCES = (PRICE_SOURCE_STROMLIGNING, PRICE_SOURCE_DAYAHEAD)
+DEFAULT_PRICE_SOURCE = PRICE_SOURCE_STROMLIGNING
+STROMLIGNING_REGIONS = ("DK1", "DK2")
+
 # Raw day-ahead spot price, excl. VAT and tariffs: the ML model's training and
 # prediction target (#16). VAT is applied once, in the sensor layer.
 CONF_SPOT_PRICE_SENSOR = "spot_price_sensor"
@@ -50,66 +61,113 @@ UPDATE_SIGNAL_FORECAST = f"{DOMAIN}_signal_forecast_update"
 # Nordpool API - REMOVED (replaced by Stromligning + weather entity)
 # DMI API - REMOVED (replaced by weather entity via weather.get_forecasts)
 
-# Supported regions
-REGIONS = {
+# Supported regions. ``energy_charts`` is the bidding zone on energy-charts.info,
+# ``entsoe`` its EIC code on the ENTSO-E Transparency Platform (#27)
+REGIONS: dict[str, dict[str, str | float]] = {
     "DK1": {
         "currency": "DKK",
         "country": "Denmark",
         "vat": 0.25,
         "tz": "Europe/Copenhagen",
+        "energy_charts": "DK1",
+        "entsoe": "10YDK-1--------W",
     },
     "DK2": {
         "currency": "DKK",
         "country": "Denmark",
         "vat": 0.25,
         "tz": "Europe/Copenhagen",
+        "energy_charts": "DK2",
+        "entsoe": "10YDK-2--------M",
     },
     "SE3": {
         "currency": "SEK",
         "country": "Sweden",
         "vat": 0.25,
         "tz": "Europe/Stockholm",
+        "energy_charts": "SE3",
+        "entsoe": "10Y1001A1001A46L",
     },
     "SE4": {
         "currency": "SEK",
         "country": "Sweden",
         "vat": 0.25,
         "tz": "Europe/Stockholm",
+        "energy_charts": "SE4",
+        "entsoe": "10Y1001A1001A47J",
     },
-    "NO2": {"currency": "NOK", "country": "Norway", "vat": 0.25, "tz": "Europe/Oslo"},
+    "NO2": {
+        "currency": "NOK",
+        "country": "Norway",
+        "vat": 0.25,
+        "tz": "Europe/Oslo",
+        "energy_charts": "NO2",
+        "entsoe": "10YNO-2--------T",
+    },
     "FI": {
         "currency": "EUR",
         "country": "Finland",
         "vat": 0.255,
         "tz": "Europe/Helsinki",
+        "energy_charts": "FI",
+        "entsoe": "10YFI-1--------U",
     },
     "EE": {
         "currency": "EUR",
         "country": "Estonia",
         "vat": 0.24,
         "tz": "Europe/Tallinn",
+        "energy_charts": "EE",
+        "entsoe": "10Y1001A1001A39I",
     },
     "LT": {
         "currency": "EUR",
         "country": "Lithuania",
         "vat": 0.21,
         "tz": "Europe/Vilnius",
+        "energy_charts": "LT",
+        "entsoe": "10YLT-1001A0008Q",
     },
-    "LV": {"currency": "EUR", "country": "Latvia", "vat": 0.21, "tz": "Europe/Riga"},
+    "LV": {
+        "currency": "EUR",
+        "country": "Latvia",
+        "vat": 0.21,
+        "tz": "Europe/Riga",
+        "energy_charts": "LV",
+        "entsoe": "10YLV-1001A00074",
+    },
     "NL": {
         "currency": "EUR",
         "country": "Netherlands",
         "vat": 0.21,
         "tz": "Europe/Amsterdam",
+        "energy_charts": "NL",
+        "entsoe": "10YNL----------L",
     },
     "BE": {
         "currency": "EUR",
         "country": "Belgium",
         "vat": 0.06,
         "tz": "Europe/Brussels",
+        "energy_charts": "BE",
+        "entsoe": "10YBE----------2",
     },
-    "FR": {"currency": "EUR", "country": "France", "vat": 0.055, "tz": "Europe/Paris"},
-    "DE": {"currency": "EUR", "country": "Germany", "vat": 0.19, "tz": "Europe/Berlin"},
+    "FR": {
+        "currency": "EUR",
+        "country": "France",
+        "vat": 0.055,
+        "tz": "Europe/Paris",
+        "energy_charts": "FR",
+        "entsoe": "10YFR-RTE------C",
+    },
+    "DE": {
+        "currency": "EUR",
+        "country": "Germany",
+        "vat": 0.19,
+        "tz": "Europe/Berlin",
+        "energy_charts": "DE-LU",
+        "entsoe": "10Y1001A1001A82H",
+    },
 }
 
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
@@ -130,6 +188,13 @@ LEAD_TIME_BUCKETS: tuple[tuple[str, float], ...] = (
 )
 # Rolling window (days of slots) the per-bucket MAE/RMSE are computed over.
 LEAD_TIME_WINDOW_DAYS = 30
+
+# Day-ahead price APIs (#27): energy-charts.info (no key; the licence is per
+# zone and comes with each response) and ENTSO-E (API key, fallback)
+ENERGY_CHARTS_API = "https://api.energy-charts.info/price"
+ENTSOE_API = "https://web-api.tp.entsoe.eu/api"
+# ECB euro reference rates, to convert EUR/MWh into the configured currency
+ECB_RATES_API = "https://data-api.ecb.europa.eu/service/data/EXR"
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"

@@ -8,13 +8,23 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
-from homeassistant.helpers.selector import selector
+from homeassistant.helpers.selector import (
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+    selector,
+)
 
 from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
+    CONF_ENTSOE_API_KEY,
     CONF_PRECISION,
     CONF_PREDICTION_HOURS,
+    CONF_PRICE_SOURCE,
     CONF_PRICE_TYPE,
     CONF_REGION,
     CONF_SOLAR_FORECAST_SENSOR,
@@ -30,6 +40,7 @@ from .const import (
     DEFAULT_CURRENCY,
     DEFAULT_PRECISION,
     DEFAULT_PREDICTION_HOURS,
+    DEFAULT_PRICE_SOURCE,
     DEFAULT_PRICE_TYPE,
     DEFAULT_REGION,
     DEFAULT_SPOT_PRICE_SENSOR,
@@ -37,10 +48,37 @@ from .const import (
     DEFAULT_VAT,
     DOMAIN,
     PREDICTION_HOURS_OPTIONS,
+    PRICE_SOURCE_STROMLIGNING,
+    PRICE_SOURCES,
     REGIONS,
+    STROMLIGNING_REGIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def price_regions() -> list[str]:
+    """Return the regions a price source covers (energy-charts or ENTSO-E)."""
+    return sorted(
+        region
+        for region, zone in REGIONS.items()
+        if zone.get("energy_charts") or zone.get("entsoe")
+    )
+
+
+def validate_price_source(user_input: dict[str, Any]) -> str | None:
+    """Return the error key for an unusable region/price source, or None."""
+    region = user_input.get(CONF_REGION)
+    if region not in price_regions():
+        return "invalid_region"
+    source = user_input.get(CONF_PRICE_SOURCE, DEFAULT_PRICE_SOURCE)
+    if source == PRICE_SOURCE_STROMLIGNING and region not in STROMLIGNING_REGIONS:
+        return "stromligning_region"
+    if not REGIONS[region].get("energy_charts") and not user_input.get(
+        CONF_ENTSOE_API_KEY
+    ):
+        return "entsoe_key_required"
+    return None
 
 
 class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -61,17 +99,16 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._errors = {}
 
         if user_input is not None:
-            # Validate region
-            region = user_input.get(CONF_REGION)
-            if region not in REGIONS:
-                self._errors["base"] = "invalid_region"
+            error = validate_price_source(user_input)
+            if error:
+                self._errors["base"] = error
             else:
                 # Store data and move to step 2
                 self._data.update(user_input)
                 return await self.async_step_sensors()
 
-        # Build the form for step 1
-        regions_list = sorted(REGIONS.keys())
+        # Build the form for step 1: only regions with a price source
+        regions_list = price_regions()
         currencies = sorted({str(r["currency"]) for r in REGIONS.values()})
         price_types = ["kWh", "MWh", "Wh"]
 
@@ -87,6 +124,18 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ),
                 vol.Required(CONF_PRICE_TYPE, default=DEFAULT_PRICE_TYPE): vol.In(
                     price_types
+                ),
+                vol.Required(
+                    CONF_PRICE_SOURCE, default=DEFAULT_PRICE_SOURCE
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(PRICE_SOURCES),
+                        mode=SelectSelectorMode.LIST,
+                        translation_key=CONF_PRICE_SOURCE,
+                    )
+                ),
+                vol.Optional(CONF_ENTSOE_API_KEY): TextSelector(
+                    TextSelectorConfig(type=TextSelectorType.PASSWORD)
                 ),
             }
         )

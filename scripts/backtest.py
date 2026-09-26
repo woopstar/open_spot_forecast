@@ -43,7 +43,10 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
-from custom_components.open_spot_forecast.const import REGIONS
+from custom_components.open_spot_forecast.api.dayahead_prices import (
+    parse_energy_charts as parse_dayahead_rows,
+)
+from custom_components.open_spot_forecast.const import ENERGY_CHARTS_API, REGIONS
 from custom_components.open_spot_forecast.ml.features import (
     FEATURE_NAMES,
     SlotInputs,
@@ -54,22 +57,13 @@ from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 
 SLOT_SECONDS = 15 * 60
-HOUR_SECONDS = 60 * 60
 # Origins with less history than this are skipped (the naive model needs a week).
 MIN_HISTORY_SLOTS = 7 * 96
 
 HTTP_ATTEMPTS = 5
-ENERGY_CHARTS_URL = "https://api.energy-charts.info/price"
-ENERGY_CHARTS_UNIT = "EUR / MWh"
-# OSF regions energy-charts publishes (see #27), mapped to its bidding-zone codes.
+# OSF regions and their energy-charts bidding zones (``REGIONS``, #27)
 ENERGY_CHARTS_ZONES: dict[str, str] = {
-    "DK1": "DK1",
-    "DK2": "DK2",
-    "SE4": "SE4",
-    "NL": "NL",
-    "BE": "BE",
-    "FR": "FR",
-    "DE": "DE-LU",
+    region: str(zone["energy_charts"]) for region, zone in REGIONS.items()
 }
 # Report in EUR ct/kWh, the unit EpexPredictor publishes, so numbers compare directly.
 CT_PER_KWH_PER_EUR_PER_MWH = 0.1
@@ -164,35 +158,17 @@ def merge_series(parts: Sequence[PriceSeries]) -> PriceSeries:
 def parse_energy_charts(payload: dict[str, Any]) -> PriceSeries:
     """Convert an energy-charts ``/price`` response to a 15-minute ct/kWh series.
 
-    Each price covers the interval up to the next timestamp, capped at one hour,
-    so hourly prices (DK1 before the 2025-10-01 move to 15-minute products) fill
-    four quarter-hours. Resolution is read from the raw timestamps before null
-    prices are dropped, so a gap never stretches a neighbouring price.
+    Parsed by the integration's ``parse_energy_charts`` (``api/dayahead_prices.py``):
+    each price covers the interval up to the next timestamp, capped at one
+    hour, so hourly prices (DK1 before the 2025-10-01 move to 15-minute
+    products) fill four quarter-hours, and a null price never stretches a
+    neighbouring one.
     """
-    unit = payload.get("unit")
-    if unit != ENERGY_CHARTS_UNIT:
-        raise ValueError(f"unexpected energy-charts unit: {unit!r}")
-    raw_starts = [int(ts) for ts in payload.get("unix_seconds") or []]
-    raw_prices = list(payload.get("price") or [])
-    if len(raw_starts) != len(raw_prices):
-        raise ValueError("energy-charts unix_seconds and price differ in length")
-
-    starts: list[int] = []
-    prices: list[float] = []
-    for i, (start, price) in enumerate(zip(raw_starts, raw_prices, strict=True)):
-        if i + 1 < len(raw_starts):
-            step = raw_starts[i + 1] - start
-        elif i > 0:
-            step = start - raw_starts[i - 1]
-        else:
-            step = SLOT_SECONDS
-        if price is None:
-            continue
-        span = min(max(step, SLOT_SECONDS), HOUR_SECONDS)
-        for offset in range(0, span, SLOT_SECONDS):
-            starts.append(start + offset)
-            prices.append(float(price) * CT_PER_KWH_PER_EUR_PER_MWH)
-    return PriceSeries.from_points(starts, prices)
+    rows = parse_dayahead_rows(payload)
+    return PriceSeries.from_points(
+        [int(datetime.fromisoformat(row["timestamp"]).timestamp()) for row in rows],
+        [float(row["price"]) * CT_PER_KWH_PER_EUR_PER_MWH for row in rows],
+    )
 
 
 def _month_chunks(first: date, last: date) -> Iterator[tuple[date, date]]:
@@ -263,7 +239,7 @@ def load_energy_charts_prices(
                     "end": month_end.isoformat(),
                 }
             )
-            payload = fetch(f"{ENERGY_CHARTS_URL}?{query}")
+            payload = fetch(f"{ENERGY_CHARTS_API}?{query}")
             if month_end < today:
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(json.dumps(payload), encoding="utf-8")

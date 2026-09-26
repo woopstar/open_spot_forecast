@@ -9,12 +9,18 @@
           "currency": "Valuta",
           "vat": "Moms (f.eks. 0.25 for 25%)",
           "precision": "Decimal Præcision",
-          "price_type": "Prisenhed (kWh, MWh eller Wh)"
+          "price_type": "Prisenhed (kWh, MWh eller Wh)",
+          "price_source": "Priskilde",
+          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri reserve)"
+        },
+        "data_description": {
+          "price_source": "Stromlignings sensorer (kun DK1 og DK2, forbrugerpriser med tariffer) eller day-ahead-auktionsprisen fra energy-charts.info (alle områder, spotpris med moms).",
+          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Bruges, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig."
         }
       },
       "sensors": {
         "title": "Open Spot Forecast - Sensor Konfiguration",
-        "description": "Konfigurer datakilder (alle valgfri). Lad være tom for at bruge API fallback.\n\n**Priskilde** (prioritet: Stromligning > Nordpool > API)\n**Vejsensorer** (valgfri - forbedrer ML nøjagtighed)",
+        "description": "Konfigurer datakilder (alle valgfri).\n\n**Prissensorer** (bruges kun med priskilden Stromligning)\n**Vejrsensorer** (valgfri - forbedrer ML-nøjagtighed)",
         "data": {
           "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
           "stromligning_tomorrow_sensor": "Stromligning Sensor for i morgen (morgendagens priser)",
@@ -33,7 +39,9 @@
       }
     },
     "error": {
-      "invalid_region": "Ugyldigt område valgt"
+      "invalid_region": "Ugyldigt område valgt",
+      "stromligning_region": "Stromligning dækker kun DK1 og DK2: vælg priskilden day-ahead-pris for dette område",
+      "entsoe_key_required": "energy-charts.info dækker ikke dette område: indtast en ENTSO-E API-nøgle"
     },
     "abort": {
       "already_configured": "Dette område er allerede konfigureret"
@@ -89,6 +97,14 @@
       },
       "forecast_rmse_day_4_plus": {
         "name": "Prognose-RMSE dag 4+"
+      }
+    }
+  },
+  "selector": {
+    "price_source": {
+      "options": {
+        "stromligning": "Stromligning-sensorer (DK1/DK2)",
+        "dayahead": "Day-ahead-pris (energy-charts.info, ENTSO-E som reserve)"
       }
     }
   }

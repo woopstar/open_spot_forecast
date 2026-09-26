@@ -14,6 +14,7 @@ All learning data is stored in a single SQLite database:
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                            |
 | `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                      |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing |
+| `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                    |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), keyed `YYYY-MM-DDTHH:MM:SSZ`         |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state     |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error    |
@@ -114,7 +115,8 @@ source fetches only what it is missing:
 
 - `SeriesSpec` (`ml/series_storage.py`) describes a table on a fixed UTC
   grid: `timestamp` (`…Z`), optionally a key column (e.g. a sampling point),
-  and value columns. `nordpool_prognoses` is `NORDPOOL_PROGNOSES` (hourly).
+  and value columns. `nordpool_prognoses` is `NORDPOOL_PROGNOSES` (hourly),
+  `dayahead_prices` is `DAYAHEAD_PRICES` (15-minute, #27).
 - A grid point counts as stored when its row has a value in every column
   (and, for a keyed table, every expected key has such a row). Nordpool rows
   without the per-type production breakdown are therefore incomplete until
@@ -145,8 +147,9 @@ resumes where it stopped.
 
 History is kept for the training window (`max_history_days`, 30 days) plus
 2 days. Once a day (at midnight) older `weather_history` snapshots,
-`price_history` days, `nordpool_prognoses` rows and remembered holes are
-deleted. Before #32 only `weather_history` was pruned, to a fixed 30 days,
+`price_history` days, `nordpool_prognoses` rows, `dayahead_prices` rows and
+remembered holes are deleted. Without the ML model only `dayahead_prices` is
+stored, and only the margin is kept. Before #32 only `weather_history` was pruned, to a fixed 30 days,
 whenever the snapshot count was a multiple of 100.
 
 ## Data Flow
