@@ -21,10 +21,11 @@ and continuously improves accuracy via per-slot bias correction.
 
 - **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
   predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day)
-- **23-feature model** — time, local weather, zone weather from Open-Meteo
-  (wind at 80 m, temperature, irradiance, pressure, humidity across the
-  bidding zone), and market-demand features, implemented in pure NumPy (no
-  scikit-learn dependency)
+- **17-feature model** — time, zone weather from Open-Meteo (wind at 80 m,
+  temperature, irradiance, pressure, humidity across the bidding zone;
+  trained on archived forecasts, like the forecasts it predicts from) and
+  market-demand features, implemented in pure NumPy (no scikit-learn
+  dependency)
 - **Real consumer prices** — Stromligning integration provides prices with
   tariffs, fees, and VAT (what you actually pay) for display
 - **Spot price forecast** — the model learns the raw day-ahead spot price
@@ -73,7 +74,8 @@ and continuously improves accuracy via per-slot bias correction.
 3. **Choose a price source** — Stromligning's sensors (DK1/DK2, consumer
    prices with tariffs) or the day-ahead price (all regions, spot price +
    VAT; optionally an ENTSO-E API key as fallback).
-4. **Add weather sensors** (optional but recommended) to improve ML accuracy.
+4. **Add weather sensors** (optional) to score the local weather forecast in
+   the confidence; the model's weather comes from Open-Meteo.
 5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.
 
 For detailed documentation, see the [`docs/`](docs/) directory.
@@ -134,7 +136,7 @@ To use this package, you need the following integrations:
 Full documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ml_documentation.md)** — Model, 23-feature vector, confidence
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 17-feature vector, confidence
 - **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
 - **[Stromligning Integration](docs/stromligning_integration.md)** — Price sources (Stromligning, day-ahead)

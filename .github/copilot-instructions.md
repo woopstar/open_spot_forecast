@@ -8,7 +8,7 @@ It contains:
 
 - Module responsibility map for all component, sensor, ML, and API files
 - Canonical patterns you must use (never re-invent)
-- Feature vector layout (23 features) and 96-slot granularity
+- Feature vector layout (17 features) and 96-slot granularity
 - File size limits and oversized files
 - Bias-correction EMA and solar-scaling factor formulas
 - File organization patterns (by responsibility, not by theme)
@@ -99,7 +99,7 @@ When asked to solve a GitHub issue, always follow these steps in order:
 
 - **Always read `docs/ml_documentation.md` before touching any ML code** — model,
   feature vector, self-learning, bias correction, confidence scoring, or storage schema.
-- **Every ML change must satisfy all documented invariants**: 23-feature vector, 96-slot
+- **Every ML change must satisfy all documented invariants**: 17-feature vector, 96-slot
   granularity, bias-correction EMA, solar-scaling factor, and confidence floor.
 - **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
   where relevant) when a change intentionally alters ML semantics. Spec and implementation

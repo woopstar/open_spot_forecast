@@ -19,7 +19,9 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+from custom_components.open_spot_forecast.ml.series_storage import OPENMETEO_WEATHER
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
+from custom_components.open_spot_forecast.ml.zone_weather import zone_points
 from custom_components.open_spot_forecast.time_slots import (
     UTC_KEY_FORMAT,
     floor_to_slot,
@@ -279,19 +281,42 @@ def test_nordpool_lookup_never_returns_another_hours_row(
 def test_training_rows_carry_each_slots_stored_history(
     tmp_path: Path, day: date
 ) -> None:
-    """Every training row gets its slot's snapshot and its hour's prognosis."""
+    """Every training row gets its slot's zone weather and its hour's prognosis.
+
+    The local snapshots are stored too, but are not training inputs (#23).
+    """
     predictor = SpotPricePredictor(_hass(tmp_path), "DK1")
     try:
         _store_days_around(predictor.storage, day)
+        around = (day - timedelta(days=1), day + timedelta(days=1))
+        predictor.storage.upsert_series(
+            OPENMETEO_WEATHER,
+            [
+                {
+                    "timestamp": start.isoformat(),
+                    "point": point,
+                    "wind_80m": _value(start),
+                }
+                | {
+                    "temperature": 1.0,
+                    "irradiance": 0.0,
+                    "pressure": 1.0,
+                    "humidity": 1.0,
+                }
+                for start in _starts(*around, _SLOT)
+                for point in zone_points("DK1")
+            ],
+        )
         count = slots_in_local_day(day)
         predictor.price_history = [{"date": day.isoformat(), "prices": [1.0] * count}]
 
         _, features = predictor.get_all_historical_prices()
 
         starts = [slot_start_in_day(day, i) for i in range(count)]
-        assert [row["temperature"] for row in features] == pytest.approx(
+        assert [row["zone_wind"] for row in features] == pytest.approx(
             [_value(start) for start in starts]
         )
+        assert {row["temperature"] for row in features} == {None}
         assert [row["consumption_forecast"] for row in features] == pytest.approx(
             [_value(floor_to_slot(start, 60)) for start in starts]
         )

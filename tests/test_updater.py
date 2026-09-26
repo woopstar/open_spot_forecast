@@ -669,12 +669,38 @@ async def test_backfill_covers_the_price_history_up_to_today(
         {"date": "not a date"},
     ]
 
-    with patch("homeassistant.util.dt.now", return_value=NOW):
+    with (
+        patch("homeassistant.util.dt.now", return_value=NOW),
+        patch.object(ForecastUpdater, "refresh_forecast", autospec=True) as refresh,
+    ):
         await harness.updater.backfill_history()
 
-    harness.nordpool.async_update.assert_awaited_once_with(
-        datetime(2026, 9, 18, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH)
-    )
+    window = (datetime(2026, 9, 18, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH))
+    # The zone weather (Open-Meteo's archive, #23) and the prognoses
+    harness.weather.async_update.assert_awaited_once_with(*window)
+    harness.nordpool.async_update.assert_awaited_once_with(*window)
+    # New history: the model retrains on it at once
+    refresh.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_a_backfill_without_new_data_does_not_refresh(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make()
+    harness.predictor.price_history = [{"date": "2026-09-20"}]
+    harness.nordpool.async_update.return_value = False
+    harness.weather.async_update.side_effect = RuntimeError("archive down")
+
+    with (
+        patch("homeassistant.util.dt.now", return_value=NOW),
+        patch.object(ForecastUpdater, "refresh_forecast", autospec=True) as refresh,
+    ):
+        await harness.updater.backfill_history()
+
+    refresh.assert_not_awaited()
+    assert "Open-Meteo history backfill failed: archive down" in caplog.text
 
 
 @pytest.mark.asyncio

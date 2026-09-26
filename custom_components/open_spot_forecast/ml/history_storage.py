@@ -56,7 +56,11 @@ class HistoryStorageMixin(StorageMixinBase):
         humidity: float | None,
         solar_power: float | None,
     ) -> None:
-        """Store a weather snapshot for a given timestamp (blocking)."""
+        """Store a weather snapshot for a given timestamp (blocking).
+
+        Snapshots score the local weather forecast (confidence); they are not
+        training data (#23), so storing one does not trigger a retrain.
+        """
         with self._lock:
             conn = self._ensure_conn()
             conn.execute(
@@ -75,7 +79,6 @@ class HistoryStorageMixin(StorageMixinBase):
                 ),
             )
             conn.commit()
-            self.last_data_write = dt_util.utcnow()
 
     def find_weather_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
         """Find the snapshot closest to a timestamp, within 30 minutes (blocking).

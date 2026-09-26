@@ -20,7 +20,7 @@
       },
       "sensors": {
         "title": "Open Spot Forecast - Sensor Konfiguration",
-        "description": "Konfigurer datakilder (alle valgfri).\n\n**Prissensorer** (bruges kun med priskilden Stromligning)\n**Vejrsensorer** (valgfri - forbedrer ML-nøjagtighed)",
+        "description": "Konfigurer datakilder (alle valgfri).\n\n**Prissensorer** (bruges kun med priskilden Stromligning)\n**Vejrsensorer** (valgfri - vurderer den lokale vejrprognose til konfidensen)",
         "data": {
           "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
           "stromligning_tomorrow_sensor": "Stromligning Sensor for i morgen (morgendagens priser)",

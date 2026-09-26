@@ -20,7 +20,7 @@ Read `.github/memories.md`. Pay special attention to:
 
 - Module responsibility map (component, sensor I/O, ML, API layers)
 - Canonical patterns (const.py constants, SensorReader, SpotPricePredictor, LearningStorage)
-- Feature vector (23 features) and 96-slot granularity
+- Feature vector (17 features) and 96-slot granularity
 - Bias-correction EMA and solar-scaling factor
 - File size limits (30 KB AND 1000 lines)
 - File organization patterns (by responsibility, not by theme)

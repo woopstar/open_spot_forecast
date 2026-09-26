@@ -187,15 +187,13 @@ def test_delete_old_predictions_uses_stored_at(storage: LearningStorage) -> None
 # --- Weather, Nordpool and price history ---------------------------------------------
 
 
-def test_weather_snapshot_round_trip_moves_last_data_write(
-    storage: LearningStorage,
-) -> None:
-    assert storage.last_data_write is None
+def test_weather_snapshot_round_trip(storage: LearningStorage) -> None:
     storage.insert_weather_snapshot(
         "2026-09-24T08:00:00Z", 12.5, 6.0, 270.0, 80.0, 90.0, 1500.0
     )
 
-    assert storage.last_data_write is not None
+    # Not training data since #23: no retrain
+    assert storage.last_data_write is None
     assert storage.count_weather_snapshots() == 1
     assert storage.load_weather_history() == [
         {

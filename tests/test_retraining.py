@@ -20,7 +20,10 @@ from custom_components.open_spot_forecast.const import (
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.retraining import HPO_INTERVAL_DAYS
-from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
+from custom_components.open_spot_forecast.ml.series_storage import (
+    NORDPOOL_PROGNOSES,
+    OPENMETEO_WEATHER,
+)
 
 TODAY = [1.0 + (slot % 24) / 10 for slot in range(96)]
 TOMORROW = [2.0 + (slot % 24) / 10 for slot in range(96)]
@@ -115,19 +118,33 @@ def test_corrected_price_triggers_retrain(predictor: SpotPricePredictor) -> None
     assert train.call_count == 2
 
 
-def test_new_weather_snapshot_triggers_retrain(
+def test_new_zone_weather_triggers_retrain_a_snapshot_does_not(
     predictor: SpotPricePredictor,
 ) -> None:
-    """A weather snapshot stored after training triggers the next retrain."""
+    """Changed zone weather is training data; a local snapshot is not (#23)."""
     with _spy_training(predictor) as train:
         _forecast(predictor, TODAY)
         predictor.storage.insert_weather_snapshot(
             datetime.now().isoformat(), 12.0, 6.5, 240.0, 75.0, 80.0, 0.0
         )
         _forecast(predictor, TODAY)
+        assert train.call_count == 1
+
+        predictor.storage.upsert_series(OPENMETEO_WEATHER, [_zone_row(11.0)])
+        _forecast(predictor, TODAY)
         _forecast(predictor, TODAY)
 
     assert train.call_count == 2
+
+
+def _zone_row(wind: float) -> dict:
+    return {"timestamp": "2026-09-24T08:00:00Z", "point": "57.40,10.24"} | {
+        "wind_80m": wind,
+        "temperature": 12.0,
+        "irradiance": 100.0,
+        "pressure": 1013.0,
+        "humidity": 80.0,
+    }
 
 
 def test_nordpool_rows_trigger_retrain_only_when_changed(
@@ -197,10 +214,8 @@ def test_training_start_is_the_data_snapshot(predictor: SpotPricePredictor) -> N
 
     def train_with_concurrent_write() -> None:
         real_train()
-        # Simulates the 15-minute snapshot landing mid-training
-        predictor.storage.insert_weather_snapshot(
-            datetime.now().isoformat(), 10.0, 4.0, 180.0, 50.0, 70.0, 0.0
-        )
+        # Simulates a zone weather refresh landing mid-training
+        predictor.storage.upsert_series(OPENMETEO_WEATHER, [_zone_row(4.0)])
 
     with patch.object(
         predictor, "_train_models", side_effect=train_with_concurrent_write

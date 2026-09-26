@@ -18,20 +18,26 @@ external API calls, no duplicate data fetching. Here's what's needed:
 | `binary_sensor.stromligning_tomorrow_spotprice_vat`    | Stromligning                                            | Tomorrow's prices when available       |
 | `binary_sensor.stromligning_tomorrow_spotprice_ex_vat` | Stromligning                                            | Tomorrow's raw spot price (ML)         |
 | `sensor.solcast_pv_forecast_forecast_today`            | [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Solar generation forecast              |
-| `sensor.power_inverter_input_total`                    | Your inverter                                           | Actual solar production (for training) |
-| `sensor.metroair_330_outdoor_temperature`              | MyUplink/Met.no                                         | Actual temperature (for training)      |
+| `sensor.power_inverter_input_total`                    | Your inverter                                           | Actual solar production (solar scale)  |
+| `sensor.metroair_330_outdoor_temperature`              | MyUplink/Met.no                                         | Actual temperature (forecast accuracy) |
 
 ## Weather Entity
 
-A single `weather.*` entity provides everything needed:
+A single `weather.*` entity scores the local weather forecast for the
+confidence (its forecast error lowers the learned confidence). It is not a
+model input since #23: the model's weather is Open-Meteo's zone forecast,
+trained on archived forecasts (see
+[ML Documentation](ml_documentation.md#training-vs-prediction-segmentation)).
 
-**Current state** (read every 15 min for history):
+**Current state** (read every 15 min into `weather_history`):
 
 - `temperature`, `humidity`, `wind_speed`, `wind_bearing`, `cloud_coverage`
 
 **Hourly forecast** (via `weather.get_forecasts` service):
 
-- 48 hours of hourly predictions with all the above fields
+- 48 hours of hourly predictions with all the above fields; the forecast for
+  a slot is recorded with its prediction and compared with the slot's
+  snapshot
 
 No DMI API key needed — Met.no is built into Home Assistant and free.
 

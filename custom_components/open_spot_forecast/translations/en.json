@@ -20,7 +20,7 @@
       },
       "sensors": {
         "title": "Open Spot Forecast - Sensor Configuration",
-        "description": "Configure data sources (all optional).\n\n**Price sensors** (only used with the Stromligning price source)\n**Weather sensors** (optional - improves ML accuracy)",
+        "description": "Configure data sources (all optional).\n\n**Price sensors** (only used with the Stromligning price source)\n**Weather sensors** (optional - score the local weather forecast for the confidence)",
         "data": {
           "stromligning_sensor": "Stromligning Sensor (real prices with tariffs/VAT)",
           "stromligning_tomorrow_sensor": "Stromligning Tomorrow Sensor (tomorrow's prices)",
