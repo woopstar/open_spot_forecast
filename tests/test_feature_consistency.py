@@ -141,10 +141,11 @@ def _training_row(predictor: SpotPricePredictor, start: datetime) -> dict:
 def test_same_inputs_give_identical_training_and_prediction_rows(
     predictor: SpotPricePredictor,
 ) -> None:
-    """A slot's stored actuals and its live forecast yield the same model row."""
+    """A slot's stored forecasts and its live forecast yield the same model row."""
     _store_history(predictor, SLOT)
 
-    training = build_feature_vector(_training_row(predictor, SLOT))
+    training_row = _training_row(predictor, SLOT)
+    training = build_feature_vector(training_row)
     live = _live_data(SLOT)
     (prediction_row,) = predictor._combine_features(
         [slot_time_features(SLOT)], live, predictor._zone_index(live)
@@ -154,7 +155,11 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     assert not any(math.isnan(value) for value in training)
     assert training == prediction
     row = dict(zip(FEATURE_NAMES, training, strict=True))
-    assert row["wind_power_estimate"] == pytest.approx(wind_power_curve(8.0))
+    assert row["zone_wind_power"] == pytest.approx(wind_power_curve(ZONE["wind_80m"]))
+    # The local weather is recorded with a prediction, never trained on (#23)
+    assert prediction_row["temperature"] == pytest.approx(WEATHER["temperature"])
+    assert training_row["temperature"] is None
+    assert "temperature" not in FEATURE_NAMES
     assert row["net_demand"] == pytest.approx(3000 - 500 - 800 - 700)
     assert row["wind_share"] == pytest.approx(1500 / 3000)
 
@@ -194,7 +199,9 @@ def test_slots_beyond_the_forecasts_have_unknown_inputs(
     vector = dict(zip(FEATURE_NAMES, build_feature_vector(day_four), strict=True))
 
     assert today["temperature"] == pytest.approx(WEATHER["temperature"])
-    for name in WEATHER_FEATURES + NORDPOOL_FEATURES:
+    for name in WEATHER_FEATURES:
+        assert day_four[name] is None
+    for name in NORDPOOL_FEATURES:
         assert day_four[name] is None
         assert math.isnan(vector[name])
 
@@ -255,25 +262,21 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
         assert len(np.unique(known)) > 1, name
 
 
-def test_training_inputs_read_naive_snapshots_as_local_time() -> None:
-    """Snapshots stored before #17 have no offset; they are local wall-clock time."""
-    naive = {"timestamp": "2026-06-01T12:00:03.123456"} | WEATHER
-    aware = {"timestamp": "2026-06-01T12:15:02+02:00", "temperature": 13.0}
-    inputs = TrainingInputs([naive, aware], [], TZ)
+def test_training_never_uses_the_measured_weather(
+    predictor: SpotPricePredictor,
+) -> None:
+    """Snapshots only score the local forecast; training rows lack them (#23)."""
+    _store_history(predictor, SLOT)
 
-    assert inputs.for_slot(SLOT).temperature == pytest.approx(12.0)
-    assert inputs.for_slot(SLOT + timedelta(minutes=15)).temperature == (
-        pytest.approx(13.0)
-    )
-    assert inputs.for_slot(SLOT + timedelta(minutes=30)) == SlotInputs()
+    row = _training_row(predictor, SLOT)
+
+    for name in WEATHER_FEATURES:
+        assert row[name] is None
+    assert row["zone_temperature"] == pytest.approx(ZONE["temperature"])
 
 
 def test_training_inputs_ignore_unparsable_timestamps() -> None:
-    inputs = TrainingInputs(
-        [{"timestamp": "garbage", "temperature": 5.0}],
-        [{"timestamp": None, "consumption": 1.0}],
-        TZ,
-    )
+    inputs = TrainingInputs([{"timestamp": None, "consumption": 1.0}], TZ)
 
     assert inputs.for_slot(SLOT) == SlotInputs()
 

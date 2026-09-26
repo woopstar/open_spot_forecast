@@ -22,7 +22,6 @@ from homeassistant.util import dt as dt_util
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
-from custom_components.open_spot_forecast.ml.training_inputs import TrainingInputs
 from custom_components.open_spot_forecast.ml.weather_migration import (
     WEATHER_UTC_SCHEMA_VERSION,
 )
@@ -164,27 +163,6 @@ def test_nordpool_rows_are_found_on_their_own_date(storage: LearningStorage) -> 
         assert row["consumption"] == pytest.approx(4000.0)
     assert storage.find_nordpool_for_timestamp("2026-09-24T13:30:00Z") is None
     assert storage.find_nordpool_for_timestamp("") is None
-
-
-def test_training_inputs_match_new_and_old_formats_alike() -> None:
-    """Training (TrainingInputs, #61) already matched by UTC epoch.
-
-    The new format gives it exactly the same inputs as the old local formats,
-    so the model's training rows and holdout error are unchanged.
-    """
-    slot = datetime(2026, 9, 24, 10, 0, tzinfo=CPH)
-    formats = [
-        "2026-09-24T08:00:00Z",
-        "2026-09-24T10:00:01.123456+02:00",
-        "2026-09-24T10:00:01.123456",
-    ]
-    inputs = [
-        TrainingInputs([{"timestamp": ts, "temperature": 12.5}], [], CPH).for_slot(slot)
-        for ts in formats
-    ]
-
-    assert inputs[0].temperature == pytest.approx(12.5)
-    assert inputs[1:] == [inputs[0], inputs[0]]
 
 
 # --- Pruning -------------------------------------------------------------------------

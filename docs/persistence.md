@@ -16,7 +16,7 @@ All learning data is stored in a single SQLite database:
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing         |
 | `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
 | `openmeteo_weather`  | `(timestamp, point)`        | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
-| `weather_history`    | `timestamp` (UTC slot key)  | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), keyed `YYYY-MM-DDTHH:MM:SSZ`                 |
+| `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
 

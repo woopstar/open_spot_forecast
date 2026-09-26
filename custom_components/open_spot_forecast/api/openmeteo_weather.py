@@ -5,8 +5,10 @@ per sampling point and UTC 15-minute slot) current through the shared
 ``TimeSeriesSource``. One request covers every point of the zone
 (Open-Meteo takes comma-separated coordinate lists), and requests are
 serialised: Open-Meteo dislikes concurrent calls. Forecasts are revised, so
-the refresh window re-fetches from yesterday on; older slots keep the last
-forecast fetched for them, which training uses.
+the refresh window re-fetches from yesterday on (the live forecast API).
+Days before yesterday come from Open-Meteo's archive of past forecasts
+(#23), at most 90 days per request, so the model trains on forecasts like
+the ones it predicts from, from the first day on.
 
 Weather data by Open-Meteo.com, CC BY 4.0.
 """
@@ -21,8 +23,9 @@ from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
-from ..const import OPEN_METEO_API, WEATHER_POINTS
+from ..const import OPEN_METEO_API, OPEN_METEO_ARCHIVE_API, WEATHER_POINTS
 from ..ml.series_storage import OPENMETEO_WEATHER
 from ..ml.zone_weather import point_key
 from ..time_series import TimeRange, day_chunks
@@ -131,9 +134,25 @@ class OpenMeteoWeatherSource(TimeSeriesSource):
         """Re-fetch from yesterday on: recent forecasts are still revised."""
         return now - timedelta(days=1)
 
+    @staticmethod
+    def archive_before(now: datetime) -> datetime:
+        """Return where the live API starts: yesterday's UTC midnight.
+
+        Earlier days come from the archive of past forecasts.
+        """
+        yesterday = (now - timedelta(days=1)).astimezone(UTC).date()
+        return datetime.combine(yesterday, datetime.min.time(), UTC)
+
     def chunks(self, ranges: list[TimeRange]) -> list[TimeRange]:
-        """Return requests of whole UTC days (Open-Meteo takes dates)."""
-        return day_chunks(ranges, UTC, self.max_request_days)
+        """Return requests of whole UTC days, split where the archive ends."""
+        boundary = self.archive_before(dt_util.utcnow())
+        requests: list[TimeRange] = []
+        for start, end in day_chunks(ranges, UTC, self.max_request_days):
+            if start < boundary < end:
+                requests += [(start, boundary), (boundary, end)]
+            else:
+                requests.append((start, end))
+        return requests
 
     async def _fetch(
         self, start: datetime, end: datetime
@@ -141,10 +160,11 @@ class OpenMeteoWeatherSource(TimeSeriesSource):
         """Fetch every point for the UTC days ``[start, end)``."""
         first = start.astimezone(UTC).date()
         last = (end.astimezone(UTC) - timedelta(seconds=1)).date()
+        archived = end <= self.archive_before(dt_util.utcnow())
         async with self._request_lock:
             response = await async_get(
                 async_get_clientsession(self.hass),
-                OPEN_METEO_API,
+                OPEN_METEO_ARCHIVE_API if archived else OPEN_METEO_API,
                 "Open-Meteo",
                 params=open_meteo_query(self.points, first, last),
             )

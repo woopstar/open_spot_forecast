@@ -16,7 +16,11 @@ from custom_components.open_spot_forecast.api.openmeteo_weather import (
     open_meteo_query,
     parse_open_meteo,
 )
-from custom_components.open_spot_forecast.const import WEATHER_POINTS
+from custom_components.open_spot_forecast.const import (
+    OPEN_METEO_API,
+    OPEN_METEO_ARCHIVE_API,
+    WEATHER_POINTS,
+)
 from custom_components.open_spot_forecast.ml.features import wind_power_curve
 from custom_components.open_spot_forecast.ml.series_storage import OPENMETEO_WEATHER
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
@@ -171,14 +175,16 @@ class FakeOpenMeteo:
     def __init__(self, source: OpenMeteoWeatherSource) -> None:
         self.source = source
         self.queries: list[dict[str, str]] = []
+        self.urls: list[str] = []
         self.wind = 8.0
         self.status = 200
 
-    async def get(self, _session: Any, _url: str, _label: str, **kw: Any) -> Any:
+    async def get(self, _session: Any, url: str, _label: str, **kw: Any) -> Any:
         # Requests are serialised across sources
         assert self.source._request_lock.locked()
         params = kw["params"]
         self.queries.append(params)
+        self.urls.append(url)
         first = datetime.fromisoformat(params["start_date"]).replace(tzinfo=UTC)
         days = (date.fromisoformat(params["end_date"]) - first.date()).days + 1
         payload = [_forecast(first, days * 96, self.wind) for _ in self.source.points]
@@ -264,10 +270,33 @@ def test_requests_are_whole_utc_days_up_to_90(storage: LearningStorage) -> None:
     source = _source(storage)
     start = datetime(2026, 1, 1, 5, tzinfo=UTC)
 
-    chunks = source.chunks([(start, start + timedelta(days=100))])
+    with patch("homeassistant.util.dt.utcnow", return_value=NOW):
+        chunks = source.chunks([(start, start + timedelta(days=100))])
 
     assert chunks == [
         (datetime(2026, 1, 1, tzinfo=UTC), datetime(2026, 4, 1, tzinfo=UTC)),
         (datetime(2026, 4, 1, tzinfo=UTC), datetime(2026, 4, 12, tzinfo=UTC)),
     ]
     assert source.refresh_from(NOW) == NOW - timedelta(days=1)
+
+
+@pytest.mark.asyncio
+async def test_days_before_yesterday_come_from_the_archive(
+    api: tuple[OpenMeteoWeatherSource, FakeOpenMeteo], storage: LearningStorage
+) -> None:
+    """Training history is archived forecasts; the rest is the live forecast (#23)."""
+    source, fake = api
+    start = datetime(2026, 9, 1, tzinfo=UTC)
+    end = datetime(2026, 9, 26, tzinfo=UTC)
+
+    await source.async_update(start, end)
+
+    assert fake.urls == [OPEN_METEO_ARCHIVE_API, OPEN_METEO_API]
+    assert [(q["start_date"], q["end_date"]) for q in fake.queries] == [
+        ("2026-09-01", "2026-09-22"),
+        ("2026-09-23", "2026-09-25"),
+    ]
+    assert len(storage.load_series(OPENMETEO_WEATHER, start, end)) == 25 * 96 * 4
+    assert OpenMeteoWeatherSource.archive_before(NOW) == datetime(
+        2026, 9, 23, tzinfo=UTC
+    )

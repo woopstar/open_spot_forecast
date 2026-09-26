@@ -27,19 +27,18 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 23-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 17-feature model input, in column order (docs/ml_documentation.md).
+# The local weather entity's values (wind_speed_mean, wind_power_estimate,
+# wind_direction, cloud_coverage, humidity, temperature) stay in the feature
+# dict, where prediction records its local forecast for the forecast-accuracy
+# score, but are not model inputs since #23: they have no archived forecasts,
+# so training could only use measured values, unlike prediction.
 FEATURE_NAMES: tuple[str, ...] = (
     "hour",
     "day_of_week",
     "is_weekend",
     "hour_sin",
     "hour_cos",
-    "wind_speed_mean",
-    "wind_power_estimate",
-    "wind_direction",
-    "cloud_coverage",
-    "humidity",
-    "temperature",
     "consumption_forecast",
     "solar_generation",
     "wind_offshore",
@@ -64,12 +63,12 @@ HOUR_SECONDS = 3600
 class SlotInputs:
     """Raw inputs for one 15-minute slot; ``None`` means unknown.
 
-    Weather values are for the slot, wind speed in m/s (training: the stored
-    snapshot, taken every 15 minutes; prediction: the hourly forecast for the
-    slot's hour). Nordpool values are the day-ahead prognoses for the slot's
+    Local weather values (wind speed in m/s) are the weather entity's hourly
+    forecast for the slot's hour; only prediction has them, to record the
+    forecast it used (they are not model inputs, #23). Nordpool values are the day-ahead prognoses for the slot's
     hour, in MW. Zone values are Open-Meteo aggregates over the region's
     sampling points for the slot (``ml/zone_weather.py``), from the same
-    stored table in both phases: mean wind at 80 m (m/s), mean turbine power
+    stored table of forecasts in both phases (archived ones for past days): mean wind at 80 m (m/s), mean turbine power
     curve (0-1), temperature (°C), global irradiance (W/m²), sea-level
     pressure (hPa) and relative humidity (%).
     """

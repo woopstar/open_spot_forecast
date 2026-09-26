@@ -124,9 +124,9 @@ class LearningMixin(PredictorBase):
         """Get all historical prices and their training feature rows.
 
         Every row comes from ``build_feature_row``, the function prediction
-        rows come from, with the slot's stored weather snapshot and Nordpool
-        prognoses as inputs (``TrainingInputs``). Inputs that were not stored
-        for a slot stay unknown (NaN for the model).
+        rows come from, with the slot's stored zone weather forecast and
+        Nordpool prognoses as inputs (``TrainingInputs``). Inputs that were
+        not stored for a slot stay unknown (NaN for the model).
 
         Returns:
             Tuple of (all_prices, all_features) where:
@@ -136,7 +136,6 @@ class LearningMixin(PredictorBase):
         all_prices = []
         all_features = []
         inputs = TrainingInputs(
-            self.storage.load_weather_history(),
             self.storage.load_nordpool_history(),
             self.tz,
             ZoneWeatherIndex(

@@ -23,7 +23,8 @@ prices and continuously improves accuracy via per-slot bias correction.
 1. **Install** Open Spot Forecast via HACS or manually.
 2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
 3. **Add a price source** — Stromligning (recommended) or Nordpool.
-4. **Add weather sensors** (optional but recommended) to improve ML accuracy.
+4. **Add weather sensors** (optional) to score the local weather forecast in
+   the confidence; the model's weather comes from Open-Meteo.
 5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.
 
 ## Documentation

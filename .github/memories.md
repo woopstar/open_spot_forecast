@@ -170,44 +170,40 @@ not to `storage.py`.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (23 features)
+## Feature Vector (17 features)
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
 and prediction alike, comes from `build_feature_row(slot_start, SlotInputs)` in
 `ml/features.py`, then `build_feature_vector()` in `FEATURE_NAMES` order. Only the inputs
-differ: `TrainingInputs` (`ml/training_inputs.py`, stored `weather_history` +
-`nordpool_prognoses`, matched by UTC epoch) vs `FeatureMixin._combine_features()` (live
-forecast + prognoses, matched by UTC hour). The zone weather (#22) comes from the stored
+differ: `TrainingInputs` (`ml/training_inputs.py`, stored zone weather + `nordpool_prognoses`,
+matched by UTC epoch) vs `FeatureMixin._combine_features()` (stored/live forecasts, matched by
+UTC hour). Both phases use forecasts (#23): past zone weather is Open-Meteo's archive of past
+forecasts; the local weather entity is not a model input (its forecast is only recorded with
+predictions, and `weather_history` snapshots score it and never trigger a retrain). The zone weather (#22) comes from the stored
 `openmeteo_weather` rows in both phases, aggregated over the region's `WEATHER_POINTS` by
 `ZoneWeatherIndex` (`ml/zone_weather.py`); never aggregate it inline. Unknown inputs are `None` → NaN; never fill in
 0/15 °C/50 % or the current observation, and never copy prediction values into training rows.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
-| #   | Feature                | Source         |
-| --- | ---------------------- | -------------- |
-| 0   | `hour`                 | Time           |
-| 1   | `day_of_week`          | Time           |
-| 2   | `is_weekend`           | Time           |
-| 3   | `hour_sin`             | Time           |
-| 4   | `hour_cos`             | Time           |
-| 5   | `wind_speed_mean`      | Weather entity |
-| 6   | `wind_power_estimate`  | Derived        |
-| 7   | `wind_direction`       | Weather entity |
-| 8   | `cloud_coverage`       | Weather entity |
-| 9   | `humidity`             | Weather entity |
-| 10  | `temperature`          | Weather entity |
-| 11  | `consumption_forecast` | Nordpool API   |
-| 12  | `solar_generation`     | Nordpool API   |
-| 13  | `wind_offshore`        | Nordpool API   |
-| 14  | `wind_onshore`         | Nordpool API   |
-| 15  | `net_demand`           | Derived        |
-| 16  | `wind_share`           | Derived        |
-| 17  | `zone_wind`            | Open-Meteo     |
-| 18  | `zone_wind_power`      | Open-Meteo     |
-| 19  | `zone_temperature`     | Open-Meteo     |
-| 20  | `zone_irradiance`      | Open-Meteo     |
-| 21  | `zone_pressure`        | Open-Meteo     |
-| 22  | `zone_humidity`        | Open-Meteo     |
+| #   | Feature                | Source       |
+| --- | ---------------------- | ------------ |
+| 0   | `hour`                 | Time         |
+| 1   | `day_of_week`          | Time         |
+| 2   | `is_weekend`           | Time         |
+| 3   | `hour_sin`             | Time         |
+| 4   | `hour_cos`             | Time         |
+| 5   | `consumption_forecast` | Nordpool API |
+| 6   | `solar_generation`     | Nordpool API |
+| 7   | `wind_offshore`        | Nordpool API |
+| 8   | `wind_onshore`         | Nordpool API |
+| 9   | `net_demand`           | Derived      |
+| 10  | `wind_share`           | Derived      |
+| 11  | `zone_wind`            | Open-Meteo   |
+| 12  | `zone_wind_power`      | Open-Meteo   |
+| 13  | `zone_temperature`     | Open-Meteo   |
+| 14  | `zone_irradiance`      | Open-Meteo   |
+| 15  | `zone_pressure`        | Open-Meteo   |
+| 16  | `zone_humidity`        | Open-Meteo   |
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.

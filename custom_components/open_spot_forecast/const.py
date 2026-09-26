@@ -193,6 +193,9 @@ LEAD_TIME_WINDOW_DAYS = 30
 # is sampled at a few fixed points across its bidding zone (wind and demand
 # centres, plus an offshore wind area where there is one), as lat/lon
 OPEN_METEO_API = "https://api.open-meteo.com/v1/forecast"
+# Open-Meteo's archive of past forecasts (#23): days before yesterday come
+# from here, so training sees forecasts like the ones it predicts from
+OPEN_METEO_ARCHIVE_API = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 WEATHER_POINTS: dict[str, tuple[tuple[float, float], ...]] = {
     "DK1": ((57.40, 10.24), (56.20, 8.42), (55.38, 9.60), (55.53, 7.91)),
     "DK2": ((55.98, 12.39), (54.91, 11.89), (55.12, 14.73), (55.05, 12.95)),

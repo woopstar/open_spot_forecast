@@ -658,7 +658,7 @@ def test_open_meteo_weather_is_fetched_in_90_day_chunks_and_cached(
     zone = load(date(2026, 6, 14))
     load(date(2026, 6, 14))
 
-    assert backtest.OPEN_METEO_ARCHIVE_URL in requested[0]
+    assert backtest.OPEN_METEO_ARCHIVE_API in requested[0]
     assert "start_date=2026-01-01" in requested[0]
     assert "end_date=2026-03-31" in requested[0]
     # The first chunk is complete and cached; the recent one is fetched again

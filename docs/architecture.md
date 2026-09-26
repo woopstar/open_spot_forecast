@@ -135,16 +135,21 @@ that isn't currently available.
 
 ## Training vs Prediction Segmentation
 
-| Phase          | Weather source                            | Purpose                                                 |
-| -------------- | ----------------------------------------- | ------------------------------------------------------- |
-| **Training**   | `weather_history` (actual measurements)   | Learn real cause→effect: "when wind WAS X, price WAS Y" |
-| **Prediction** | `weather.get_forecasts` (hourly forecast) | Predict future: "if wind WILL BE X, price should be Y"  |
+Both phases use **forecasts** (#23), so the model learns from the same kind
+of weather input, with a similar error, as it predicts from:
 
-Forecasts are ephemeral — pulled fresh each run. Actual measurements are
-stored in `weather_history` (one snapshot every 15 minutes, kept for the
-training window plus 2 days)
-and Nordpool prognoses in `nordpool_prognoses`; training matches both to
-slots by UTC time. Both phases build their rows with the same function.
+| Phase          | Weather source                                                     | Purpose                                                        |
+| -------------- | ------------------------------------------------------------------ | -------------------------------------------------------------- |
+| **Training**   | `openmeteo_weather`: Open-Meteo's archived forecasts for past days | Learn "when the forecast said X, the price was Y"              |
+| **Prediction** | `openmeteo_weather`: the live Open-Meteo forecast, 8 days ahead    | Predict: "the forecast says X, so the price should be about Y" |
+
+The background backfill fills the training window's zone weather from the
+archive at setup and after midnight; each forecast run refreshes the live
+forecast from yesterday on. Nordpool prognoses are stored in
+`nordpool_prognoses`; training matches both tables to slots by UTC time.
+Both phases build their rows with the same function. The local weather
+entity is no longer a model input: its snapshots (`weather_history`, one
+every 15 minutes) score its forecast for the confidence.
 
 ## Attribution
 

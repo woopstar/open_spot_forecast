@@ -19,13 +19,13 @@ vector, and data flow.
 
 Every ML change must satisfy ALL of these invariants:
 
-- [ ] **Feature vector** — 23 canonical features; any add/remove is a model change
+- [ ] **Feature vector** — 17 canonical features; any add/remove is a model change
 - [ ] **Slot granularity** — 96 slots (15-min), never assume hourly (0-23)
 - [ ] **Bias correction** — additive offset, `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset`; never invent a new scheme, never clamp at 0
 - [ ] **Solar scaling** — EMA of `actual_power / solcast_estimate`; learned and persisted, not a price-model input (#17)
 - [ ] **Feature consistency** — training and prediction rows both come from `build_feature_row()`; unknown inputs are NaN
 - [ ] **Confidence score** — heuristic (< 5 samples) → learned (≥ 5 samples); floor respected
-- [ ] **Training vs prediction segmentation** — training uses `weather_history` actuals and stored Nordpool prognoses, prediction uses live forecasts
+- [ ] **Training vs prediction segmentation** — both phases use forecasts: stored Open-Meteo zone weather (archived for past days, #23) and Nordpool prognoses; `weather_history` only scores the local forecast
 - [ ] **Storage schema** — `predictions`, `error_metrics`, `bias_correction`, `price_history`, `weather_history`, `meta`; migrations versioned
 - [ ] **Float comparisons** — epsilon guard (`abs(x) > 1e-9`) in production, `pytest.approx()` in tests
 - [ ] **No blocking calls** — offload model training via `hass.async_add_executor_job()`

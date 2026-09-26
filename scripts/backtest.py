@@ -52,6 +52,7 @@ from custom_components.open_spot_forecast.api.openmeteo_weather import (
 )
 from custom_components.open_spot_forecast.const import (
     ENERGY_CHARTS_API,
+    OPEN_METEO_ARCHIVE_API,
     REGIONS,
     WEATHER_POINTS,
 )
@@ -74,8 +75,6 @@ HTTP_ATTEMPTS = 5
 ENERGY_CHARTS_ZONES: dict[str, str] = {
     region: str(zone["energy_charts"]) for region, zone in REGIONS.items()
 }
-# Open-Meteo's archive of past forecasts (the live API only keeps recent days)
-OPEN_METEO_ARCHIVE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
 OPEN_METEO_REQUEST_DAYS = 90
 WEATHER_CHOICES = ("openmeteo", "none")
 
@@ -289,7 +288,7 @@ def load_open_meteo_weather(
             query = urllib.parse.urlencode(
                 open_meteo_query(points, chunk_start, chunk_end)
             )
-            payload = fetch(f"{OPEN_METEO_ARCHIVE_URL}?{query}")
+            payload = fetch(f"{OPEN_METEO_ARCHIVE_API}?{query}")
             if chunk_end < today - timedelta(days=2):
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(json.dumps(payload), encoding="utf-8")

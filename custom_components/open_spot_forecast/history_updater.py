@@ -2,10 +2,11 @@
 
 Mixed into ``ForecastUpdater``. The history the model trains on is filled in
 the background at setup and after midnight: with the day-ahead price source
-the missing price days of the training window first (they become training
-data at once), then the Nordpool prognoses for every stored price day. Both
-sources only request what is missing, so an interrupted backfill resumes
-where it stopped. Once a day, history older than the training window plus
+the missing price days of the training window first, then for every stored
+price day the zone weather (Open-Meteo's archived forecasts, #23) and the
+Nordpool prognoses; if anything was added, the forecast is refreshed, so
+the model retrains on it at once. The sources only request what is missing,
+so an interrupted backfill resumes where it stopped. Once a day, history older than the training window plus
 ``HISTORY_MARGIN_DAYS`` is deleted.
 """
 
@@ -24,6 +25,7 @@ from .time_slots import local_midnight
 if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
     from .api.openmeteo_weather import OpenMeteoWeatherSource
+    from .api.time_series_source import TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
 
@@ -80,27 +82,38 @@ class HistoryUpdaterMixin:
             _LOGGER.info("Added %d days of day-ahead prices to the history", added)
         return added
 
+    async def _backfill_source(
+        self, source: TimeSeriesSource | None, first: date, label: str
+    ) -> bool:
+        """Fetch a source's missing days from ``first`` to today; return if data changed."""
+        if source is None:
+            return False
+        try:
+            return await source.async_update(
+                local_midnight(first), local_midnight(dt_util.now().date())
+            )
+        except Exception as err:
+            _LOGGER.warning("%s history backfill failed: %s", label, err)
+            return False
+
     async def backfill_history(self) -> None:
         """Fetch the history the model trains on that is still missing.
 
-        Day-ahead price days first (the forecast is refreshed so the model
-        retrains on them), then the Nordpool prognoses for the stored price
-        days up to today.
+        Day-ahead price days first, then for the stored price days the zone
+        weather and the Nordpool prognoses. If anything was added the
+        forecast is refreshed, so the model retrains on it.
         """
         ml_predictor = self.ml_predictor
         if ml_predictor is None or self.nordpool is None:
             return
-        if await self._backfill_prices(ml_predictor):
-            await self.refresh_forecast()
+        changed = await self._backfill_prices(ml_predictor) > 0
         first = self._first_price_day()
-        if first is None:
-            return
-        try:
-            await self.nordpool.async_update(
-                local_midnight(first), local_midnight(dt_util.now().date())
-            )
-        except Exception as err:
-            _LOGGER.warning("Nordpool history backfill failed: %s", err)
+        if first is not None:
+            weather = await self._backfill_source(self.weather, first, "Open-Meteo")
+            prognoses = await self._backfill_source(self.nordpool, first, "Nordpool")
+            changed = changed or weather or prognoses
+        if changed:
+            await self.refresh_forecast()
 
     def start_history_backfill(self) -> None:
         """Run ``backfill_history`` in the background (it can take minutes)."""

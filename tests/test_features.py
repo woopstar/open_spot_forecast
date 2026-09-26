@@ -64,10 +64,11 @@ def built_rows(monkeypatch: pytest.MonkeyPatch) -> list[list[float]]:
     return rows
 
 
-def test_feature_vector_has_23_unique_features():
-    """The model input is the 23 canonical features (6 zone weather, #22)."""
-    assert len(FEATURE_NAMES) == 23
-    assert len(set(FEATURE_NAMES)) == 23
+def test_feature_vector_has_17_unique_features():
+    """The model input: time, Nordpool and zone weather; no local weather (#23)."""
+    assert len(FEATURE_NAMES) == 17
+    assert len(set(FEATURE_NAMES)) == 17
+    assert "temperature" not in FEATURE_NAMES
     assert "price_mean" not in FEATURE_NAMES
 
 
@@ -105,8 +106,8 @@ def test_build_feature_vector_sanitizes_values():
             build_feature_vector(
                 {
                     "hour": None,
-                    "humidity": "n/a",
-                    "temperature": "21.5",
+                    "zone_humidity": "n/a",
+                    "zone_temperature": "21.5",
                     "is_weekend": True,
                     "wind_share": np.float64(0.25),
                     "net_demand": [1.0],
@@ -118,8 +119,8 @@ def test_build_feature_vector_sanitizes_values():
     )
 
     assert math.isnan(vector["hour"])
-    assert math.isnan(vector["humidity"])
-    assert vector["temperature"] == pytest.approx(21.5)
+    assert math.isnan(vector["zone_humidity"])
+    assert vector["zone_temperature"] == pytest.approx(21.5)
     assert vector["is_weekend"] == pytest.approx(1.0)
     assert vector["wind_share"] == pytest.approx(0.25)
     assert math.isnan(vector["net_demand"])
