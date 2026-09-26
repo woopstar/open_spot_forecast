@@ -223,8 +223,9 @@ DST days), `tomorrow_prices_complete()` (the only "tomorrow is available" check)
 `slot_start_in_day()` / `slot_index_in_day()` (slot n of a local day and back, stepped in UTC
 from local midnight). Stored slot timestamps are written with `utc_slot_key()` (UTC slot start,
 `YYYY-MM-DDTHH:MM:SSZ`) and read with `parse_utc()` (naive = HA local time); storage lookups
-compare instants (SQLite `julianday()` on both sides), never ISO strings with different
-offsets. Never build slot times as `date + n * 15 min` or index a day's prices
+compare instants (SQLite `julianday()` of the stored key against window bounds computed in
+Python), never ISO strings with different offsets or a float julian-day distance; the
+Nordpool lookup returns the row of the slot's UTC hour, as `TrainingInputs` does. Never build slot times as `date + n * 15 min` or index a day's prices
 with `hour * 4 + minute // 15`, and never call naive `datetime.now()` — use `dt_util.now()`. They round on the UTC timeline, so
 never round with `dt.replace(minute=...)` or add minutes to a local datetime inline.
 
