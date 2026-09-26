@@ -44,6 +44,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins             |
 | `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                         |
 | `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                          |
+| `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state   |
 | `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
 | `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
 | `retraining.py`         | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
@@ -51,10 +52,11 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
-| File                    | Responsibility                                                                                                        |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                    |
-| `nordpool_prognoses.py` | `fetch_nordpool_prognoses` — both prognoses for the forecast (cached by `updatedAt`) and as `nordpool_prognoses` rows |
+| File                    | Responsibility                                                                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                |
+| `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day |
+| `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                     |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -86,6 +88,21 @@ slot missing in the source: the readers place items by their own timestamps with
 guess the resolution from a list's length. `is_invalid_price_series()` rejects a day whose known
 prices are all zero or not finite; the readers drop it and `store_daily_prices` / `predict`
 refuse it. Never add an inline "all prices are 0" check.
+
+### Time-series sources
+
+Every upstream time series (Nordpool prognoses now; day-ahead prices and
+Open-Meteo weather next) is a `TimeSeriesSource` subclass (`api/time_series_source.py`)
+over a `SeriesSpec` table (`ml/series_storage.py`, created in `LearningStorage._create_schema`).
+Subclasses implement `_fetch(start, end)` (rows, `[]` for "nothing", `None` for a failed
+request) and may override `chunks()` / `max_request_span`, `refresh_from()` (revised
+forecasts), `keys()` (keyed tables) and `retry_time()`. `async_update(start, end)` requests
+only missing grid points, skips remembered holes until their retry time (the horizon is
+open-ended), upserts (a change moves `last_data_write` → retrain) and persists the state in
+`meta`. Range helpers (`missing_ranges`, `split_range`, …) and `SourceState` live in
+`time_series.py`. Never re-fetch complete history outside a source's refresh window, and never
+prune on a fixed day count: `ForecastUpdater.prune_history()` keeps the training window plus
+`HISTORY_MARGIN_DAYS`.
 
 ### ML predictor
 

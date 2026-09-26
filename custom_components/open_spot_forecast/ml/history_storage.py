@@ -178,43 +178,6 @@ class HistoryStorageMixin(StorageMixinBase):
             )
             conn.commit()
 
-    def insert_nordpool_prognoses_batch(self, entries: list[dict]) -> None:
-        """Store multiple Nordpool prognosis entries (blocking).
-
-        Every forecast run re-sends the same prognoses, so rows are only
-        rewritten when a value differs; last_data_write moves only on a
-        real change.
-        """
-        with self._lock:
-            conn = self._ensure_conn()
-            cursor = conn.executemany(
-                """INSERT INTO nordpool_prognoses
-                   (timestamp, consumption, solar, wind_offshore, wind_onshore)
-                   VALUES (?, ?, ?, ?, ?)
-                   ON CONFLICT(timestamp) DO UPDATE SET
-                       consumption = excluded.consumption,
-                       solar = excluded.solar,
-                       wind_offshore = excluded.wind_offshore,
-                       wind_onshore = excluded.wind_onshore
-                   WHERE consumption IS NOT excluded.consumption
-                      OR solar IS NOT excluded.solar
-                      OR wind_offshore IS NOT excluded.wind_offshore
-                      OR wind_onshore IS NOT excluded.wind_onshore""",
-                [
-                    (
-                        e.get("timestamp", ""),
-                        e.get("consumption"),
-                        e.get("solar"),
-                        e.get("wind_offshore"),
-                        e.get("wind_onshore"),
-                    )
-                    for e in entries
-                ],
-            )
-            conn.commit()
-            if cursor.rowcount > 0:
-                self.last_data_write = dt_util.utcnow()
-
     def find_nordpool_for_timestamp(self, timestamp: str) -> dict[str, float] | None:
         """Find the prognosis closest to a timestamp, within an hour (blocking).
 
@@ -244,19 +207,6 @@ class HistoryStorageMixin(StorageMixinBase):
             "wind_offshore": row[2],
             "wind_onshore": row[3],
         }
-
-    def delete_old_nordpool(self, max_age_days: int = 30) -> int:
-        """Delete old Nordpool prognoses (blocking)."""
-        cutoff = _utc_cutoff(max_age_days)
-        with self._lock:
-            conn = self._ensure_conn()
-            cursor = conn.execute(
-                "DELETE FROM nordpool_prognoses "
-                "WHERE julianday(timestamp) < julianday(?)",
-                (cutoff,),
-            )
-            conn.commit()
-            return cursor.rowcount
 
     def load_nordpool_history(self) -> list[dict[str, Any]]:
         """Return every stored Nordpool prognosis row, oldest first (blocking).
@@ -308,3 +258,11 @@ class HistoryStorageMixin(StorageMixinBase):
             {"date": date, "prices": json.loads(prices_json)}
             for date, prices_json in rows
         ]
+
+    def delete_old_prices(self, before: str) -> int:
+        """Delete the price days before ``before`` (YYYY-MM-DD) (blocking)."""
+        with self._lock:
+            conn = self._ensure_conn()
+            cursor = conn.execute("DELETE FROM price_history WHERE date < ?", (before,))
+            conn.commit()
+            return cursor.rowcount

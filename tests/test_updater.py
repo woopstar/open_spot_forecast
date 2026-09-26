@@ -39,7 +39,14 @@ INTEGRATION = Path(__file__).parent.parent / "custom_components/open_spot_foreca
 CPH = ZoneInfo("Europe/Copenhagen")
 SPOT_TODAY = [0.5] * 96
 KNOWN_END = datetime(2026, 9, 24, 22, 0, tzinfo=UTC)
-NP_ENTRY = {"timestamp": "2026-09-24T10:00:00Z", "consumption": 4000.0}
+NOW = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
+NP_ROW = {
+    "timestamp": "2026-09-24T10:00:00Z",
+    "consumption": 4000.0,
+    "solar": 50.0,
+    "wind_offshore": 100.0,
+    "wind_onshore": 200.0,
+}
 
 
 def _sensors(**overrides: str | None) -> SensorEntities:
@@ -71,7 +78,8 @@ class Harness:
     predictor: Mock
     entry: MagicMock
     api_data: dict[str, Any]
-    fetch_nordpool: AsyncMock
+    nordpool: Mock
+    nordpool_class: Mock
     read_forecast: AsyncMock
     dispatch: Mock
 
@@ -79,11 +87,14 @@ class Harness:
 @pytest.fixture
 def make() -> Iterator[Callable[..., Harness]]:
     """Return ``make(sensors=..., ml=True)`` building a Harness."""
-    fetch_nordpool = AsyncMock(return_value=[NP_ENTRY])
+    nordpool = Mock()
+    nordpool.async_update = AsyncMock(return_value=True)
+    nordpool.async_load = AsyncMock(return_value=[NP_ROW])
+    nordpool.async_prune = AsyncMock(return_value=3)
     read_forecast = AsyncMock(return_value=None)
     dispatch = Mock()
     with (
-        patch(f"{MODULE}.fetch_nordpool_prognoses", fetch_nordpool),
+        patch(f"{MODULE}.NordpoolPrognosisSource", return_value=nordpool) as source,
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -98,6 +109,10 @@ def make() -> Iterator[Callable[..., Harness]]:
             hass = Mock()
             hass.async_add_executor_job = run_inline
             entry = MagicMock()
+            # A background task's coroutine is closed, not left un-awaited
+            entry.async_create_background_task.side_effect = lambda _hass, coro, _name: (
+                coro.close()
+            )
             reader = Mock()
             reader.read_stromligning_sensor.return_value = _stromligning([1.0] * 96, [])
             reader.read_spot_prices.return_value = _stromligning(SPOT_TODAY, [])
@@ -106,7 +121,10 @@ def make() -> Iterator[Callable[..., Harness]]:
             predictor.save_learning_data = AsyncMock()
             predictor.predictions = [{"price": 0.5}]
             predictor.learn_from_actual_price.return_value = False
-            predictor.storage.count_weather_snapshots.return_value = 1
+            predictor.max_history_days = 30
+            predictor.price_history = []
+            predictor.storage.delete_old_weather.return_value = 1
+            predictor.storage.delete_old_prices.return_value = 2
             api_data: dict[str, Any] = {
                 "region": "DK1",
                 "prices_today": [],
@@ -126,7 +144,8 @@ def make() -> Iterator[Callable[..., Harness]]:
                 predictor,
                 entry,
                 api_data,
-                fetch_nordpool,
+                nordpool,
+                source,
                 read_forecast,
                 dispatch,
             )
@@ -186,6 +205,7 @@ def test_sensor_entities_defaults_without_configuration() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
 async def test_run_forecast_reads_weather_stores_prognoses_predicts_and_saves(
     make: Callable[..., Harness],
 ) -> None:
@@ -198,17 +218,32 @@ async def test_run_forecast_reads_weather_stores_prognoses_predicts_and_saves(
     forecast = [{"datetime": "2026-09-24T10:00:00+00:00", "wind_speed": 5.0}]
     harness.read_forecast.return_value = forecast
 
-    await harness.updater.run_forecast()
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.run_forecast()
 
     weather = harness.api_data["weather_data"]
     assert weather["temperature"] == pytest.approx(12.0)
     assert weather["solcast_forecast"] == {"today": 5.0}
     assert weather["weather_forecast"] == forecast
     harness.read_forecast.assert_awaited_once_with(harness.updater.hass, "weather.home")
-    harness.fetch_nordpool.assert_awaited_once_with("DK1", weather, harness.api_data)
-    harness.predictor.storage.insert_nordpool_prognoses_batch.assert_called_once_with(
-        [NP_ENTRY]
+    # Only today's and tomorrow's missing prognoses are requested; the stored
+    # rows are what the forecast reads
+    harness.nordpool_class.assert_called_once_with(
+        harness.updater.hass, harness.predictor.storage, "DK1"
     )
+    today = datetime(2026, 9, 24, tzinfo=CPH)
+    window = (today, today + timedelta(days=2))
+    harness.nordpool.async_update.assert_awaited_once_with(*window)
+    harness.nordpool.async_load.assert_awaited_once_with(*window)
+    assert weather["consumption_prognosis"] == {"2026-09-24T10:00:00Z": 4000.0}
+    assert weather["production_prognosis"] == [
+        {
+            "deliveryStart": "2026-09-24T10:00:00Z",
+            "solar": 50.0,
+            "wind_offshore": 100.0,
+            "wind_onshore": 200.0,
+        }
+    ]
     harness.predictor.predict.assert_called_once_with(
         weather, SPOT_TODAY, FORECAST_DAYS, INTERVAL_MINUTES, KNOWN_END
     )
@@ -230,17 +265,41 @@ async def test_run_forecast_skips_a_non_solcast_forecast_and_empty_weather_forec
 
 
 @pytest.mark.asyncio
-async def test_run_forecast_without_ml_only_reads_weather_and_prognoses(
+async def test_run_forecast_without_ml_only_reads_weather(
     make: Callable[..., Harness],
 ) -> None:
+    """The prognoses only feed the model, and live in its database."""
     harness = make(ml=False)
 
     await harness.updater.run_forecast()
 
-    harness.fetch_nordpool.assert_awaited_once()
+    harness.nordpool_class.assert_not_called()
     assert harness.api_data["weather_data"] == {"temperature": 12.0}
     harness.predictor.predict.assert_not_called()
-    harness.predictor.storage.insert_nordpool_prognoses_batch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_forecast_keeps_going_when_the_prognoses_fail(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed update still reads what is stored; a failed read skips them."""
+    harness = make()
+    harness.reader.read_weather_sensors.side_effect = lambda _config: {
+        "temperature": 12.0
+    }
+    harness.nordpool.async_update.side_effect = RuntimeError("offline")
+
+    await harness.updater.run_forecast()
+
+    assert "consumption_prognosis" in harness.api_data["weather_data"]
+    harness.nordpool.async_load.side_effect = RuntimeError("locked")
+
+    await harness.updater.run_forecast()
+
+    assert "consumption_prognosis" not in harness.api_data["weather_data"]
+    assert harness.predictor.predict.call_count == 2
+    assert "Could not update the Nordpool prognoses: offline" in caplog.text
+    assert "Could not read the stored Nordpool prognoses: locked" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -248,12 +307,12 @@ async def test_run_forecast_without_weather_or_prognoses_does_not_predict(
     make: Callable[..., Harness],
 ) -> None:
     harness = make(_sensors(temperature=None))
-    harness.fetch_nordpool.return_value = []
+    harness.nordpool.async_load.return_value = []
 
     await harness.updater.run_forecast()
 
     harness.reader.read_weather_sensors.assert_not_called()
-    harness.predictor.storage.insert_nordpool_prognoses_batch.assert_not_called()
+    assert harness.api_data["weather_data"] == {}
     harness.predictor.predict.assert_not_called()
 
 
@@ -281,9 +340,9 @@ def test_the_pipeline_is_not_duplicated() -> None:
     init_source = (INTEGRATION / "__init__.py").read_text()
 
     assert len(re.findall(r"ml_predictor\.predict,", updater_source)) == 1
-    assert len(re.findall(r"fetch_nordpool_prognoses\(", updater_source)) == 1
+    assert len(re.findall(r"self\._update_prognoses\(", updater_source)) == 1
     assert not re.search(r"\.predict\b", init_source)
-    assert "fetch_nordpool_prognoses" not in init_source
+    assert "NordpoolPrognosisSource" not in init_source
 
 
 # --- Initial fetch -------------------------------------------------------------------
@@ -390,7 +449,7 @@ async def test_refresh_forecast_without_ml_only_rereads_prices(
 
     await harness.updater.refresh_forecast()
 
-    harness.fetch_nordpool.assert_not_awaited()
+    harness.nordpool_class.assert_not_called()
     assert harness.api_data["prices_today"] == [1.0] * 96
     assert _signals(harness) == [UPDATE_SIGNAL]
 
@@ -448,11 +507,10 @@ async def test_new_day_without_tomorrow_clears_it(
 
 
 @pytest.mark.asyncio
-async def test_new_quarter_stores_a_weather_snapshot_and_prunes(
+async def test_new_quarter_stores_a_weather_snapshot(
     make: Callable[..., Harness],
 ) -> None:
     harness = make(_sensors(wind_speed="sensor.wind"))
-    harness.predictor.storage.count_weather_snapshots.return_value = 100
     now = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
 
     with (
@@ -465,7 +523,9 @@ async def test_new_quarter_stores_a_weather_snapshot_and_prunes(
     harness.predictor.storage.insert_weather_snapshot.assert_called_once_with(
         "2026-09-24T08:15:00Z", 12.0, None, None, None, None, None
     )
-    harness.predictor.storage.delete_old_weather.assert_called_once_with(30)
+    # Pruning is daily and follows the training window (#32), not every
+    # 100th snapshot
+    harness.predictor.storage.delete_old_weather.assert_not_called()
     assert _signals(harness) == [UPDATE_SIGNAL]
 
 
@@ -535,3 +595,107 @@ async def test_new_quarter_reads_tomorrow_and_refreshes_when_it_arrives(
     assert harness.api_data["tomorrow_available"] is True
     harness.entry.async_create_background_task.assert_called_once()
     harness.entry.async_create_background_task.call_args.args[1].close()
+
+
+# --- Stored history (#32) ------------------------------------------------------------
+
+
+def _background_tasks(harness: Harness) -> list[str]:
+    return [
+        call.args[2]
+        for call in harness.entry.async_create_background_task.call_args_list
+    ]
+
+
+@pytest.mark.asyncio
+async def test_initial_fetch_backfills_the_history_in_the_background(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+
+    await harness.updater.async_initial_fetch()
+
+    assert _background_tasks(harness) == ["open_spot_forecast_history_backfill"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_backfill_covers_the_price_history_up_to_today(
+    make: Callable[..., Harness],
+) -> None:
+    """Only the missing days are fetched (the source skips stored ones)."""
+    harness = make()
+    harness.predictor.price_history = [
+        {"date": "2026-09-20"},
+        {"date": "2026-09-18"},
+        {"date": "not a date"},
+    ]
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.backfill_history()
+
+    harness.nordpool.async_update.assert_awaited_once_with(
+        datetime(2026, 9, 18, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH)
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_needs_price_history_and_logs_failures(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make()
+
+    await harness.updater.backfill_history()
+
+    harness.nordpool.async_update.assert_not_awaited()
+    harness.predictor.price_history = [{"date": "2026-09-20"}]
+    harness.nordpool.async_update.side_effect = RuntimeError("offline")
+
+    await harness.updater.backfill_history()
+
+    assert "Nordpool history backfill failed: offline" in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_new_day_prunes_beyond_the_training_window_and_backfills(
+    make: Callable[..., Harness],
+) -> None:
+    """History is kept for the training window (30 days) plus 2 days."""
+    harness = make()
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.new_day(NOW)
+
+    storage = harness.predictor.storage
+    storage.delete_old_weather.assert_called_once_with(32)
+    storage.delete_old_prices.assert_called_once_with("2026-08-23")
+    harness.nordpool.async_prune.assert_awaited_once_with(
+        datetime(2026, 8, 23, tzinfo=CPH)
+    )
+    assert _background_tasks(harness) == ["open_spot_forecast_history_backfill"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_prune_is_logged(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make()
+    harness.nordpool.async_prune.side_effect = RuntimeError("locked")
+
+    await harness.updater.prune_history()
+
+    assert "Could not prune the stored history: locked" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_without_ml_there_is_no_history_to_keep(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(ml=False)
+
+    await harness.updater.new_day(NOW)
+    await harness.updater.backfill_history()
+
+    harness.nordpool_class.assert_not_called()
+    assert _background_tasks(harness) == []

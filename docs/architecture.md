@@ -138,13 +138,16 @@ that isn't currently available.
 | **Prediction** | `weather.get_forecasts` (hourly forecast) | Predict future: "if wind WILL BE X, price should be Y"  |
 
 Forecasts are ephemeral — pulled fresh each run. Actual measurements are
-stored in `weather_history` (one snapshot every 15 minutes, kept 30 days)
+stored in `weather_history` (one snapshot every 15 minutes, kept for the
+training window plus 2 days)
 and Nordpool prognoses in `nordpool_prognoses`; training matches both to
 slots by UTC time. Both phases build their rows with the same function.
 
 ## No External API Dependencies
 
-The integration reads everything from Home Assistant entities. No DMI API key,
-no Nordpool API calls, no external HTTP requests. All data comes from HA's
-built-in weather entity (Met.no), Stromligning sensors, Solcast, and inverter
-power readings.
+Prices and weather come from Home Assistant entities: HA's built-in weather
+entity (Met.no), Stromligning sensors, Solcast, and inverter power readings.
+No API key is needed. The only external requests are Nordpool's public
+consumption and production prognoses: today and tomorrow on each forecast
+run, older delivery days only while they are incomplete (see
+[persistence](persistence.md#time-series-sources)).

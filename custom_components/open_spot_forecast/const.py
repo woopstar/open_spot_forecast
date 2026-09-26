@@ -133,6 +133,9 @@ LEAD_TIME_WINDOW_DAYS = 30
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
+# Nordpool's delivery day (the API's ``date``) is the CET/CEST calendar day,
+# for every delivery area
+NORDPOOL_MARKET_TZ = "Europe/Berlin"
 
 # Nordpool's dataportal API sits behind Cloudflare bot protection. A browser-like
 # User-Agent avoids being flagged as a script, which surfaces as HTTP 401/403.

@@ -181,13 +181,16 @@ Two public APIs (no authentication) provide the market's own forecasts:
 - **ConsumptionPrognoses**: Hourly demand forecast per delivery area
 - **ProductionDataPrognoses**: 15-min generation forecast per type (Solar, WindOffshore, WindOnshore)
 
-These are the same inputs used by market participants. They're fetched
-before each prediction run (every 6 hours) for today and tomorrow, stored in
+These are the same inputs used by market participants. They're stored in
 `nordpool_prognoses` (one row per hour: the hour's consumption and the
-production of its first quarter), and backfilled for the days in
-`price_history` at startup. Training reads those stored rows; prediction
-reads the live prognoses at the same resolution: the hour's consumption and
-the production at the hour's start, for all four slots of the hour.
+production of its first quarter) by a gap-aware source (see
+[persistence](persistence.md#time-series-sources)): each prediction run
+re-fetches today's and tomorrow's delivery days (Nordpool revises them), and
+a background task fills the missing days in `price_history` at startup and
+after midnight. Training reads
+the stored rows; prediction reads today's and tomorrow's stored rows at the
+same resolution: the hour's consumption and the production at the hour's
+start, for all four slots of the hour.
 
 Derived features:
 
@@ -421,7 +424,8 @@ The `current` row measures the model and features, not the whole runtime
 pipeline:
 
 - **No weather or Nordpool history.** Features 5-16 have no source for a
-  year of history (`weather_history` and `nordpool_prognoses` keep 30 days).
+  year of history (`weather_history` and `nordpool_prognoses` keep the
+  30-day training window plus 2 days).
   The backtest passes empty `SlotInputs`, so they are NaN in every row, and
   both GBMs see only the five time features. Historical weather forecasts
   arrive with #22 and #23.

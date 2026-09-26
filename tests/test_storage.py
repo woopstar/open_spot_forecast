@@ -25,6 +25,10 @@ from custom_components.open_spot_forecast.ml.history_storage import (
 from custom_components.open_spot_forecast.ml.prediction_storage import (
     PredictionStorageMixin,
 )
+from custom_components.open_spot_forecast.ml.series_storage import (
+    NORDPOOL_PROGNOSES,
+    SeriesStorageMixin,
+)
 from custom_components.open_spot_forecast.ml.state_storage import (
     LearningStateStorageMixin,
 )
@@ -77,12 +81,22 @@ def storage(tmp_path: Path) -> Iterator[LearningStorage]:
                 "count_weather_snapshots",
                 "load_weather_history",
                 "insert_nordpool_prognosis",
-                "insert_nordpool_prognoses_batch",
                 "find_nordpool_for_timestamp",
-                "delete_old_nordpool",
                 "load_nordpool_history",
                 "save_price_history",
                 "load_price_history",
+                "delete_old_prices",
+            ),
+        ),
+        (
+            SeriesStorageMixin,
+            (
+                "series_timestamps",
+                "upsert_series",
+                "load_series",
+                "prune_series",
+                "load_source_state",
+                "save_source_state",
             ),
         ),
         (
@@ -235,15 +249,15 @@ def test_nordpool_batch_moves_last_data_write_only_on_change(
         "wind_offshore": 1.0,
         "wind_onshore": 2.0,
     }
-    storage.insert_nordpool_prognoses_batch([entry])
+    storage.upsert_series(NORDPOOL_PROGNOSES, [entry])
     first_write = storage.last_data_write
     assert first_write is not None
 
     storage.last_data_write = None
-    storage.insert_nordpool_prognoses_batch([entry])
+    storage.upsert_series(NORDPOOL_PROGNOSES, [entry])
     assert storage.last_data_write is None
 
-    storage.insert_nordpool_prognoses_batch([{**entry, "solar": 20.0}])
+    storage.upsert_series(NORDPOOL_PROGNOSES, [{**entry, "solar": 20.0}])
     assert storage.last_data_write is not None
     rows = storage.load_nordpool_history()
     assert len(rows) == 1
@@ -258,7 +272,10 @@ def test_old_weather_and_nordpool_rows_are_pruned(storage: LearningStorage) -> N
         storage.insert_nordpool_prognosis(timestamp, 4000.0, None, None, None)
 
     assert storage.delete_old_weather(30) == 1
-    assert storage.delete_old_nordpool(30) == 1
+    assert (
+        storage.prune_series(NORDPOOL_PROGNOSES, dt_util.now() - timedelta(days=30))
+        == 1
+    )
     assert storage.count_weather_snapshots() == 1
     assert len(storage.load_nordpool_history()) == 1
 

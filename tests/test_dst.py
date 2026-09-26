@@ -184,6 +184,10 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
     hass.async_add_executor_job = run_inline
     hass.config_entries.async_forward_entry_setups = AsyncMock()
     entry = MagicMock()
+    # The history backfill (#32) is not run: close its coroutine
+    entry.async_create_background_task.side_effect = lambda _hass, coro, name: (
+        coro.close() if name == "open_spot_forecast_history_backfill" else None
+    )
     entry.entry_id = "test"
     entry.options = {}
     entry.data = {
@@ -223,9 +227,7 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SensorReader", return_value=reader),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
-        patch(
-            f"{module}.updater.fetch_nordpool_prognoses", new=AsyncMock(return_value=[])
-        ),
+        patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
         patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time"),
         patch(f"{module}.updater.async_dispatcher_send"),
