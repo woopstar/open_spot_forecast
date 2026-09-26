@@ -21,6 +21,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training              |
 | energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors  |
 | ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                  |
+| Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)     |
 
 ## Component Architecture
 
@@ -152,7 +153,9 @@ Weather comes from Home Assistant entities: HA's built-in weather entity
 Stromligning sensors or, with the `dayahead` price source, from
 energy-charts.info (ENTSO-E as fallback with an API key) and the ECB's
 exchange rates (see
-[price sources](stromligning_integration.md#price-sources)). The other
+[price sources](stromligning_integration.md#price-sources)). The zone
+weather comes from Open-Meteo (no key), one request for all of a region's
+points, refreshed from yesterday to 8 days ahead on each forecast run. The other
 external requests are Nordpool's public consumption and production
 prognoses: today and tomorrow on each forecast run, older delivery days only
 while they are incomplete (see

@@ -27,6 +27,8 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .api import NordpoolPrognosisSource, forecast_prognoses
+from .api.openmeteo_weather import OpenMeteoWeatherSource
+from .api.time_series_source import TimeSeriesSource
 from .const import (
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
@@ -42,6 +44,7 @@ from .const import (
     PRICE_SOURCE_DAYAHEAD,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
+    WEATHER_POINTS,
 )
 from .history_updater import HistoryUpdaterMixin
 from .ml.predictor import SpotPricePredictor
@@ -163,10 +166,16 @@ class ForecastUpdater(HistoryUpdaterMixin):
         self.sensor_reader = sensor_reader
         self.ml_predictor = ml_predictor
         self.region: str = api_data["region"]
-        # Only the ML model uses the prognoses, and they live in its database
+        # Only the ML model uses the prognoses and the zone weather (#22), and
+        # they live in its database
         self.nordpool = (
             NordpoolPrognosisSource(hass, ml_predictor.storage, self.region)
             if ml_predictor
+            else None
+        )
+        self.weather = (
+            OpenMeteoWeatherSource(hass, ml_predictor.storage, self.region)
+            if ml_predictor and self.region in WEATHER_POINTS
             else None
         )
         self.settings = settings or PriceSettings.from_entry(entry)
@@ -317,6 +326,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         weather_data = await self._read_weather()
         self.api_data["weather_data"] = weather_data
         await self._update_prognoses(weather_data)
+        await self._update_zone_weather(weather_data)
 
         ml_predictor = self.ml_predictor
         if ml_predictor and weather_data:
@@ -344,28 +354,63 @@ class ForecastUpdater(HistoryUpdaterMixin):
             # Save learning data after prediction (includes stored predictions)
             await ml_predictor.save_learning_data()
 
+    async def _refresh(
+        self, source: TimeSeriesSource, start: datetime, end: datetime, label: str
+    ) -> list[dict[str, Any]] | None:
+        """Update a source for ``[start, end)`` and return its stored rows.
+
+        A failed update keeps what is stored; None if nothing can be read.
+        """
+        try:
+            await source.async_update(start, end)
+        except Exception as err:
+            _LOGGER.warning("Could not update the %s: %s", label, err)
+        try:
+            return await source.async_load(start, end)
+        except Exception as err:
+            _LOGGER.warning("Could not read the stored %s: %s", label, err)
+            return None
+
     async def _update_prognoses(self, weather_data: dict[str, Any]) -> None:
         """Refresh today's and tomorrow's prognoses; attach the stored ones.
 
         Nordpool revises the current days, so they are re-fetched (an
-        unpublished tomorrow waits for its retry time); a failed request
-        keeps what is stored.
+        unpublished tomorrow waits for its retry time).
         """
         if self.nordpool is None:
             return
         today = dt_util.now().date()
-        start = local_midnight(today)
-        end = local_midnight(today + timedelta(days=2))
-        try:
-            await self.nordpool.async_update(start, end)
-        except Exception as err:
-            _LOGGER.warning("Could not update the Nordpool prognoses: %s", err)
-        try:
-            rows = await self.nordpool.async_load(start, end)
-        except Exception as err:
-            _LOGGER.warning("Could not read the stored Nordpool prognoses: %s", err)
+        rows = await self._refresh(
+            self.nordpool,
+            local_midnight(today),
+            local_midnight(today + timedelta(days=2)),
+            "Nordpool prognoses",
+        )
+        if rows is not None:
+            weather_data.update(forecast_prognoses(rows))
+
+    async def _update_zone_weather(self, weather_data: dict[str, Any]) -> None:
+        """Refresh the zone weather from yesterday to the forecast's end.
+
+        Open-Meteo revises its forecasts, so yesterday and every day ahead
+        are re-fetched; the stored rows from today on are attached for the
+        prediction (``zone_weather``).
+        """
+        if self.weather is None:
             return
-        weather_data.update(forecast_prognoses(rows))
+        today = dt_util.now().date()
+        start = local_midnight(today)
+        end = local_midnight(today + timedelta(days=FORECAST_DAYS + 1))
+        rows = await self._refresh(
+            self.weather, start - timedelta(days=1), end, "Open-Meteo weather"
+        )
+        ahead = [
+            row
+            for row in rows or []
+            if datetime.fromisoformat(row["timestamp"]) >= start
+        ]
+        if ahead:
+            weather_data["zone_weather"] = ahead
 
     async def async_initial_fetch(self) -> None:
         """Read the prices and weather and run the first forecast at setup."""

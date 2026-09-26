@@ -19,8 +19,12 @@ from custom_components.open_spot_forecast.ml.features import (
     wind_power_curve,
 )
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
-from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
+from custom_components.open_spot_forecast.ml.series_storage import (
+    NORDPOOL_PROGNOSES,
+    OPENMETEO_WEATHER,
+)
 from custom_components.open_spot_forecast.ml.training_inputs import TrainingInputs
+from custom_components.open_spot_forecast.ml.zone_weather import zone_points
 
 TZ = ZoneInfo("Europe/Copenhagen")
 # Monday 2026-06-01 12:00 local = 10:00 UTC
@@ -31,6 +35,13 @@ WEATHER = {
     "wind_direction": 240.0,
     "cloud_coverage": 75.0,
     "humidity": 80.0,
+}
+ZONE = {
+    "wind_80m": 11.0,
+    "temperature": 14.0,
+    "irradiance": 320.0,
+    "pressure": 1012.0,
+    "humidity": 70.0,
 }
 NORDPOOL = {
     "consumption": 3000.0,
@@ -84,6 +95,15 @@ def _store_history(predictor: SpotPricePredictor, start: datetime) -> None:
     predictor.storage.upsert_series(
         NORDPOOL_PROGNOSES, [{"timestamp": _utc_iso(start)} | NORDPOOL]
     )
+    predictor.storage.upsert_series(OPENMETEO_WEATHER, _zone_rows(start))
+
+
+def _zone_rows(start: datetime, **values: float) -> list[dict]:
+    """Open-Meteo rows of the slot for every DK1 sampling point."""
+    return [
+        {"timestamp": _utc_iso(start), "point": point} | ZONE | values
+        for point in zone_points("DK1")
+    ]
 
 
 def _live_data(start: datetime) -> dict:
@@ -99,6 +119,7 @@ def _live_data(start: datetime) -> dict:
                 "humidity": WEATHER["humidity"],
             }
         ],
+        "zone_weather": _zone_rows(start),
         "consumption_prognosis": {_utc_iso(start): NORDPOOL["consumption"]},
         "production_prognosis": [
             {
@@ -124,8 +145,9 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     _store_history(predictor, SLOT)
 
     training = build_feature_vector(_training_row(predictor, SLOT))
+    live = _live_data(SLOT)
     (prediction_row,) = predictor._combine_features(
-        [slot_time_features(SLOT)], _live_data(SLOT)
+        [slot_time_features(SLOT)], live, predictor._zone_index(live)
     )
     prediction = build_feature_vector(prediction_row)
 
@@ -218,6 +240,10 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
                         "wind_onshore": float(rng.uniform(0, 900)),
                     }
                 ],
+            )
+            zone = dict(zip(ZONE, rng.uniform(1, 30, len(ZONE)), strict=True))
+            predictor.storage.upsert_series(
+                OPENMETEO_WEATHER, _zone_rows(start, **zone)
             )
     predictor.price_history = entries
 

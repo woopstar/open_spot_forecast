@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -10,10 +10,12 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from ..price_series import is_invalid_price_series
-from ..time_slots import slot_start_in_day
+from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
+from .series_storage import OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
+from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -137,6 +139,10 @@ class LearningMixin(PredictorBase):
             self.storage.load_weather_history(),
             self.storage.load_nordpool_history(),
             self.tz,
+            ZoneWeatherIndex(
+                self.storage.load_series(OPENMETEO_WEATHER, *self._history_span()),
+                zone_points(self.region),
+            ),
         )
 
         for entry in self.price_history:
@@ -170,6 +176,19 @@ class LearningMixin(PredictorBase):
             len(self.price_history),
         )
         return all_prices, all_features
+
+    def _history_span(self) -> tuple[datetime, datetime]:
+        """Return the UTC span of the price history's local days."""
+        days = sorted(str(entry.get("date", "")) for entry in self.price_history)
+        try:
+            first = date.fromisoformat(days[0])
+            last = date.fromisoformat(days[-1])
+        except IndexError, ValueError:
+            first = last = dt_util.now().date()
+        return (
+            local_midnight(first, self.tz),
+            local_midnight(last + timedelta(days=1), self.tz),
+        )
 
     def store_prediction_for_learning(
         self,

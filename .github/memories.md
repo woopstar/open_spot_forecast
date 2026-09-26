@@ -37,6 +37,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
 | `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
+| `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                         |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
 | `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
@@ -54,14 +55,15 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
-| File                    | Responsibility                                                                                                    |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                |
-| `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day |
-| `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                     |
-| `dayahead_prices.py`    | `DayAheadPriceSource` — energy-charts (+ ENTSO-E fallback) day-ahead prices as `dayahead_prices` rows (#27)       |
-| `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                               |
-| `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params      |
+| File                    | Responsibility                                                                                                          |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `nordpool_data.py`      | `fetch_consumption_prognosis`, `fetch_production_prognosis` — Nordpool public APIs                                      |
+| `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day       |
+| `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                           |
+| `dayahead_prices.py`    | `DayAheadPriceSource` — energy-charts (+ ENTSO-E fallback) day-ahead prices as `dayahead_prices` rows (#27)             |
+| `openmeteo_weather.py`  | `OpenMeteoWeatherSource` — Open-Meteo 15-min weather at the region's `WEATHER_POINTS` as `openmeteo_weather` rows (#22) |
+| `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                                     |
+| `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params            |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -167,14 +169,16 @@ not to `storage.py`.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (17 features)
+## Feature Vector (23 features)
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
 and prediction alike, comes from `build_feature_row(slot_start, SlotInputs)` in
 `ml/features.py`, then `build_feature_vector()` in `FEATURE_NAMES` order. Only the inputs
 differ: `TrainingInputs` (`ml/training_inputs.py`, stored `weather_history` +
 `nordpool_prognoses`, matched by UTC epoch) vs `FeatureMixin._combine_features()` (live
-forecast + prognoses, matched by UTC hour). Unknown inputs are `None` → NaN; never fill in
+forecast + prognoses, matched by UTC hour). The zone weather (#22) comes from the stored
+`openmeteo_weather` rows in both phases, aggregated over the region's `WEATHER_POINTS` by
+`ZoneWeatherIndex` (`ml/zone_weather.py`); never aggregate it inline. Unknown inputs are `None` → NaN; never fill in
 0/15 °C/50 % or the current observation, and never copy prediction values into training rows.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
@@ -197,6 +201,12 @@ Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 | 14  | `wind_onshore`         | Nordpool API   |
 | 15  | `net_demand`           | Derived        |
 | 16  | `wind_share`           | Derived        |
+| 17  | `zone_wind`            | Open-Meteo     |
+| 18  | `zone_wind_power`      | Open-Meteo     |
+| 19  | `zone_temperature`     | Open-Meteo     |
+| 20  | `zone_irradiance`      | Open-Meteo     |
+| 21  | `zone_pressure`        | Open-Meteo     |
+| 22  | `zone_humidity`        | Open-Meteo     |
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.

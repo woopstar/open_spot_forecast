@@ -2,7 +2,7 @@
 
 ## Model
 
-A single **Gradient Boosting** regressor predicts the spot price from 20
+A single **Gradient Boosting** regressor predicts the spot price from 23
 features. It is a histogram-based GBM in the style of LightGBM, implemented
 in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
 scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
@@ -73,6 +73,7 @@ compares two UTC timestamps:
   - a weather snapshot written to `weather_history` (every 15 minutes)
   - a Nordpool prognosis row whose values changed (re-sending identical
     prognoses does not count)
+  - an Open-Meteo zone weather row whose values changed (a revised forecast)
 - `last_trained_at` — when the last successful training **started**, so data
   written during a training run triggers the next one
 
@@ -97,29 +98,48 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (17 features)
+## Feature Vector (23 features)
 
-| #   | Feature                | Source             | Description                                   |
-| --- | ---------------------- | ------------------ | --------------------------------------------- |
-| 0   | `hour`                 | Time               | Hour of day (0-23)                            |
-| 1   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                  |
-| 2   | `is_weekend`           | Time               | 1 if Saturday/Sunday                          |
-| 3   | `hour_sin`             | Time               | sin(2π × hour / 24)                           |
-| 4   | `hour_cos`             | Time               | cos(2π × hour / 24)                           |
-| 5   | `wind_speed_mean`      | Weather entity     | Wind speed in the slot (m/s)                  |
-| 6   | `wind_power_estimate`  | Derived            | Power curve(wind speed), 0-1                  |
-| 7   | `wind_direction`       | Weather entity     | Wind bearing (0-360°)                         |
-| 8   | `cloud_coverage`       | Weather entity     | Cloud cover (%)                               |
-| 9   | `humidity`             | Weather entity     | Relative humidity (%)                         |
-| 10  | `temperature`          | Weather entity     | Temperature in the slot                       |
-| 11  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)     |
-| 12  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW) |
-| 13  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW) |
-| 14  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)  |
-| 15  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW) |
-| 16  | `wind_share`           | Derived            | (offshore + onshore) / consumption            |
+| #   | Feature                | Source             | Description                                    |
+| --- | ---------------------- | ------------------ | ---------------------------------------------- |
+| 0   | `hour`                 | Time               | Hour of day (0-23)                             |
+| 1   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                   |
+| 2   | `is_weekend`           | Time               | 1 if Saturday/Sunday                           |
+| 3   | `hour_sin`             | Time               | sin(2π × hour / 24)                            |
+| 4   | `hour_cos`             | Time               | cos(2π × hour / 24)                            |
+| 5   | `wind_speed_mean`      | Weather entity     | Wind speed in the slot (m/s)                   |
+| 6   | `wind_power_estimate`  | Derived            | Power curve(wind speed), 0-1                   |
+| 7   | `wind_direction`       | Weather entity     | Wind bearing (0-360°)                          |
+| 8   | `cloud_coverage`       | Weather entity     | Cloud cover (%)                                |
+| 9   | `humidity`             | Weather entity     | Relative humidity (%)                          |
+| 10  | `temperature`          | Weather entity     | Temperature in the slot                        |
+| 11  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)      |
+| 12  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)  |
+| 13  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)  |
+| 14  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)   |
+| 15  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)  |
+| 16  | `wind_share`           | Derived            | (offshore + onshore) / consumption             |
+| 17  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s) |
+| 18  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1 |
+| 19  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                   |
+| 20  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)       |
+| 21  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                  |
+| 22  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)              |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`.
+
+**Zone weather** (#22). The local weather entity (features 5-10) is one
+place, at 10 m, about 48 hours ahead and hourly. The zone features describe
+the whole bidding zone instead: Open-Meteo's 15-minute forecast at a few
+fixed points per region (`WEATHER_POINTS` in `const.py`: wind and demand
+centres and, where there is one, an offshore wind area; DK1 for example
+samples North, West and South Jutland and Horns Rev), for 8 days ahead. They
+are zone aggregates rather than one column per point, so every region has
+the same vector whatever its number of points: the mean of each value, and
+the mean turbine power curve of the points' wind (calm and windy points are
+not averaged into a medium wind). The aggregation is `ZoneWeatherIndex`
+(`ml/zone_weather.py`), the same in training and prediction. The backtest
+chose aggregates over per-point columns (see [Backtesting](#backtesting)).
 
 **One definition for training and prediction** (#17). Every row, for
 training, prediction, hyperparameter search and the backtest, is built by
@@ -154,7 +174,7 @@ prediction:
   (tomorrow or later), so a per-slot Solcast value would be unknown in every
   prediction row. The model's solar input is Nordpool's per-slot solar
   prognosis (`solar_generation`), the same source and unit in both phases.
-  Irradiance arrives with #22.
+  Irradiance came with #22 (`zone_irradiance`).
 
 ## Data Sources
 
@@ -170,6 +190,7 @@ prediction:
 | `sensor.power_inverter_*`                           | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
 | `weather_history` (SQLite)                          | Actual weather      | 15-min       | Training inputs                                        |
 | `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                        |
+| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min       | `openmeteo_weather`: zone features, both phases        |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -202,10 +223,18 @@ wind_share = (wind_offshore + wind_onshore) / consumption
 
 ## Training vs Prediction Segmentation
 
-| Phase          | Weather source                                    | Nordpool source                       | Purpose                 |
-| -------------- | ------------------------------------------------- | ------------------------------------- | ----------------------- |
-| **Training**   | `weather_history` snapshot taken in the slot      | `nordpool_prognoses` row for the hour | Learn real cause→effect |
-| **Prediction** | `weather.get_forecasts` entry for the slot's hour | Live prognoses for the slot's hour    | Predict future price    |
+| Phase          | Weather source                                    | Zone weather (#22)                    | Nordpool source                       | Purpose                 |
+| -------------- | ------------------------------------------------- | ------------------------------------- | ------------------------------------- | ----------------------- |
+| **Training**   | `weather_history` snapshot taken in the slot      | `openmeteo_weather` rows for the slot | `nordpool_prognoses` row for the hour | Learn real cause→effect |
+| **Prediction** | `weather.get_forecasts` entry for the slot's hour | `openmeteo_weather` rows for the slot | Live prognoses for the slot's hour    | Predict future price    |
+
+The zone weather is one stored table for both phases. Each forecast run
+refreshes it from yesterday to 8 days ahead, so a past slot keeps the last
+forecast fetched for it (at most a day old, close to the observed weather),
+and a future slot has the current forecast. Until #23 backfills older
+history from Open-Meteo's archive, the zone columns are known only for the
+days since the integration started fetching them; older training rows have
+NaN there, which the model handles.
 
 Training reads both tables once per fit (`TrainingInputs` in
 `ml/training_inputs.py`) and matches rows to slots on their UTC epoch.
@@ -424,12 +453,17 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **No weather or Nordpool history.** Features 5-16 have no source for a
-  year of history (`weather_history` and `nordpool_prognoses` keep the
-  30-day training window plus 2 days).
-  The backtest passes empty `SlotInputs`, so they are NaN in every row, and
-  both GBMs see only the five time features. Historical weather forecasts
-  arrive with #22 and #23.
+- **Zone weather from Open-Meteo's archive.** The zone features (17-22) come
+  from Open-Meteo's historical forecast API (`historical-forecast-api`, 90
+  days per request, cached in `.cache/backtest/`) at the region's
+  `WEATHER_POINTS`, for training and target slots alike (`--weather none`
+  leaves them out). The archive keeps the start of each model run, so a
+  target slot days ahead gets weather about as good as a same-day forecast:
+  the zone rows are **optimistic at 2-3 days ahead**, where the live
+  forecast is less accurate.
+- **No local weather or Nordpool history.** Features 5-16 have no source for
+  a year of history (`weather_history` and `nordpool_prognoses` keep the
+  30-day training window plus 2 days), so they are NaN in every row.
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state) and
   hyperparameters restored from HPO are not applied.
@@ -442,8 +476,40 @@ pip install -r requirements_backtest.txt   # optional LightGBM row
 python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --window-days 30
 ```
 
-`--region` accepts DK1, DK2, SE4, NL, BE, FR and DE. Run the backtest before
-and after every model or feature change, and put both tables in the PR.
+`--region` accepts every OSF region. Run the backtest before and after every
+model or feature change, and put both tables in the PR.
+
+### Zone weather (#22)
+
+DK1, 365 daily origins from 2025-09-24 to 2026-09-23, retrained daily, EUR
+ct/kWh. `before` is `--weather none` (time features only, identical to the
+model before #22); `after` adds the Open-Meteo zone features. Recorded
+2026-09-26 with `lightgbm==4.7.0`.
+
+| Window | Model                | before 1d MAE | after 1d MAE | before 2d / 3d MAE | after 2d / 3d MAE |
+| ------ | -------------------- | ------------: | -----------: | -----------------: | ----------------: |
+| 180 d  | current (NumPy GBM)  |          3.76 |     **2.53** |        3.78 / 3.82 |       2.64 / 2.70 |
+| 180 d  | lightgbm (reference) |          3.78 |         2.52 |        3.78 / 3.82 |       2.69 / 2.75 |
+| 30 d   | current (NumPy GBM)  |          3.30 |     **2.41** |        3.32 / 3.33 |       2.62 / 2.70 |
+| 30 d   | lightgbm (reference) |          3.34 |         2.46 |        3.35 / 3.36 |       2.70 / 2.81 |
+
+The naive baseline is 3.93. RMSE falls alike (30 days, 1d: 4.68 → 3.67).
+DK2 with a 30-day window: 3.52 → 2.66 1d MAE (LightGBM 3.57 → 2.74).
+
+- **The zone weather is the most valuable input so far**: 27 % lower 1d MAE
+  with the production 30-day window, 33 % with 180 days. With weather the
+  180-day window is no longer far behind the 30-day one, since the price
+  level now follows the inputs rather than recency alone (#24).
+- **2d/3d errors grow with the lead time now** (2.41 → 2.62 → 2.70), because
+  the price depends on the weather. They are still optimistic: the archive
+  gives target slots days ahead near-same-day forecasts.
+- **Aggregates, not per-point columns.** On weekly origins, the zone
+  aggregates and one column per point and value (time + 5 × 4 columns) tied
+  at 1d (DK1 30 days: 2.41 vs 2.42; 180 days: 2.56 vs 2.57); per-point was
+  0.05 worse at 2d and up to 0.12 better at 3d. The aggregates keep one
+  vector for every region.
+- **Training time** barely changes: a 180-day fit (20,252 rows, 23
+  features) takes 0.38 s with the zone weather and 0.34 s without.
 
 ### Baseline
 

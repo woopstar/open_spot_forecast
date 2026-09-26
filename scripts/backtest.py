@@ -46,7 +46,15 @@ import numpy as np
 from custom_components.open_spot_forecast.api.dayahead_prices import (
     parse_energy_charts as parse_dayahead_rows,
 )
-from custom_components.open_spot_forecast.const import ENERGY_CHARTS_API, REGIONS
+from custom_components.open_spot_forecast.api.openmeteo_weather import (
+    open_meteo_query,
+    parse_open_meteo,
+)
+from custom_components.open_spot_forecast.const import (
+    ENERGY_CHARTS_API,
+    REGIONS,
+    WEATHER_POINTS,
+)
 from custom_components.open_spot_forecast.ml.features import (
     FEATURE_NAMES,
     SlotInputs,
@@ -55,6 +63,7 @@ from custom_components.open_spot_forecast.ml.features import (
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
+from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 
 SLOT_SECONDS = 15 * 60
 # Origins with less history than this are skipped (the naive model needs a week).
@@ -65,6 +74,11 @@ HTTP_ATTEMPTS = 5
 ENERGY_CHARTS_ZONES: dict[str, str] = {
     region: str(zone["energy_charts"]) for region, zone in REGIONS.items()
 }
+# Open-Meteo's archive of past forecasts (the live API only keeps recent days)
+OPEN_METEO_ARCHIVE_URL = "https://historical-forecast-api.open-meteo.com/v1/forecast"
+OPEN_METEO_REQUEST_DAYS = 90
+WEATHER_CHOICES = ("openmeteo", "none")
+
 # Report in EUR ct/kWh, the unit EpexPredictor publishes, so numbers compare directly.
 CT_PER_KWH_PER_EUR_PER_MWH = 0.1
 
@@ -247,30 +261,72 @@ def load_energy_charts_prices(
     return merge_series(parts)
 
 
+def load_open_meteo_weather(
+    region: str,
+    first: date,
+    last: date,
+    cache_dir: Path,
+    fetch: Callable[[str], Any] = _http_get_json,
+    today: date | None = None,
+) -> ZoneWeatherIndex:
+    """Load the region's zone weather for the UTC days ``first``..``last``.
+
+    Open-Meteo's archived forecasts (``historical-forecast-api``), 90 days
+    per request, for the region's ``WEATHER_POINTS``. Complete past chunks
+    are cached as JSON in ``cache_dir``. Weather data by Open-Meteo.com,
+    CC BY 4.0.
+    """
+    points = WEATHER_POINTS[region]
+    today = today or date.today()
+    rows: list[dict[str, Any]] = []
+    chunk_start = first
+    while chunk_start <= last:
+        chunk_end = min(chunk_start + timedelta(days=OPEN_METEO_REQUEST_DAYS - 1), last)
+        cache_file = cache_dir / f"openmeteo_{region}_{chunk_start}_{chunk_end}.json"
+        if cache_file.exists():
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+        else:
+            query = urllib.parse.urlencode(
+                open_meteo_query(points, chunk_start, chunk_end)
+            )
+            payload = fetch(f"{OPEN_METEO_ARCHIVE_URL}?{query}")
+            if chunk_end < today - timedelta(days=2):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        rows.extend(parse_open_meteo(payload, points))
+        chunk_start = chunk_end + timedelta(days=1)
+    return ZoneWeatherIndex(rows)
+
+
 # --- Models --------------------------------------------------------------------
 
 
-def feature_matrix(starts: np.ndarray, tz: tzinfo) -> np.ndarray:
+def feature_matrix(
+    starts: np.ndarray, tz: tzinfo, zone: ZoneWeatherIndex | None = None
+) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
-    Rows come from ``build_feature_row``, as in training and prediction. OSF
-    has no historical source for its weather and Nordpool inputs yet (#22,
-    #23), so those inputs are unknown (NaN) and only the time features vary.
+    Rows come from ``build_feature_row``, as in training and prediction. The
+    zone weather (#22) comes from Open-Meteo's archived forecasts, for
+    training and target slots alike. The local weather entity and Nordpool
+    inputs have no year of history, so they are unknown (NaN).
     """
-    rows = [
-        build_feature_vector(
-            build_feature_row(datetime.fromtimestamp(start, tz), SlotInputs())
-        )
-        for start in starts.tolist()
-    ]
+    rows = []
+    for start in starts.tolist():
+        moment = datetime.fromtimestamp(start, tz)
+        inputs = SlotInputs(**zone.for_slot(moment)) if zone else SlotInputs()
+        rows.append(build_feature_vector(build_feature_row(moment, inputs)))
     return np.array(rows, dtype=float).reshape(len(rows), len(FEATURE_NAMES))
 
 
 def _feature_rows(
-    history: PriceSeries, targets: np.ndarray, tz: tzinfo
+    history: PriceSeries,
+    targets: np.ndarray,
+    tz: tzinfo,
+    zone: ZoneWeatherIndex | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (training rows, target rows); features depend only on the slot times."""
-    return feature_matrix(history.starts, tz), feature_matrix(targets, tz)
+    """Return (training rows, target rows) for the slot times and zone weather."""
+    return feature_matrix(history.starts, tz, zone), feature_matrix(targets, tz, zone)
 
 
 class Forecaster(Protocol):
@@ -311,10 +367,11 @@ class CurrentModel:
     tz: tzinfo
     model_factory: Callable[[], NumpyGradientBoosting] = create_price_model
     name: str = "current (NumPy GBM)"
+    zone: ZoneWeatherIndex | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
-        train_rows, target_rows = _feature_rows(history, targets, self.tz)
+        train_rows, target_rows = _feature_rows(history, targets, self.tz, self.zone)
         model = self.model_factory()
         model.fit(train_rows, history.prices)
         return model.predict(target_rows)
@@ -330,12 +387,13 @@ class LightGbmReference:
 
     tz: tzinfo
     name: str = "lightgbm (reference)"
+    zone: ZoneWeatherIndex | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
         import lightgbm  # optional dev-only dependency (requirements_backtest.txt)
 
-        train_rows, target_rows = _feature_rows(history, targets, self.tz)
+        train_rows, target_rows = _feature_rows(history, targets, self.tz, self.zone)
         dataset = lightgbm.Dataset(
             train_rows, label=history.prices, feature_name=list(FEATURE_NAMES)
         )
@@ -351,7 +409,7 @@ def _lightgbm_available() -> bool:
 
 
 def build_models(
-    names: Sequence[str], tz: tzinfo
+    names: Sequence[str], tz: tzinfo, zone: ZoneWeatherIndex | None = None
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}."""
     models: list[Forecaster] = []
@@ -360,10 +418,10 @@ def build_models(
         if name == "naive":
             models.append(NaiveLastWeek(tz))
         elif name == "current":
-            models.append(CurrentModel(tz))
+            models.append(CurrentModel(tz, zone=zone))
         elif name == "lightgbm":
             if _lightgbm_available():
-                models.append(LightGbmReference(tz))
+                models.append(LightGbmReference(tz, zone=zone))
             else:
                 skipped[LightGbmReference.name] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
@@ -595,6 +653,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=",".join(MODEL_NAMES),
         help=f"comma-separated subset of {','.join(MODEL_NAMES)}",
     )
+    parser.add_argument(
+        "--weather",
+        choices=WEATHER_CHOICES,
+        default="openmeteo",
+        help="zone weather inputs: Open-Meteo's archived forecasts, or none",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -620,14 +684,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         step_days=args.step_days,
     )
     names = [name.strip() for name in args.models.split(",") if name.strip()]
-    models, skipped = build_models(names, tz)
+    data_first = first - timedelta(days=config.window_days + 1)
+    data_last = last + timedelta(days=config.horizon_days)
+    zone = None
+    if args.weather == "openmeteo":
+        print(f"Loading {args.region} weather from Open-Meteo ...", file=sys.stderr)
+        zone = load_open_meteo_weather(
+            args.region,
+            data_first - timedelta(days=1),
+            data_last + timedelta(days=1),
+            args.cache_dir,
+        )
+    models, skipped = build_models(names, tz, zone)
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(
-        args.region,
-        first - timedelta(days=config.window_days + 1),
-        last + timedelta(days=config.horizon_days),
-        args.cache_dir,
+        args.region, data_first, data_last, args.cache_dir
     )
     started = time.monotonic()
 

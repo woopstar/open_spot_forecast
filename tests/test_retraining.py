@@ -415,6 +415,7 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
         patch(f"{module}.SensorReader", return_value=reader),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
         patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
+        patch(f"{module}.updater.OpenMeteoWeatherSource", autospec=True),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
         patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time"),
         patch(f"{module}.updater.async_dispatcher_send"),

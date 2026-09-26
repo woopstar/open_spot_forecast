@@ -189,6 +189,33 @@ LEAD_TIME_BUCKETS: tuple[tuple[str, float], ...] = (
 # Rolling window (days of slots) the per-bucket MAE/RMSE are computed over.
 LEAD_TIME_WINDOW_DAYS = 30
 
+# Open-Meteo weather (#22): no key, 15-minute data, 16 days ahead. Each region
+# is sampled at a few fixed points across its bidding zone (wind and demand
+# centres, plus an offshore wind area where there is one), as lat/lon
+OPEN_METEO_API = "https://api.open-meteo.com/v1/forecast"
+WEATHER_POINTS: dict[str, tuple[tuple[float, float], ...]] = {
+    "DK1": ((57.40, 10.24), (56.20, 8.42), (55.38, 9.60), (55.53, 7.91)),
+    "DK2": ((55.98, 12.39), (54.91, 11.89), (55.12, 14.73), (55.05, 12.95)),
+    "SE3": ((59.33, 18.06), (57.71, 11.97), (59.38, 13.50), (60.67, 17.14)),
+    "SE4": ((55.60, 13.00), (56.66, 16.36), (56.03, 14.15), (56.67, 12.86)),
+    "NO2": ((58.15, 8.00), (58.97, 5.73), (59.41, 5.27), (59.21, 9.61)),
+    "FI": ((60.17, 24.94), (61.50, 23.76), (63.10, 21.62), (65.01, 25.47)),
+    "EE": ((59.44, 24.75), (58.38, 26.72), (58.39, 24.50), (58.25, 22.50)),
+    "LT": ((54.69, 25.28), (54.90, 23.90), (55.70, 21.13)),
+    "LV": ((56.95, 24.11), (56.51, 21.01), (55.87, 26.54)),
+    "NL": ((52.52, 6.08), (52.37, 4.90), (51.44, 5.48), (53.22, 6.57), (52.60, 4.10)),
+    "BE": ((50.85, 4.35), (51.05, 3.72), (50.63, 5.57), (51.60, 2.90)),
+    "FR": ((48.86, 2.35), (45.76, 4.84), (43.60, 1.44), (47.22, -1.55), (50.63, 3.06)),
+    "DE": (
+        (53.55, 9.99),
+        (52.52, 13.40),
+        (48.14, 11.58),
+        (50.11, 8.68),
+        (52.37, 9.73),
+        (54.30, 6.60),
+    ),
+}
+
 # Day-ahead price APIs (#27): energy-charts.info (no key; the licence is per
 # zone and comes with each response) and ENTSO-E (API key, fallback)
 ENERGY_CHARTS_API = "https://api.energy-charts.info/price"

@@ -57,6 +57,8 @@ class LearningStorage(
                         time-series source through series_storage.py)
       dayahead_prices — raw day-ahead prices, EUR/MWh per UTC 15-min slot
                         (series_storage.py; energy-charts / ENTSO-E source)
+      openmeteo_weather — Open-Meteo weather per sampling point and UTC
+                        15-min slot (series_storage.py; Open-Meteo source)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 
@@ -258,6 +260,17 @@ class LearningStorage(
             CREATE TABLE IF NOT EXISTS dayahead_prices (
                 timestamp       TEXT    PRIMARY KEY,
                 price           REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS openmeteo_weather (
+                timestamp       TEXT    NOT NULL,
+                point           TEXT    NOT NULL,
+                wind_80m        REAL,
+                temperature     REAL,
+                irradiance      REAL,
+                pressure        REAL,
+                humidity        REAL,
+                PRIMARY KEY (timestamp, point)
             );
 
             CREATE TABLE IF NOT EXISTS volatility (

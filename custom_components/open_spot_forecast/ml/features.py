@@ -13,7 +13,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -22,9 +22,12 @@ from homeassistant.util import dt as dt_util
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
 
+if TYPE_CHECKING:
+    from .zone_weather import ZoneWeatherIndex
+
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 17-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 23-feature model input, in column order (docs/ml_documentation.md).
 FEATURE_NAMES: tuple[str, ...] = (
     "hour",
     "day_of_week",
@@ -43,7 +46,16 @@ FEATURE_NAMES: tuple[str, ...] = (
     "wind_onshore",
     "net_demand",
     "wind_share",
+    "zone_wind",
+    "zone_wind_power",
+    "zone_temperature",
+    "zone_irradiance",
+    "zone_pressure",
+    "zone_humidity",
 )
+
+# Open-Meteo zone weather features (#22), aggregated over the region's points
+ZONE_FEATURES: tuple[str, ...] = FEATURE_NAMES[-6:]
 
 HOUR_SECONDS = 3600
 
@@ -55,7 +67,11 @@ class SlotInputs:
     Weather values are for the slot, wind speed in m/s (training: the stored
     snapshot, taken every 15 minutes; prediction: the hourly forecast for the
     slot's hour). Nordpool values are the day-ahead prognoses for the slot's
-    hour, in MW.
+    hour, in MW. Zone values are Open-Meteo aggregates over the region's
+    sampling points for the slot (``ml/zone_weather.py``), from the same
+    stored table in both phases: mean wind at 80 m (m/s), mean turbine power
+    curve (0-1), temperature (°C), global irradiance (W/m²), sea-level
+    pressure (hPa) and relative humidity (%).
     """
 
     temperature: float | None = None
@@ -67,6 +83,12 @@ class SlotInputs:
     solar_generation: float | None = None
     wind_offshore: float | None = None
     wind_onshore: float | None = None
+    zone_wind: float | None = None
+    zone_wind_power: float | None = None
+    zone_temperature: float | None = None
+    zone_irradiance: float | None = None
+    zone_pressure: float | None = None
+    zone_humidity: float | None = None
 
 
 def optional_float(value: Any) -> float | None:
@@ -204,20 +226,24 @@ def build_feature_row(
         if consumption > 1e-9:
             wind_share = (offshore + onshore) / consumption
 
-    return slot_time_features(start, interval_minutes) | {
-        "wind_speed_mean": wind,
-        "wind_power_estimate": wind_power_curve(wind) if wind is not None else None,
-        "wind_direction": inputs.wind_direction,
-        "cloud_coverage": inputs.cloud_coverage,
-        "humidity": inputs.humidity,
-        "temperature": inputs.temperature,
-        "consumption_forecast": consumption,
-        "solar_generation": inputs.solar_generation,
-        "wind_offshore": offshore,
-        "wind_onshore": onshore,
-        "net_demand": net_demand,
-        "wind_share": wind_share,
-    }
+    return (
+        slot_time_features(start, interval_minutes)
+        | {
+            "wind_speed_mean": wind,
+            "wind_power_estimate": wind_power_curve(wind) if wind is not None else None,
+            "wind_direction": inputs.wind_direction,
+            "cloud_coverage": inputs.cloud_coverage,
+            "humidity": inputs.humidity,
+            "temperature": inputs.temperature,
+            "consumption_forecast": consumption,
+            "solar_generation": inputs.solar_generation,
+            "wind_offshore": offshore,
+            "wind_onshore": onshore,
+            "net_demand": net_demand,
+            "wind_share": wind_share,
+        }
+        | {name: getattr(inputs, name) for name in ZONE_FEATURES}
+    )
 
 
 class FeatureMixin(PredictorBase):
@@ -265,7 +291,10 @@ class FeatureMixin(PredictorBase):
         return features
 
     def _combine_features(
-        self, time_features: list[dict], weather_data: dict
+        self,
+        time_features: list[dict],
+        weather_data: dict,
+        zone: ZoneWeatherIndex | None = None,
     ) -> list[dict]:
         """Build the prediction feature rows from live forecasts and prognoses.
 
@@ -275,7 +304,9 @@ class FeatureMixin(PredictorBase):
         prognosis (``consumption_prognosis``: UTC hour → MW) and the Nordpool
         production prognosis at the start of that hour
         (``production_prognosis``: deliveryStart, solar, wind_offshore,
-        wind_onshore), the resolution training reads from storage. A slot
+        wind_onshore), the resolution training reads from storage. ``zone``
+        holds the stored Open-Meteo rows (``ZoneWeatherIndex``), aggregated
+        per slot as in training. A slot
         outside a forecast's horizon gets None for those inputs, not a
         default or the current observation.
         """
@@ -313,6 +344,7 @@ class FeatureMixin(PredictorBase):
                 solar_generation=optional_float(production.get("solar")),
                 wind_offshore=optional_float(production.get("wind_offshore")),
                 wind_onshore=optional_float(production.get("wind_onshore")),
+                **(zone.for_slot(start) if zone else {}),
             )
             combined.append(build_feature_row(start, inputs))
         return combined

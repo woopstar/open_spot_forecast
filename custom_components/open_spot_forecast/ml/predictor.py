@@ -20,6 +20,7 @@ from .models import ModelMixin, create_price_model
 from .numpy_models import NumpyRandomForest
 from .retraining import RetrainMixin
 from .storage import LearningStorage
+from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,7 +166,9 @@ class SpotPricePredictor(
             )
 
             # Build every slot's row with the same builder training uses
-            all_features = self._combine_features(time_features, weather_data)
+            all_features = self._combine_features(
+                time_features, weather_data, self._zone_index(weather_data)
+            )
 
             _LOGGER.info(
                 "Generated %d feature sets, model trained: %s",
@@ -222,6 +225,12 @@ class SpotPricePredictor(
             _LOGGER.error("Error generating ML predictions: %s", err, exc_info=True)
             self.predictions = []
             self.confidence_scores = []
+
+    def _zone_index(self, weather_data: dict) -> ZoneWeatherIndex:
+        """Return the zone weather (#22) of the stored Open-Meteo rows, by slot."""
+        return ZoneWeatherIndex(
+            weather_data.get("zone_weather") or [], zone_points(self.region)
+        )
 
     def _update_solar_scale(self, weather_data: dict) -> None:
         """Update the EMA of actual solar output / Solcast's estimate for today."""

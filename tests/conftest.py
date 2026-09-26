@@ -59,6 +59,9 @@ def setup_entry(
             patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True)
         )
         stack.enter_context(
+            patch(f"{module}.updater.OpenMeteoWeatherSource", autospec=True)
+        )
+        stack.enter_context(
             patch(f"{module}.async_track_time_change", side_effect=track_time_change)
         )
         stack.enter_context(
