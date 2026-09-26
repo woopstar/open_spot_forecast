@@ -56,10 +56,7 @@ def setup_entry(
     with ExitStack() as stack:
         stack.enter_context(patch(f"{module}.async_get_integration", new=AsyncMock()))
         stack.enter_context(
-            patch(
-                f"{module}.updater.fetch_nordpool_prognoses",
-                new=AsyncMock(return_value=[]),
-            )
+            patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True)
         )
         stack.enter_context(
             patch(f"{module}.async_track_time_change", side_effect=track_time_change)
@@ -80,6 +77,10 @@ def setup_entry(
             hass.async_add_executor_job = run_inline
             hass.config_entries.async_forward_entry_setups = AsyncMock()
             entry = MagicMock()
+            # The history backfill (#32) is not run: close its coroutine
+            entry.async_create_background_task.side_effect = lambda _hass, coro, name: (
+                coro.close() if name == "open_spot_forecast_history_backfill" else None
+            )
             entry.entry_id = "test"
             entry.options = {}
             entry.data = {

@@ -15,7 +15,7 @@ All learning data is stored in a single SQLite database:
 | `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                      |
 | `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min weather snapshots (temp, wind m/s, cloud, humidity, solar), keyed `YYYY-MM-DDTHH:MM:SSZ`         |
-| `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter` and the latest holdout metrics                |
+| `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state     |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error    |
 
 `price_history` never stores an invalid day (known prices all zero, or not
@@ -44,6 +44,7 @@ tables:
 | -------------------------- | ------------------------------ | ------------------------------------------------------------------------ |
 | `ml/prediction_storage.py` | `PredictionStorageMixin`       | `predictions`                                                            |
 | `ml/history_storage.py`    | `HistoryStorageMixin`          | `weather_history`, `nordpool_prognoses`, `price_history`                 |
+| `ml/series_storage.py`     | `SeriesStorageMixin`           | Time-series source tables (`nordpool_prognoses`), source state in `meta` |
 | `ml/state_storage.py`      | `LearningStateStorageMixin`    | `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk save/load |
 | `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`                                                     |
 
@@ -91,7 +92,7 @@ rows keep the UTC timestamps Nordpool publishes (`…Z`, one per hour).
 `find_weather_for_timestamp` (±30 minutes) and `find_nordpool_for_timestamp`
 (±1 hour) accept any ISO timestamp (naive = Home Assistant local time),
 normalize it to UTC and compare it with the stored rows as SQLite julian
-days, and so does the 30-day pruning. Before #59 they compared the stored
+days, and so does the pruning. Before #59 they compared the stored
 strings with SQLite `datetime()` results (UTC with a space separator), which
 never matched a row on the same date: self-learning never recorded the
 forecast weather error, and the Nordpool backfill re-fetched every stored day
@@ -105,6 +106,48 @@ timestamps written since as their instant. Each becomes its slot's UTC key;
 when several fall into one slot the earliest is kept, as training does.
 Unreadable timestamps are dropped. The migration logs how many snapshots it
 rewrote, merged and dropped.
+
+## Time-Series Sources
+
+Upstream time series are stored through one shared layer (#32), so every
+source fetches only what it is missing:
+
+- `SeriesSpec` (`ml/series_storage.py`) describes a table on a fixed UTC
+  grid: `timestamp` (`…Z`), optionally a key column (e.g. a sampling point),
+  and value columns. `nordpool_prognoses` is `NORDPOOL_PROGNOSES` (hourly).
+- A grid point counts as stored when its row has a value in every column
+  (and, for a keyed table, every expected key has such a row). Nordpool rows
+  without the per-type production breakdown are therefore incomplete until
+  it is published.
+- `upsert_series` writes new values over old ones but never replaces a
+  stored value with a missing one, and reports whether anything changed. A
+  change moves `last_data_write`, which makes the model retrain.
+- `TimeSeriesSource` (`api/time_series_source.py`) runs an update of a range:
+  it requests only the missing grid points (grouped into requests: one per
+  CET/CEST delivery day for Nordpool), plus an optional refresh window for
+  revised forecasts, and records what upstream did not have as holes in
+  `meta` (`source_state_<name>`, JSON). A hole reaching into the requested
+  future is the source's horizon ("no data yet beyond T"): neither it nor
+  anything after it is requested again before its retry time (for Nordpool
+  15 minutes for recent data, 1 day for older history). A failed request records nothing,
+  so it is retried at the next update. `horizon_cutoff` hides everything
+  after a moment, for backtests.
+
+Nordpool revises the current days' prognoses, so its refresh window starts
+at today's delivery day: each forecast run re-fetches today and tomorrow
+(the upsert tells whether anything changed) and reads them from the table.
+Older days are only requested while incomplete, so complete history costs
+no request. The history the model trains on (the stored price days up to
+today) is filled by a background task at setup and after midnight, which
+resumes where it stopped.
+
+### Retention
+
+History is kept for the training window (`max_history_days`, 30 days) plus
+2 days. Once a day (at midnight) older `weather_history` snapshots,
+`price_history` days, `nordpool_prognoses` rows and remembered holes are
+deleted. Before #32 only `weather_history` was pruned, to a fixed 30 days,
+whenever the snapshot count was a multiple of 100.
 
 ## Data Flow
 
@@ -122,6 +165,11 @@ Every 6 hours ──→ save_all() flushes error_metrics, bias_correction,
                   price_history, meta to disk
          │
 Every 15 min ──→ weather snapshot inserted into weather_history
+         │
+Each forecast ──→ today's and tomorrow's missing Nordpool prognoses fetched
+         │
+At midnight ──→ history older than the training window + 2 days pruned;
+                missing Nordpool history backfilled in the background
 ```
 
 Predictions are stored individually as they're generated (672 per forecast run).

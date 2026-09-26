@@ -246,14 +246,18 @@ async def test_setup_polls_until_tomorrow_is_complete_and_cancels_on_unload(
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SensorReader", return_value=reader),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
-        patch(
-            f"{module}.updater.fetch_nordpool_prognoses", new=AsyncMock(return_value=[])
-        ),
+        patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
         patch(f"{module}.async_track_time_change", return_value=Mock()),
         patch(f"{module}.updater.async_dispatcher_send"),
     ):
         assert await async_setup_entry(hass, entry) is True
         api_data = hass.data[DOMAIN]["test"]
+
+        # The history backfill starts in the background at setup (#32)
+        _hass_arg, backfill, name = entry.async_create_background_task.call_args.args
+        assert name == "open_spot_forecast_history_backfill"
+        backfill.close()
+        entry.async_create_background_task.reset_mock()
         # 23 of tomorrow's slots used to count as available
         assert api_data["tomorrow_available"] is False
         assert len(scheduler.times) == 1

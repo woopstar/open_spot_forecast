@@ -20,6 +20,7 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from custom_components.open_spot_forecast.ml.training_inputs import TrainingInputs
 from custom_components.open_spot_forecast.ml.weather_migration import (
@@ -201,7 +202,7 @@ def test_pruning_compares_instants(storage: LearningStorage) -> None:
     )
 
     assert storage.delete_old_weather(30) == 1
-    assert storage.delete_old_nordpool(30) == 1
+    assert storage.prune_series(NORDPOOL_PROGNOSES, now - timedelta(days=30)) == 1
     temperatures = [row["temperature"] for row in storage.load_weather_history()]
     consumption = [row["consumption"] for row in storage.load_nordpool_history()]
     assert temperatures == pytest.approx([2.0])

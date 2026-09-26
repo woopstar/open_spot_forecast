@@ -20,6 +20,7 @@ from custom_components.open_spot_forecast.const import (
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.retraining import HPO_INTERVAL_DAYS
+from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 
 TODAY = [1.0 + (slot % 24) / 10 for slot in range(96)]
 TOMORROW = [2.0 + (slot % 24) / 10 for slot in range(96)]
@@ -140,16 +141,16 @@ def test_nordpool_rows_trigger_retrain_only_when_changed(
         "wind_offshore": 800.0,
         "wind_onshore": 1200.0,
     }
-    predictor.storage.insert_nordpool_prognoses_batch([row])
+    predictor.storage.upsert_series(NORDPOOL_PROGNOSES, [row])
 
     with _spy_training(predictor) as train:
         _forecast(predictor, TODAY)
-        predictor.storage.insert_nordpool_prognoses_batch([row])
+        predictor.storage.upsert_series(NORDPOOL_PROGNOSES, [row])
         _forecast(predictor, TODAY)
         assert train.call_count == 1
 
         # The per-type breakdown is published later than the total
-        predictor.storage.insert_nordpool_prognoses_batch([{**row, "solar": 450.0}])
+        predictor.storage.upsert_series(NORDPOOL_PROGNOSES, [{**row, "solar": 450.0}])
         _forecast(predictor, TODAY)
 
     assert train.call_count == 2
@@ -413,15 +414,19 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SensorReader", return_value=reader),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
-        patch(
-            f"{module}.updater.fetch_nordpool_prognoses", new=AsyncMock(return_value=[])
-        ),
+        patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
         patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time"),
         patch(f"{module}.updater.async_dispatcher_send"),
     ):
         assert await async_setup_entry(hass, entry) is True
         assert ml_predictor.predict.call_count == 1
+
+        # The history backfill starts in the background at setup (#32)
+        _hass_arg, backfill, name = entry.async_create_background_task.call_args.args
+        assert name == "open_spot_forecast_history_backfill"
+        backfill.close()
+        entry.async_create_background_task.reset_mock()
 
         # Quarter without tomorrow's prices: no extra refresh
         await callbacks["new_quarter"](datetime.now())

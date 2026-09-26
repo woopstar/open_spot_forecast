@@ -19,6 +19,7 @@ from custom_components.open_spot_forecast.ml.features import (
     wind_power_curve,
 )
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 from custom_components.open_spot_forecast.ml.training_inputs import TrainingInputs
 
 TZ = ZoneInfo("Europe/Copenhagen")
@@ -80,8 +81,8 @@ def _store_history(predictor: SpotPricePredictor, start: datetime) -> None:
         WEATHER["humidity"],
         None,
     )
-    predictor.storage.insert_nordpool_prognoses_batch(
-        [{"timestamp": _utc_iso(start)} | NORDPOOL]
+    predictor.storage.upsert_series(
+        NORDPOOL_PROGNOSES, [{"timestamp": _utc_iso(start)} | NORDPOOL]
     )
 
 
@@ -206,7 +207,8 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
                 float(humidity),
                 None,
             )
-            predictor.storage.insert_nordpool_prognoses_batch(
+            predictor.storage.upsert_series(
+                NORDPOOL_PROGNOSES,
                 [
                     {
                         "timestamp": _utc_iso(start),
@@ -215,7 +217,7 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
                         "wind_offshore": float(rng.uniform(0, 900)),
                         "wind_onshore": float(rng.uniform(0, 900)),
                     }
-                ]
+                ],
             )
     predictor.price_history = entries
 

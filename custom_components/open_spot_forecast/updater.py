@@ -6,13 +6,19 @@ minutes, ``update_forecasts`` every 6 hours, ``new_day`` at midnight and
 ``check_tomorrow_prices`` through ``TomorrowPriceChecker``. The forecast
 pipeline (weather → Nordpool prognoses → known-data end → predict → save)
 exists once, in ``run_forecast``.
+
+Stored history is kept by gap-aware sources (``api/time_series_source.py``,
+#32): the forecast refreshes today's and tomorrow's prognoses, the older
+history the model trains on is filled in the background at setup and after
+midnight (complete days are never requested again), and history older than
+the training window (plus a margin) is pruned once a day.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -20,7 +26,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
-from .api import fetch_nordpool_prognoses
+from .api import NordpoolPrognosisSource, forecast_prognoses
 from .const import (
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
@@ -41,6 +47,7 @@ from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
 from .time_slots import (
     floor_to_slot,
+    local_midnight,
     slot_index_in_day,
     tomorrow_prices_complete,
     utc_slot_key,
@@ -51,6 +58,8 @@ _LOGGER = logging.getLogger(__name__)
 # How far ahead the model predicts, and its slot length
 FORECAST_DAYS = 7
 INTERVAL_MINUTES = 15
+# Stored history is kept this many days beyond the training window
+HISTORY_MARGIN_DAYS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,6 +156,12 @@ class ForecastUpdater:
         self.sensor_reader = sensor_reader
         self.ml_predictor = ml_predictor
         self.region: str = api_data["region"]
+        # Only the ML model uses the prognoses, and they live in its database
+        self.nordpool = (
+            NordpoolPrognosisSource(hass, ml_predictor.storage, self.region)
+            if ml_predictor
+            else None
+        )
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -250,24 +265,16 @@ class ForecastUpdater:
     async def run_forecast(self) -> None:
         """Run the forecast pipeline once.
 
-        Reads the weather and the Nordpool prognoses (stored for training),
-        then predicts from the known raw spot prices onwards and saves the
-        learning data. Without an ML predictor only the weather and
-        prognoses are read.
+        Reads the weather and today's and tomorrow's Nordpool prognoses
+        (refreshed from Nordpool), then predicts from the known raw
+        spot prices onwards and saves the learning data. Without an ML
+        predictor only the weather is read.
         """
         weather_data = await self._read_weather()
         self.api_data["weather_data"] = weather_data
+        await self._update_prognoses(weather_data)
 
-        # Nordpool consumption and production prognoses (cached)
-        np_entries = await fetch_nordpool_prognoses(
-            self.region, weather_data, self.api_data
-        )
         ml_predictor = self.ml_predictor
-        if np_entries and ml_predictor:
-            await self.hass.async_add_executor_job(
-                ml_predictor.storage.insert_nordpool_prognoses_batch, np_entries
-            )
-
         if ml_predictor and weather_data:
             # The model's prices: raw spot excl. VAT, today then tomorrow, and
             # where they end (predictions start there)
@@ -292,6 +299,96 @@ class ForecastUpdater:
 
             # Save learning data after prediction (includes stored predictions)
             await ml_predictor.save_learning_data()
+
+    async def _update_prognoses(self, weather_data: dict[str, Any]) -> None:
+        """Refresh today's and tomorrow's prognoses; attach the stored ones.
+
+        Nordpool revises the current days, so they are re-fetched (an
+        unpublished tomorrow waits for its retry time); a failed request
+        keeps what is stored.
+        """
+        if self.nordpool is None:
+            return
+        today = dt_util.now().date()
+        start = local_midnight(today)
+        end = local_midnight(today + timedelta(days=2))
+        try:
+            await self.nordpool.async_update(start, end)
+        except Exception as err:
+            _LOGGER.warning("Could not update the Nordpool prognoses: %s", err)
+        try:
+            rows = await self.nordpool.async_load(start, end)
+        except Exception as err:
+            _LOGGER.warning("Could not read the stored Nordpool prognoses: %s", err)
+            return
+        weather_data.update(forecast_prognoses(rows))
+
+    # ------------------------------------------------------------------
+    # Stored history
+    # ------------------------------------------------------------------
+
+    def _first_price_day(self) -> date | None:
+        """Return the oldest day of the model's price history, if any."""
+        days = []
+        for entry in self.ml_predictor.price_history if self.ml_predictor else []:
+            try:
+                days.append(date.fromisoformat(str(entry.get("date"))))
+            except ValueError:
+                continue
+        return min(days, default=None)
+
+    async def backfill_history(self) -> None:
+        """Fetch the history the model trains on that is still missing.
+
+        Covers the stored price days up to today; only missing delivery days
+        are requested, so an interrupted backfill resumes where it stopped.
+        """
+        first = self._first_price_day()
+        if self.nordpool is None or first is None:
+            return
+        try:
+            await self.nordpool.async_update(
+                local_midnight(first), local_midnight(dt_util.now().date())
+            )
+        except Exception as err:
+            _LOGGER.warning("Nordpool history backfill failed: %s", err)
+
+    def start_history_backfill(self) -> None:
+        """Run ``backfill_history`` in the background (it can take minutes)."""
+        if self.nordpool is not None:
+            self.entry.async_create_background_task(
+                self.hass,
+                self.backfill_history(),
+                "open_spot_forecast_history_backfill",
+            )
+
+    async def prune_history(self) -> None:
+        """Delete stored history older than the training window plus a margin."""
+        ml_predictor = self.ml_predictor
+        if ml_predictor is None or self.nordpool is None:
+            return
+        keep_days = ml_predictor.max_history_days + HISTORY_MARGIN_DAYS
+        cutoff_day = dt_util.now().date() - timedelta(days=keep_days)
+        storage = ml_predictor.storage
+        try:
+            weather = await self.hass.async_add_executor_job(
+                storage.delete_old_weather, keep_days
+            )
+            prices = await self.hass.async_add_executor_job(
+                storage.delete_old_prices, cutoff_day.isoformat()
+            )
+            prognoses = await self.nordpool.async_prune(local_midnight(cutoff_day))
+        except Exception as err:
+            _LOGGER.warning("Could not prune the stored history: %s", err)
+            return
+        _LOGGER.debug(
+            "Pruned history before %s: %d weather snapshots, %d price days, "
+            "%d prognosis rows",
+            cutoff_day,
+            weather,
+            prices,
+            prognoses,
+        )
 
     async def async_initial_fetch(self) -> None:
         """Read the prices and weather and run the first forecast at setup."""
@@ -334,6 +431,7 @@ class ForecastUpdater:
         )
 
         api_data["last_update"] = datetime.now()
+        self.start_history_backfill()
         _LOGGER.info("Initial data fetch completed successfully")
 
     # ------------------------------------------------------------------
@@ -403,6 +501,10 @@ class ForecastUpdater:
         self.read_spot_prices()
         self._notify(UPDATE_SIGNAL)
 
+        # Keep the stored history to the training window, and fill it in
+        await self.prune_history()
+        self.start_history_backfill()
+
     async def new_quarter(self, _now: datetime) -> None:
         """Update every 15 minutes and perform self-learning."""
         _LOGGER.info("15-minute update triggered for self-learning")
@@ -469,9 +571,6 @@ class ForecastUpdater:
                 weather_now.get("humidity"),
                 weather_now.get("solar_power"),
             )
-            # Prune old weather every 100 snapshots
-            if ml_predictor.storage.count_weather_snapshots() % 100 == 0:
-                ml_predictor.storage.delete_old_weather(30)
         except Exception as err:
             _LOGGER.debug("Failed to store weather snapshot: %s", err)
 

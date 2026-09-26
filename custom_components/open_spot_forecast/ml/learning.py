@@ -1,6 +1,5 @@
 """Self-learning, historical storage, and persistence."""
 
-import asyncio
 import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -552,87 +551,6 @@ class LearningMixin(PredictorBase):
 
         return await self.storage.async_save_all(data)
 
-    async def _backfill_nordpool_data(self) -> int:
-        """Fetch and store Nordpool prognoses for all dates in price_history.
-
-        Nordpool day-ahead data is immutable once published, so fetching
-        past dates gives us the same data that was available at prediction
-        time. This eliminates the train/serve skew where training features
-        had zeros for Nordpool fields because the data wasn't stored yet.
-
-        Returns:
-            Number of Nordpool entries stored.
-        """
-        from datetime import date
-
-        from ..api import fetch_consumption_prognosis, fetch_production_prognosis
-
-        stored = 0
-        dates_seen: set[str] = set()
-
-        for entry in self.price_history:
-            date_str = entry.get("date")
-            if not date_str or date_str in dates_seen:
-                continue
-            dates_seen.add(date_str)
-
-            try:
-                target = date.fromisoformat(date_str)
-            except ValueError:
-                continue
-
-            # Skip if we already have Nordpool data for this date
-            sample_ts = f"{date_str}T12:00:00Z"
-            existing = await self.hass.async_add_executor_job(
-                self.storage.find_nordpool_for_timestamp, sample_ts
-            )
-            if existing:
-                continue
-
-            _LOGGER.info("Backfilling Nordpool data for %s", date_str)
-            consumption, _ = await fetch_consumption_prognosis(target, self.region)
-            production, _ = await fetch_production_prognosis(target, self.region)
-
-            # Throttle the backfill so we don't trip Nordpool's Cloudflare rate
-            # limiter (which returns 401/429 when hammered with rapid requests).
-            await asyncio.sleep(1.0)
-
-            entries: list[dict] = []
-            if consumption:
-                for ts, cons in consumption.items():
-                    entries.append(
-                        {
-                            "timestamp": ts,
-                            "consumption": cons,
-                            "solar": None,
-                            "wind_offshore": None,
-                            "wind_onshore": None,
-                        }
-                    )
-
-            if production:
-                prod_by_ts = {p["deliveryStart"]: p for p in production}
-                for e in entries:
-                    p = prod_by_ts.get(e["timestamp"])
-                    if p:
-                        e["solar"] = p.get("solar")
-                        e["wind_offshore"] = p.get("wind_offshore")
-                        e["wind_onshore"] = p.get("wind_onshore")
-
-            if entries:
-                await self.hass.async_add_executor_job(
-                    self.storage.insert_nordpool_prognoses_batch, entries
-                )
-                stored += len(entries)
-
-        if stored:
-            _LOGGER.info(
-                "Backfilled %d Nordpool entries across %d dates",
-                stored,
-                len(dates_seen),
-            )
-        return stored
-
     async def _load_learning_data(self) -> None:
         """Load learning data from persistent storage.
 
@@ -694,16 +612,6 @@ class LearningMixin(PredictorBase):
                 pred_count,
                 len(self.price_history),
             )
-
-            # Backfill Nordpool data for all dates in price_history so
-            # the next training cycle has real supply/demand features.
-            # Run in the background: the backfill issues many network calls
-            # and must never block Home Assistant startup.
-            if self.price_history:
-                self.hass.async_create_background_task(
-                    self._backfill_nordpool_data(),
-                    "open_spot_forecast_nordpool_backfill",
-                )
 
             # Catch-up replay: if learned samples are tiny compared to pending
             # predictions (e.g. after schema migration wiped error_metrics), replay

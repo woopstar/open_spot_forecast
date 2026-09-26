@@ -1,121 +1,144 @@
-"""Fetch and cache Nordpool's consumption and production prognoses.
+"""Nordpool's consumption and production prognoses as a time-series source.
 
-Combines the two Nordpool endpoints (``nordpool_data.py``) into the prognosis
-data the forecast uses: attached to the weather data for prediction, and as
-rows for the ``nordpool_prognoses`` table the model trains on.
+``NordpoolPrognosisSource`` keeps the ``nordpool_prognoses`` table current
+through the shared ``TimeSeriesSource`` (#32). An older delivery day is only
+requested while one of its hours is missing a value, so complete history
+costs no request. Today's and tomorrow's days are re-fetched on every update
+(Nordpool revises them during the day; the upsert reports whether anything
+changed). A day Nordpool has not published yet (tomorrow before ~13:00, or
+the per-type production breakdown, which comes later than the total) is
+asked for again after ``revalidate_after``. The same source fills the history
+the model trains on and today's and tomorrow's rows the forecast reads
+(``forecast_prognoses``).
 """
 
-import logging
-from datetime import date, datetime, timedelta
+from __future__ import annotations
 
+from datetime import UTC, date, datetime, timedelta
+from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
+
+from homeassistant.core import HomeAssistant
+
+from ..const import NORDPOOL_MARKET_TZ
+from ..ml.series_storage import NORDPOOL_PROGNOSES
+from ..time_series import TimeRange
+from ..time_slots import local_midnight
 from .nordpool_data import fetch_consumption_prognosis, fetch_production_prognosis
+from .time_series_source import TimeSeriesSource
 
-_LOGGER = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from ..ml.storage import LearningStorage
+
+_MARKET_TZ = ZoneInfo(NORDPOOL_MARKET_TZ)
 
 
-async def fetch_nordpool_prognoses(
-    region: str, weather_data: dict, api_data: dict | None = None
-) -> list[dict]:
-    """Fetch Nordpool consumption and production prognoses (with caching).
+def prognosis_rows(
+    consumption: dict[str, float] | None, production: list[dict] | None
+) -> list[dict[str, Any]]:
+    """Combine a day's two prognoses into ``nordpool_prognoses`` rows.
 
-    Attaches 'consumption_prognosis' and 'production_prognosis' to
-    weather_data if the API calls succeed. Also returns a list of
-    entries suitable for storage in SQLite.
-
-    Freshness is keyed on Nordpool's ``updatedAt`` timestamp rather than the
-    wall-clock date. Day-ahead data is immutable once published, but the
-    production per-type breakdown (Solar/WindOffshore/WindOnshore) is
-    published later than the total, which surfaces as a later ``updatedAt``.
-    We always fetch (calls are infrequent — startup + 6-hourly) and compare
-    ``updatedAt`` so we pick up that late breakdown without guessing from the
-    hour of day.
-
-    Args:
-        region: Price region (e.g. "DK1")
-        weather_data: Dict to attach fetched data to
-        api_data: Optional integration data dict for caching
-
-    Returns:
-        List of dicts with keys: timestamp, consumption, solar,
-        wind_offshore, wind_onshore
+    One row per consumption timestamp, with the production prognosis that
+    starts at the same moment (None until Nordpool publishes the breakdown).
     """
-    today = date.today()
-    tomorrow = today + timedelta(days=1)
-    now = datetime.now()
+    production_by_start = {p["deliveryStart"]: p for p in production or []}
+    rows = []
+    for timestamp, volume in (consumption or {}).items():
+        produced = production_by_start.get(timestamp, {})
+        rows.append(
+            {
+                "timestamp": timestamp,
+                "consumption": volume,
+                "solar": produced.get("solar"),
+                "wind_offshore": produced.get("wind_offshore"),
+                "wind_onshore": produced.get("wind_onshore"),
+            }
+        )
+    return rows
 
-    cache = api_data.get("_nordpool_cache", {}) if api_data is not None else {}
-    consumption_cache = cache.setdefault("consumption", {})
-    production_cache = cache.setdefault("production", {})
 
-    # Always fetch today. Tomorrow's day-ahead total is published ~13:00 CET,
-    # but the per-type breakdown arrives later; fetching before 13:00 only
-    # returns empty data, so skip it then.
-    dates_to_fetch = [today]
-    if now.hour >= 13 or api_data is None:
-        dates_to_fetch.append(tomorrow)
+def forecast_prognoses(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return stored rows in the shape the prediction features read.
 
-    stored_entries: list[dict] = []
-    for target in dates_to_fetch:
-        date_key = target.isoformat()
+    ``consumption_prognosis`` maps a timestamp to MW; ``production_prognosis``
+    lists ``deliveryStart``, ``solar``, ``wind_offshore`` and ``wind_onshore``
+    (see ``FeatureMixin._combine_features``). Keys without data are left out.
+    """
+    prognoses: dict[str, Any] = {}
+    consumption = {
+        row["timestamp"]: row["consumption"]
+        for row in rows
+        if row.get("consumption") is not None
+    }
+    production = [
+        {
+            "deliveryStart": row["timestamp"],
+            "solar": row.get("solar"),
+            "wind_offshore": row.get("wind_offshore"),
+            "wind_onshore": row.get("wind_onshore"),
+        }
+        for row in rows
+        if row.get("solar") is not None
+        or row.get("wind_offshore") is not None
+        or row.get("wind_onshore") is not None
+    ]
+    if consumption:
+        prognoses["consumption_prognosis"] = consumption
+    if production:
+        prognoses["production_prognosis"] = production
+    return prognoses
 
-        consumption, cons_updated = await fetch_consumption_prognosis(target, region)
-        production, prod_updated = await fetch_production_prognosis(target, region)
 
-        # --- Consumption ---
-        if consumption:
-            cached = consumption_cache.get(date_key)
-            if cached and cons_updated == cached.get("updated_at"):
-                # Unchanged since the last fetch — reuse what we already parsed.
-                consumption = cached.get("data") or {}
-            else:
-                consumption_cache[date_key] = {
-                    "updated_at": cons_updated,
-                    "data": consumption,
-                }
+def delivery_day_range(day: date) -> TimeRange:
+    """Return Nordpool's delivery day (CET/CEST midnight to midnight) in UTC."""
+    return (
+        local_midnight(day, _MARKET_TZ).astimezone(UTC),
+        local_midnight(day + timedelta(days=1), _MARKET_TZ).astimezone(UTC),
+    )
 
-            if "consumption_prognosis" not in weather_data:
-                weather_data["consumption_prognosis"] = {}
-            weather_data["consumption_prognosis"].update(consumption)
 
-            # Build storage entries combining consumption + production
-            for ts, cons in consumption.items():
-                stored_entries.append(
-                    {
-                        "timestamp": ts,
-                        "consumption": cons,
-                        "solar": None,
-                        "wind_offshore": None,
-                        "wind_onshore": None,
-                    }
-                )
+class NordpoolPrognosisSource(TimeSeriesSource):
+    """Nordpool's prognoses for one delivery area, fetched per delivery day."""
 
-        # --- Production ---
-        if production:
-            cached = production_cache.get(date_key)
-            if cached and prod_updated == cached.get("updated_at"):
-                production = cached.get("data") or []
-            else:
-                production_cache[date_key] = {
-                    "updated_at": prod_updated,
-                    "data": production,
-                }
+    spec = NORDPOOL_PROGNOSES
+    # Nordpool's API sits behind Cloudflare, which blocks rapid requests
+    request_interval = 1.0
+    # Forecast runs are hours apart; this only stops a burst of runs (setup,
+    # then the tomorrow-price refresh) from asking twice for an unpublished day
+    revalidate_after = timedelta(minutes=15)
 
-            if "production_prognosis" not in weather_data:
-                weather_data["production_prognosis"] = []
-            weather_data["production_prognosis"].extend(production)
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        storage: LearningStorage,
+        region: str,
+        horizon_cutoff: datetime | None = None,
+    ) -> None:
+        """Initialize the source for a delivery area (e.g. "DK1")."""
+        super().__init__(hass, storage, horizon_cutoff)
+        self.region = region
 
-            # Update storage entries with production data
-            prod_by_ts = {p["deliveryStart"]: p for p in production}
-            for entry in stored_entries:
-                ts = entry["timestamp"]
-                if ts in prod_by_ts:
-                    p = prod_by_ts[ts]
-                    entry["solar"] = p.get("solar")
-                    entry["wind_offshore"] = p.get("wind_offshore")
-                    entry["wind_onshore"] = p.get("wind_onshore")
+    def refresh_from(self, now: datetime) -> datetime | None:
+        """Re-fetch from the start of today's delivery day (still revised)."""
+        return delivery_day_range(now.astimezone(_MARKET_TZ).date())[0]
 
-    if api_data is not None:
-        api_data["_nordpool_cache"] = cache
-        _LOGGER.info("Nordpool cache updated for %d dates", len(dates_to_fetch))
+    def chunks(self, ranges: list[TimeRange]) -> list[TimeRange]:
+        """Return one request per delivery day with a missing hour."""
+        days: set[date] = set()
+        for start, end in ranges:
+            day = start.astimezone(_MARKET_TZ).date()
+            while delivery_day_range(day)[0] < end:
+                days.add(day)
+                day += timedelta(days=1)
+        return [delivery_day_range(day) for day in sorted(days)]
 
-    return stored_entries
+    async def _fetch(
+        self, start: datetime, end: datetime
+    ) -> list[dict[str, Any]] | None:
+        """Fetch both prognoses for the delivery day starting at ``start``."""
+        day = start.astimezone(_MARKET_TZ).date()
+        consumption, updated_at = await fetch_consumption_prognosis(day, self.region)
+        if consumption is None and updated_at is None:
+            return None
+        production, _ = await fetch_production_prognosis(day, self.region)
+        return prognosis_rows(consumption, production)
