@@ -1,8 +1,9 @@
 """Stored history for the update cycle: backfill and retention (#32, #27).
 
 Mixed into ``ForecastUpdater``. The history the model trains on is filled in
-the background at setup and after midnight: with the day-ahead price source
-the missing price days of the training window first, then for every stored
+the background at setup and after midnight: the missing price days of the
+training window first (from the day-ahead APIs, whatever the displayed price
+source, #24), then for every stored
 price day the zone weather (Open-Meteo's archived forecasts, #23) and the
 Nordpool prognoses; if anything was added, the forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
@@ -14,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -40,10 +41,12 @@ class HistoryUpdaterMixin:
 
     hass: HomeAssistant
     entry: ConfigEntry
+    api_data: dict[str, Any]
     ml_predictor: SpotPricePredictor | None
     nordpool: NordpoolPrognosisSource | None
     weather: OpenMeteoWeatherSource | None
     dayahead: DayAheadPrices | None
+    history_prices: DayAheadPrices | None
 
     async def refresh_forecast(self) -> None:
         """Re-read the prices and re-run the forecast (``ForecastUpdater``)."""
@@ -60,16 +63,22 @@ class HistoryUpdaterMixin:
         return min(days, default=None)
 
     async def _backfill_prices(self, ml_predictor: SpotPricePredictor) -> int:
-        """Add the training window's missing day-ahead price days; return how many."""
-        if self.dayahead is None:
+        """Add the training window's missing day-ahead price days; return how many.
+
+        Whatever the displayed price source: the day-ahead spot price is the
+        model's price (#24).
+        """
+        if self.history_prices is None:
             return 0
         today = dt_util.now().date()
         first = today - timedelta(days=ml_predictor.max_history_days)
         try:
-            days = await self.dayahead.async_history(first, today)
+            days = await self.history_prices.async_history(first, today)
         except Exception as err:
             _LOGGER.warning("Day-ahead price backfill failed: %s", err)
             return 0
+        if self.history_prices.license_info:
+            self.api_data["price_license"] = self.history_prices.license_info
         known = {entry.get("date") for entry in ml_predictor.price_history}
         added = 0
         for day, prices in sorted(days.items()):
@@ -138,8 +147,8 @@ class HistoryUpdaterMixin:
         cutoff = local_midnight(cutoff_day)
         weather = prices = prognoses = dayahead = zone = 0
         try:
-            if self.dayahead is not None:
-                dayahead = await self.dayahead.async_prune(cutoff)
+            if self.history_prices is not None:
+                dayahead = await self.history_prices.async_prune(cutoff)
             if ml_predictor is not None and self.nordpool is not None:
                 storage = ml_predictor.storage
                 weather = await self.hass.async_add_executor_job(

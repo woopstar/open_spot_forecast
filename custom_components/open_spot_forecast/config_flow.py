@@ -34,6 +34,7 @@ from .const import (
     CONF_STROMLIGNING_SENSOR,
     CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
+    CONF_TRAINING_DAYS,
     CONF_VAT,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
@@ -45,6 +46,7 @@ from .const import (
     DEFAULT_REGION,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
+    DEFAULT_TRAINING_DAYS,
     DEFAULT_VAT,
     DOMAIN,
     PREDICTION_HOURS_OPTIONS,
@@ -52,6 +54,7 @@ from .const import (
     PRICE_SOURCES,
     REGIONS,
     STROMLIGNING_REGIONS,
+    TRAINING_DAYS_OPTIONS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -234,6 +237,10 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS
                     ),
                 ): vol.In(PREDICTION_HOURS_OPTIONS),
+                vol.Optional(
+                    CONF_TRAINING_DAYS,
+                    default=self._data.get(CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS),
+                ): vol.In(TRAINING_DAYS_OPTIONS),
             }
         )
 
@@ -291,6 +298,15 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): vol.In(PREDICTION_HOURS_OPTIONS),
+                vol.Optional(
+                    CONF_TRAINING_DAYS,
+                    default=self.config_entry.options.get(
+                        CONF_TRAINING_DAYS,
+                        self.config_entry.data.get(
+                            CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS
+                        ),
+                    ),
+                ): vol.In(TRAINING_DAYS_OPTIONS),
                 vol.Optional(
                     CONF_STROMLIGNING_SENSOR,
                     default=self.config_entry.options.get(

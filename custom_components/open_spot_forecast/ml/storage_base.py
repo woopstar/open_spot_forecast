@@ -22,6 +22,8 @@ class StorageMixinBase:
     _lock: threading.Lock
     # When training inputs (weather/Nordpool rows) last changed (UTC)
     last_data_write: datetime | None
+    # Each price day as last written or read (spot_prices, #24)
+    _saved_price_days: dict[str, list[float | None]]
 
     # --- Implemented by LearningStorage ---
     def _ensure_conn(self) -> sqlite3.Connection:

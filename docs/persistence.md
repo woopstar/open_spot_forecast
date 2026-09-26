@@ -13,14 +13,15 @@ All learning data is stored in a single SQLite database:
 | `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                                      |
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                                    |
 | `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                              |
-| `price_history`      | `date` (YYYY-MM-DD)         | Daily raw spot prices excl. VAT: one per 15-min slot from local midnight (92/96/100), `null` if missing         |
+| `spot_prices`        | `timestamp` (UTC slot key)  | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                        |
+| `price_history`      | `date` (YYYY-MM-DD)         | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                   |
 | `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
 | `openmeteo_weather`  | `(timestamp, point)`        | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
 
-`price_history` never stores an invalid day (known prices all zero, or not
+The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
 an invalid day never overwrites prices already stored for that date.
 
@@ -75,6 +76,7 @@ Auto-migration runs at startup (no user intervention):
 | v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)      |
 | v5 → v6 | Discard consumer-price learning data: the model learns the raw spot price (#16)    |
 | v6 → v7 | Rewrite `weather_history` timestamps as UTC slot keys (#59)                        |
+| v7 → v8 | Move the price history's JSON days into `spot_prices` rows per UTC slot (#24)      |
 
 The `meta` table tracks `schema_version` so migrations only run once.
 
@@ -122,6 +124,18 @@ when several fall into one slot the earliest is kept, as training does.
 Unreadable timestamps are dropped. The migration logs how many snapshots it
 rewrote, merged and dropped.
 
+## Price History
+
+The ML layer keeps its price history as one entry per local day (one price
+per 15-minute slot from local midnight, `None` if missing). Since #24 it is
+stored as one `spot_prices` row per UTC slot (`ml/price_storage.py`): a
+long history is not rewritten as a JSON blob per day on every save, only
+the days that changed since they were last written or read are, and
+pruning compares UTC instants like every other table. Reading groups the
+rows back into local days (92/96/100 slots). The v8 migration moves the old
+`price_history` JSON days into rows once and empties that table; an
+unreadable day is skipped.
+
 ## Time-Series Sources
 
 Upstream time series are stored through one shared layer (#32), so every
@@ -161,7 +175,8 @@ resumes where it stopped.
 
 ### Retention
 
-History is kept for the training window (`max_history_days`, 30 days) plus
+History is kept for the training window (**Training days**, default 60,
+`max_history_days`, #24) plus
 2 days. Once a day (at midnight) older `weather_history` snapshots,
 `price_history` days, `nordpool_prognoses` rows, `openmeteo_weather` rows,
 `dayahead_prices` rows and remembered holes are deleted. Without the ML model only `dayahead_prices` is

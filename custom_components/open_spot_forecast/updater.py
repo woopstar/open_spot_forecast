@@ -184,10 +184,19 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if self.settings.dayahead and storage is not None
             else None
         )
+        # The training window's price history comes from the day-ahead APIs
+        # whatever the displayed source: their spot price is the same series
+        # as Stromligning's spot sensor, so a new install trains at once (#24)
+        self.history_prices = self.dayahead or (
+            DayAheadPrices(hass, ml_predictor.storage, self.region, self.settings)
+            if ml_predictor
+            else None
+        )
         # The active sources, for the entities' attribution (#41)
         api_data["entsoe_fallback"] = bool(
-            self.dayahead and self.settings.entsoe_api_key
+            self.history_prices and self.settings.entsoe_api_key
         )
+        api_data["history_prices"] = self.history_prices is not None
         api_data["zone_weather"] = self.weather is not None
 
     def _notify(self, signal: str) -> None:

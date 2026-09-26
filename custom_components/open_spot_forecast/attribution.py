@@ -41,22 +41,30 @@ def license_summary(license_info: str | None) -> str | None:
     return license_info
 
 
-def price_attribution(api_data: dict[str, Any]) -> str | None:
-    """Return the credit for the displayed prices, or None (Stromligning)."""
-    if api_data.get("price_source") != PRICE_SOURCE_DAYAHEAD:
-        return None
+def _dayahead_sources(api_data: dict[str, Any]) -> str:
     summary = license_summary(api_data.get("price_license"))
     sources = [f"energy-charts.info ({summary})" if summary else "energy-charts.info"]
     if api_data.get("entsoe_fallback"):
         sources.append("ENTSO-E Transparency Platform")
-    return "Prices: " + " / ".join(sources)
+    return " / ".join(sources)
+
+
+def price_attribution(api_data: dict[str, Any]) -> str | None:
+    """Return the credit for the displayed prices, or None (Stromligning)."""
+    if api_data.get("price_source") != PRICE_SOURCE_DAYAHEAD:
+        return None
+    return "Prices: " + _dayahead_sources(api_data)
 
 
 def model_attribution(api_data: dict[str, Any]) -> str | None:
     """Return the credit for the model's outputs: prices, weather, prognoses."""
     if api_data.get("ml_predictor") is None:
         return None
-    parts = [price_attribution(api_data)]
+    prices = price_attribution(api_data)
+    if prices is None and api_data.get("history_prices"):
+        # Stromligning shows the prices; the training history is day-ahead (#24)
+        prices = "Price history: " + _dayahead_sources(api_data)
+    parts = [prices]
     if api_data.get("zone_weather"):
         parts.append(OPEN_METEO_ATTRIBUTION)
     parts.append(NORD_POOL_ATTRIBUTION)

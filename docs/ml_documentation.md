@@ -184,20 +184,20 @@ prediction:
 
 ## Data Sources
 
-| Source                                              | Type                | Resolution   | Used for                                              |
-| --------------------------------------------------- | ------------------- | ------------ | ----------------------------------------------------- |
-| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min       | Training target, self-learning actuals (excl. VAT)    |
-| `dayahead_prices` (SQLite, `dayahead` source, #27)  | Raw spot price      | 15-min       | The same, instead of Stromligning; backfilled 30 days |
-| `weather.get_forecasts`                             | Weather forecast    | Hourly       | Recorded with predictions (forecast accuracy)         |
-| `weather.forecast_*` (state)                        | Current weather     | Every 15 min | `weather_history` snapshots (forecast accuracy)       |
-| `Nordpool Consumption API`                          | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases             |
-| `Nordpool Production API`                           | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases        |
-| `sensor.solcast_*`                                  | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)         |
-| `sensor.power_inverter_*`                           | Actual solar        | Scalar       | Solar scaling factor only (not a model input)         |
-| `weather_history` (SQLite)                          | Actual weather      | 15-min       | Scores the local forecast (confidence); not training  |
-| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                       |
-| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min       | `openmeteo_weather`: zone features, both phases       |
-| Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min       | `openmeteo_weather` days before yesterday (training)  |
+| Source                                              | Type                | Resolution   | Used for                                               |
+| --------------------------------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
+| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min       | Training target, self-learning actuals (excl. VAT)     |
+| `dayahead_prices` (SQLite, #27, #24)                | Raw spot price      | 15-min       | `dayahead` source; the training window's history (all) |
+| `weather.get_forecasts`                             | Weather forecast    | Hourly       | Recorded with predictions (forecast accuracy)          |
+| `weather.forecast_*` (state)                        | Current weather     | Every 15 min | `weather_history` snapshots (forecast accuracy)        |
+| `Nordpool Consumption API`                          | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |
+| `Nordpool Production API`                           | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases         |
+| `sensor.solcast_*`                                  | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)          |
+| `sensor.power_inverter_*`                           | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
+| `weather_history` (SQLite)                          | Actual weather      | 15-min       | Scores the local forecast (confidence); not training   |
+| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                        |
+| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min       | `openmeteo_weather`: zone features, both phases        |
+| Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min       | `openmeteo_weather` days before yesterday (training)   |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -289,8 +289,9 @@ The bias-correction and error-metric slots stay keyed by local time of day
 
 ## Training and Validation Split
 
-`_train_models` builds one row per 15-minute slot of `price_history` (up to
-30 days), oldest first, and uses the rows twice:
+`_train_models` builds one row per 15-minute slot of `price_history` (the
+training window, see [Training Window](#training-window)), oldest first, and
+uses the rows twice:
 
 1. **Holdout validation.** A copy of the price model with the same
    hyperparameters is fitted on the oldest 80 % of the rows and scored on the
@@ -304,7 +305,7 @@ The bias-correction and error-metric slots stay keyed by local time of day
 2. **Live model.** `price_model` is fitted on 100 % of the rows. The most
    recent days are the most similar to the days being predicted, so they
    must be part of the model: fitting on the oldest 80 % only would ignore
-   the newest ~6 of 30 days. The backtest's `current` row (see
+   the newest ~12 of 60 days. The backtest's `current` row (see
    [Backtesting](#backtesting)) also fits on its whole window.
 
 The split is chronological, never shuffled, so the holdout rows are always
@@ -315,6 +316,47 @@ executor.
 Hyperparameter optimization compares its candidates on the same chronological
 80/20 split, then replaces `price_model` with an unfitted model using the best
 parameters, which the next training fits on all rows.
+
+## Training Window
+
+The model trains on the last `training_days` of prices (option
+**Training days**, 30-180, default **60**, #24): `max_history_days` on the
+predictor. The window also sets what is backfilled and how much history is
+kept (window + 2 days, see [persistence](persistence.md#retention)).
+
+**Backfill.** At setup and after midnight a background task fills the
+window's missing days, whatever the displayed price source: the day-ahead
+spot price from energy-charts (ENTSO-E fallback, #27) is the same series as
+Stromligning's `spotprice_ex_vat` sensor, converted with the day's ECB rate.
+Then the zone weather (Open-Meteo's archive, #23) and the Nordpool
+prognoses of those days are fetched, and the forecast is refreshed, so a new
+install trains its ML model within minutes of setup instead of starting
+from the heuristic. The sources only request what is missing, so an
+interrupted backfill resumes where it stopped and a repeat is a no-op. The
+heuristic stays the fallback while the backfill has not delivered (e.g. no
+network).
+
+**Why 60 days, not 180.** With the zone weather, the window sweep on DK1
+(365 daily origins, 2025-09-24 to 2026-09-23, EUR ct/kWh, NumPy GBM):
+
+| Window | 1d MAE | 1d RMSE | 2d MAE | 2d RMSE | 3d MAE | 3d RMSE |
+| ------ | -----: | ------: | -----: | ------: | -----: | ------: |
+| 30 d   |   2.41 |    3.67 |   2.62 |    3.90 |   2.70 |    4.00 |
+| 60 d   |   2.40 |    3.62 |   2.57 |    3.80 |   2.62 |    3.87 |
+| 90 d   |   2.45 |    3.66 |   2.58 |    3.80 |   2.64 |    3.88 |
+| 120 d  |   2.48 |    3.69 |   2.60 |    3.84 |   2.65 |    3.90 |
+| 180 d  |   2.53 |    3.78 |   2.64 |    3.90 |   2.70 |    3.98 |
+
+60 days is the best window at every horizon; 180 days (EpexPredictor's,
+the issue's proposal) is 0.13 ct/kWh worse at 1d. The model has no
+seasonal feature, so older days mostly add prices from another price
+level. Longer windows stay selectable.
+
+**Footprint** (synthetic full history, DK1's four weather points): the
+database holds about 8 MB at 60 days and 20 MB at 180 days, and a training
+run (live fit plus holdout fit) takes 0.3 s and 0.8 s on one aarch64 core
+here; expect a few seconds on a Raspberry Pi 4. The rows in memory while
+training (17,280 × 17 at 180 days) are a few MB.
 
 ## Target: Raw Spot Price, VAT at Output
 
@@ -458,7 +500,7 @@ multi-day accuracy number. The method reimplements EpexPredictor's
   source #27 will add to the integration. Hourly prices from before
   2025-10-01 fill four quarter-hours. Complete months are cached in
   `.cache/backtest/`. The OSF SQLite DB cannot be used, because it keeps only
-  30 days of `price_history`.
+  the training window's price history.
 
 ### Models
 
@@ -575,7 +617,7 @@ removed `price_mean` was constant within every window.
 | current (NumPy GBM)         |   3.73 |    5.09 |   3.75 |    5.10 |   3.79 |    5.17 |
 | lightgbm (reference)        |   3.74 |    5.10 |   3.75 |    5.10 |   3.79 |    5.17 |
 
-**30-day window** (production keeps `max_history_days = 30`):
+**30-day window** (production's window until #24):
 
 | Model                       | 1d MAE | 1d RMSE | 2d MAE | 2d RMSE | 3d MAE | 3d RMSE |
 | --------------------------- | -----: | ------: | -----: | ------: | -----: | ------: |

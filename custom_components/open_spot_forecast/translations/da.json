@@ -34,7 +34,8 @@
           "temperature_sensor": "Temperatur Sensor",
           "dmi_api_key": "DMI API Nøgle (alternativ vejrdatakilde)",
           "enable_ml_prediction": "Aktiver ML Forudsigelser",
-          "prediction_hours": "Forudsigelsestimer (12 til 72)"
+          "prediction_hours": "Forudsigelsestimer (12 til 72)",
+          "training_days": "Træningsdage (prishistorik, som modellen lærer af)"
         }
       }
     },
@@ -67,7 +68,8 @@
           "solar_forecast_sensor": "Solprognose Sensor",
           "temperature_sensor": "Temperatur Sensor",
           "vat": "Moms",
-          "precision": "Decimal Præcision"
+          "precision": "Decimal Præcision",
+          "training_days": "Træningsdage (prishistorik, som modellen lærer af)"
         }
       }
     }

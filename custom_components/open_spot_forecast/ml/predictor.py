@@ -11,6 +11,7 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from ..const import DEFAULT_TRAINING_DAYS
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
 from .features import FeatureMixin, optional_float
@@ -31,9 +32,20 @@ class SpotPricePredictor(
     """ML-based spot price predictor using weather and historical price data."""
 
     def __init__(
-        self, hass: HomeAssistant, region: str, tz_name: str = "Europe/Copenhagen"
+        self,
+        hass: HomeAssistant,
+        region: str,
+        tz_name: str = "Europe/Copenhagen",
+        training_days: int = DEFAULT_TRAINING_DAYS,
     ):
-        """Initialize the predictor."""
+        """Initialize the predictor.
+
+        Args:
+            hass: Home Assistant instance.
+            region: Price region (bidding zone).
+            tz_name: The region's time zone.
+            training_days: Days of price history the model trains on (#24).
+        """
         self.hass = hass
         self.region = region
         self.tz = dt_util.get_time_zone(tz_name) or UTC
@@ -84,7 +96,8 @@ class SpotPricePredictor(
         self.volatility_mae: dict[int, float] = {}  # Per-slot volatility (EMA of MAE)
         self.learning_rate = 0.1  # Adaptive learning rate
         self.price_history = []  # Store historical prices for multi-day training
-        self.max_history_days = 30  # Keep 30 days of history
+        # Days of price history kept and trained on (the training window)
+        self.max_history_days = training_days
         # Live MAE/RMSE per lead-time bucket (see lead_time.py)
         self.lead_time_accuracy: dict[str, dict[str, float | int]] = {}
 

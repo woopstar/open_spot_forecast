@@ -17,6 +17,8 @@ from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
+    CONF_TRAINING_DAYS,
+    DEFAULT_TRAINING_DAYS,
     DOMAIN,
     PLATFORMS,
     REGIONS,
@@ -74,7 +76,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     ml_predictor = None
     if enable_ml:
         tz_name = str(REGIONS.get(region, {}).get("tz", "Europe/Copenhagen"))
-        ml_predictor = SpotPricePredictor(hass, region, tz_name)
+        training_days = int(
+            entry.options.get(
+                CONF_TRAINING_DAYS,
+                entry.data.get(CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS),
+            )
+        )
+        ml_predictor = SpotPricePredictor(hass, region, tz_name, training_days)
         # Load learning data asynchronously
         await ml_predictor._load_learning_data()
         await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)

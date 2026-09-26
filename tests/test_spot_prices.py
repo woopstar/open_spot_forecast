@@ -1,5 +1,6 @@
 """The raw spot price series the ML model uses, and VAT applied once (issue #16)."""
 
+import json
 import logging
 import sqlite3
 from contextlib import closing
@@ -176,7 +177,6 @@ def test_upgrade_discards_consumer_price_history_and_logs_it(
     storage = LearningStorage(_hass(tmp_path), "DK1")
     storage.save_all(
         {
-            "price_history": [{"date": "2026-09-24", "prices": [2.4] * 96}],
             "prediction_history": [
                 {"start": "2026-09-26T10:00:00+02:00", "price": 2.5, "confidence": 0.8}
             ],
@@ -190,6 +190,11 @@ def test_upgrade_discards_consumer_price_history_and_logs_it(
     db_path = storage.db_path
     storage.close()
     with closing(sqlite3.connect(db_path)) as conn:
+        # A v5 database kept its (consumer) prices as JSON days
+        conn.execute(
+            "INSERT INTO price_history (date, prices) VALUES (?, ?)",
+            ("2026-09-24", json.dumps([2.4] * 96)),
+        )
         conn.execute("UPDATE meta SET value = '5' WHERE key = 'schema_version'")
         conn.commit()
 

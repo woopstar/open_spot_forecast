@@ -287,10 +287,16 @@ def test_price_history_round_trip(storage: LearningStorage) -> None:
         ]
     )
 
+    # Stored per UTC slot (#24): a day comes back with every slot of the day
     assert storage.load_price_history() == [
-        {"date": "2026-09-24", "prices": [0.4]},
-        {"date": "2026-09-25", "prices": [0.5, None, 0.7]},
+        {"date": "2026-09-24", "prices": _day(0.4)},
+        {"date": "2026-09-25", "prices": _day(0.5, None, 0.7)},
     ]
+
+
+def _day(*prices: float | None) -> list[float | None]:
+    """A 96-slot day starting with ``prices``, the rest missing."""
+    return [*prices, *([None] * (96 - len(prices)))]
 
 
 # --- Learned state -------------------------------------------------------------------
@@ -356,7 +362,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
     assert data is not None
     assert data["error_metrics"] == {5: {"errors": [pytest.approx(0.2)], "count": 1}}
     assert data["bias_correction"] == {5: pytest.approx(0.02)}
-    assert data["price_history"] == [{"date": "2026-09-24", "prices": [0.4, None]}]
+    assert data["price_history"] == [{"date": "2026-09-24", "prices": _day(0.4)}]
     assert data["prediction_count"] == 1
     assert data["volatility_mae"] == {5: pytest.approx(0.3)}
     assert data["solar_scale"] == pytest.approx(0.9)

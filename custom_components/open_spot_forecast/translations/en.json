@@ -34,7 +34,8 @@
           "temperature_sensor": "Temperature Sensor",
           "dmi_api_key": "DMI API Key (alternative weather source)",
           "enable_ml_prediction": "Enable ML Predictions",
-          "prediction_hours": "Prediction Hours (12 to 72)"
+          "prediction_hours": "Prediction Hours (12 to 72)",
+          "training_days": "Training days (price history the model learns from)"
         }
       }
     },
@@ -67,7 +68,8 @@
           "solar_forecast_sensor": "Solar Forecast Sensor",
           "temperature_sensor": "Temperature Sensor",
           "vat": "VAT Rate",
-          "precision": "Decimal Precision"
+          "precision": "Decimal Precision",
+          "training_days": "Training days (price history the model learns from)"
         }
       }
     }

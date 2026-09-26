@@ -65,7 +65,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 │  │   │  • predictions      │  pending forecast → actual       │  │
 │  │   │  • error_metrics    │  per-slot (0-95) tracking       │  │
 │  │   │  • bias_correction  │  per-slot additive offsets      │  │
-│  │   │  • price_history    │  daily prices for training      │  │
+│  │   │  • spot_prices      │  price history per UTC slot     │  │
 │  │   │  • weather_history  │  15-min weather snapshots       │  │
 │  │   │  • meta             │  schema version, training state │  │
 │  │   └─────────────────────┘                                   │  │

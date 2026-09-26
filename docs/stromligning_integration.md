@@ -163,9 +163,11 @@ results:
   the ECB data API once a day, `api/exchange_rates.py`). If the ECB cannot
   be reached, DKK uses its ERM II central rate (7.46038); SEK and NOK have
   no prices until the ECB answers.
-- With the ML model, the training window's missing days are backfilled at
-  setup and after midnight and added to the price history, so the model
-  trains on 30 days of prices from the first day.
+- With the ML model, the training window's missing days (default 60, #24)
+  are backfilled at setup and after midnight and added to the price history,
+  so the model trains on its full window from the first day. This also
+  happens with the Stromligning source: energy-charts' day-ahead spot price
+  is the same series as Stromligning's `spotprice_ex_vat` sensor.
 
 Without the ML model the day-ahead prices are stored in the same learning
 database, which is then opened for them alone.
