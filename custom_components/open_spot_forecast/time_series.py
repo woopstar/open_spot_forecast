@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
-from .time_slots import ceil_to_slot, floor_to_slot, parse_utc
+from .time_slots import ceil_to_slot, floor_to_slot, local_midnight, parse_utc
 
 TimeRange = tuple[datetime, datetime]
 
@@ -106,6 +106,42 @@ def intersect_ranges(
         for w_start, w_end in merge_ranges(within)
         if max(start, w_start) < min(end, w_end)
     )
+
+
+def day_chunks(
+    ranges: Iterable[TimeRange], tz: tzinfo, max_days: int
+) -> list[TimeRange]:
+    """Return requests of whole days in ``tz`` that cover ``ranges``.
+
+    Every day touched by a range is requested; consecutive days are grouped
+    into runs of at most ``max_days``. A day is midnight to midnight in
+    ``tz`` (23 or 25 hours on a DST change), returned in UTC.
+    """
+    days: set[date] = set()
+    for start, end in ranges:
+        day = start.astimezone(tz).date()
+        while local_midnight(day, tz) < end:
+            days.add(day)
+            day += timedelta(days=1)
+    requests: list[TimeRange] = []
+    run: list[date] = []
+
+    def close() -> None:
+        requests.append(
+            (
+                local_midnight(run[0], tz).astimezone(UTC),
+                local_midnight(run[-1] + timedelta(days=1), tz).astimezone(UTC),
+            )
+        )
+
+    for day in sorted(days):
+        if run and (day - run[-1] > timedelta(days=1) or len(run) == max_days):
+            close()
+            run = []
+        run.append(day)
+    if run:
+        close()
+    return requests
 
 
 def split_range(time_range: TimeRange, max_span: timedelta) -> list[TimeRange]:

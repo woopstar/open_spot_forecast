@@ -41,6 +41,8 @@ CPH = ZoneInfo("Europe/Copenhagen")
 SPOT_TODAY = [0.5] * 96
 KNOWN_END = datetime(2026, 9, 24, 22, 0, tzinfo=UTC)
 NOW = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
+ZONE_ROW = {"timestamp": "2026-09-24T08:00:00+00:00", "point": "57.40,10.24"}
+YESTERDAY_ZONE_ROW = {"timestamp": "2026-09-22T21:45:00+00:00", "point": "x"}
 NP_ROW = {
     "timestamp": "2026-09-24T10:00:00Z",
     "consumption": 4000.0,
@@ -92,6 +94,7 @@ class Harness:
     nordpool: Mock
     nordpool_class: Mock
     dayahead: Mock
+    weather: Mock
     read_forecast: AsyncMock
     dispatch: Mock
 
@@ -103,6 +106,10 @@ def make() -> Iterator[Callable[..., Harness]]:
     nordpool.async_update = AsyncMock(return_value=True)
     nordpool.async_load = AsyncMock(return_value=[NP_ROW])
     nordpool.async_prune = AsyncMock(return_value=3)
+    weather = Mock()
+    weather.async_update = AsyncMock(return_value=True)
+    weather.async_load = AsyncMock(return_value=[YESTERDAY_ZONE_ROW, ZONE_ROW])
+    weather.async_prune = AsyncMock(return_value=7)
     dayahead = Mock()
     dayahead.async_read = AsyncMock(return_value=_dayahead_spot())
     dayahead.async_history = AsyncMock(return_value={})
@@ -112,6 +119,7 @@ def make() -> Iterator[Callable[..., Harness]]:
     with (
         patch(f"{MODULE}.NordpoolPrognosisSource", return_value=nordpool) as source,
         patch(f"{MODULE}.DayAheadPrices", return_value=dayahead),
+        patch(f"{MODULE}.OpenMeteoWeatherSource", return_value=weather),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -175,6 +183,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 nordpool,
                 source,
                 dayahead,
+                weather,
                 read_forecast,
                 dispatch,
             )
@@ -880,3 +889,58 @@ async def test_dayahead_prices_are_pruned_with_and_without_ml(
     without_ml.dayahead.async_prune.assert_awaited_with(
         datetime(2026, 9, 22, tzinfo=CPH)
     )
+
+
+# --- Open-Meteo zone weather (#22) ---------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_run_forecast_refreshes_the_zone_weather(
+    make: Callable[..., Harness],
+) -> None:
+    """Yesterday to the forecast's end is refreshed; today on is attached."""
+    harness = make()
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.run_forecast()
+
+    harness.weather.async_update.assert_awaited_once_with(
+        datetime(2026, 9, 23, tzinfo=CPH), datetime(2026, 10, 2, tzinfo=CPH)
+    )
+    assert harness.api_data["weather_data"]["zone_weather"] == [ZONE_ROW]
+
+
+@pytest.mark.asyncio
+async def test_zone_weather_failures_keep_the_forecast_going(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make()
+    harness.weather.async_update.side_effect = RuntimeError("offline")
+    harness.weather.async_load.side_effect = RuntimeError("locked")
+
+    await harness.updater.run_forecast()
+
+    assert "zone_weather" not in harness.api_data["weather_data"]
+    assert "Could not update the Open-Meteo weather: offline" in caplog.text
+    assert "Could not read the stored Open-Meteo weather: locked" in caplog.text
+    harness.predictor.predict.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_zone_weather_is_pruned_with_the_history(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.prune_history()
+
+    harness.weather.async_prune.assert_awaited_once_with(
+        datetime(2026, 8, 23, tzinfo=CPH)
+    )
+
+
+def test_zone_weather_needs_the_model(make: Callable[..., Harness]) -> None:
+    assert make(ml=False).updater.weather is None

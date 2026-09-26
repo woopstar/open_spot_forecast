@@ -25,7 +25,7 @@ import logging
 # The stdlib parser: its expat guards against entity expansion, and ENTSO-E is
 # an official HTTPS source (defusedxml is not a dependency)
 import xml.etree.ElementTree as ET  # nosec B405
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
@@ -34,8 +34,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ..const import ENERGY_CHARTS_API, ENTSOE_API, REGIONS
 from ..ml.series_storage import DAYAHEAD_PRICES
-from ..time_series import TimeRange, missing_ranges
-from ..time_slots import local_midnight
+from ..time_series import TimeRange, day_chunks, missing_ranges
 from .http import async_get
 from .time_series_source import TimeSeriesSource
 
@@ -210,30 +209,7 @@ class DayAheadPriceSource(TimeSeriesSource):
 
     def chunks(self, ranges: list[TimeRange]) -> list[TimeRange]:
         """Return requests of whole local days, at most ``_MAX_REQUEST_DAYS`` each."""
-        days: set[date] = set()
-        for start, end in ranges:
-            day = start.astimezone(self.tz).date()
-            while local_midnight(day, self.tz) < end:
-                days.add(day)
-                day += timedelta(days=1)
-        requests: list[TimeRange] = []
-        run: list[date] = []
-        for day in sorted(days):
-            if run and (
-                day - run[-1] > timedelta(days=1) or len(run) == _MAX_REQUEST_DAYS
-            ):
-                requests.append(self._day_range(run[0], run[-1]))
-                run = []
-            run.append(day)
-        if run:
-            requests.append(self._day_range(run[0], run[-1]))
-        return requests
-
-    def _day_range(self, first: date, last: date) -> TimeRange:
-        return (
-            local_midnight(first, self.tz).astimezone(UTC),
-            local_midnight(last + timedelta(days=1), self.tz).astimezone(UTC),
-        )
+        return day_chunks(ranges, self.tz, _MAX_REQUEST_DAYS)
 
     async def _fetch(
         self, start: datetime, end: datetime

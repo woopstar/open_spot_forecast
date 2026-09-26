@@ -60,6 +60,15 @@ DAYAHEAD_PRICES = SeriesSpec(
     step_minutes=15,
 )
 
+# Open-Meteo weather per sampling point ("lat,lon") and 15-min slot (#22)
+OPENMETEO_WEATHER = SeriesSpec(
+    name="openmeteo",
+    table="openmeteo_weather",
+    columns=("wind_80m", "temperature", "irradiance", "pressure", "humidity"),
+    step_minutes=15,
+    key_column="point",
+)
+
 
 def _utc_key(moment: datetime) -> str:
     """Return a datetime as the stored ``…Z`` key."""

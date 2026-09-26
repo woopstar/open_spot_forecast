@@ -23,6 +23,7 @@ from .time_slots import local_midnight
 
 if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
+    from .api.openmeteo_weather import OpenMeteoWeatherSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
 
@@ -39,6 +40,7 @@ class HistoryUpdaterMixin:
     entry: ConfigEntry
     ml_predictor: SpotPricePredictor | None
     nordpool: NordpoolPrognosisSource | None
+    weather: OpenMeteoWeatherSource | None
     dayahead: DayAheadPrices | None
 
     async def refresh_forecast(self) -> None:
@@ -121,7 +123,7 @@ class HistoryUpdaterMixin:
             keep_days += ml_predictor.max_history_days
         cutoff_day = dt_util.now().date() - timedelta(days=keep_days)
         cutoff = local_midnight(cutoff_day)
-        weather = prices = prognoses = dayahead = 0
+        weather = prices = prognoses = dayahead = zone = 0
         try:
             if self.dayahead is not None:
                 dayahead = await self.dayahead.async_prune(cutoff)
@@ -134,15 +136,18 @@ class HistoryUpdaterMixin:
                     storage.delete_old_prices, cutoff_day.isoformat()
                 )
                 prognoses = await self.nordpool.async_prune(cutoff)
+            if self.weather is not None:
+                zone = await self.weather.async_prune(cutoff)
         except Exception as err:
             _LOGGER.warning("Could not prune the stored history: %s", err)
             return
         _LOGGER.debug(
             "Pruned history before %s: %d weather snapshots, %d price days, "
-            "%d prognosis rows, %d day-ahead prices",
+            "%d prognosis rows, %d day-ahead prices, %d zone weather rows",
             cutoff_day,
             weather,
             prices,
             prognoses,
             dayahead,
+            zone,
         )

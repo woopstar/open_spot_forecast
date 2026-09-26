@@ -616,3 +616,72 @@ def test_main_rejects_invalid_arguments(argv):
     """Nonsensical ranges fail before any data is fetched."""
     with pytest.raises(SystemExit):
         backtest.main(argv)
+
+
+# --- Zone weather (#22) --------------------------------------------------------------
+
+
+def _open_meteo(url: str) -> list[dict]:
+    """An Open-Meteo archive answer: every point, every 15 minutes, wind = day."""
+    query = dict(part.split("=", 1) for part in url.split("?", 1)[1].split("&"))
+    first = date.fromisoformat(query["start_date"])
+    last = date.fromisoformat(query["end_date"])
+    points = len(query["latitude"].split("%2C"))
+    times, winds = [], []
+    day = first
+    while day <= last:
+        for quarter in range(96):
+            moment = datetime(day.year, day.month, day.day) + quarter * timedelta(
+                minutes=15
+            )
+            times.append(moment.strftime("%Y-%m-%dT%H:%M"))
+            winds.append(float(day.day))
+        day += timedelta(days=1)
+    series = {"time": times, "wind_speed_80m": winds}
+    return [{"minutely_15": series} for _ in range(points)]
+
+
+def test_open_meteo_weather_is_fetched_in_90_day_chunks_and_cached(
+    tmp_path: Path,
+) -> None:
+    requested: list[str] = []
+
+    def fetch(url: str) -> list[dict]:
+        requested.append(url)
+        return _open_meteo(url)
+
+    def load(last: date) -> backtest.ZoneWeatherIndex:
+        return backtest.load_open_meteo_weather(
+            "DK1", date(2026, 1, 1), last, tmp_path, fetch, today=date(2026, 6, 15)
+        )
+
+    zone = load(date(2026, 6, 14))
+    load(date(2026, 6, 14))
+
+    assert backtest.OPEN_METEO_ARCHIVE_URL in requested[0]
+    assert "start_date=2026-01-01" in requested[0]
+    assert "end_date=2026-03-31" in requested[0]
+    # The first chunk is complete and cached; the recent one is fetched again
+    assert len(requested) == 3
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "openmeteo_DK1_2026-01-01_2026-03-31.json"
+    ]
+    slot = datetime(2026, 2, 7, 12, tzinfo=ZoneInfo("UTC"))
+    assert zone.for_slot(slot)["zone_wind"] == pytest.approx(7.0)
+
+
+def test_feature_rows_carry_the_zone_weather() -> None:
+    tz = ZoneInfo("Europe/Copenhagen")
+    start = datetime(2026, 2, 7, 12, tzinfo=tz)
+    rows = [
+        {"timestamp": start.astimezone(ZoneInfo("UTC")).isoformat(), "point": "p"}
+        | {"wind_80m": 9.0, "temperature": 3.0}
+    ]
+    starts = np.array([int(start.timestamp())])
+
+    with_zone = backtest.feature_matrix(starts, tz, backtest.ZoneWeatherIndex(rows))
+    without = backtest.feature_matrix(starts, tz)
+
+    column = list(backtest.FEATURE_NAMES).index("zone_wind")
+    assert with_zone[0, column] == pytest.approx(9.0)
+    assert math.isnan(without[0, column])

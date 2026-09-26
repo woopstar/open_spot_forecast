@@ -98,7 +98,7 @@ Rules:
 
 1. **Read the docs first** — applies to the model, feature vector, self-learning, bias
    correction, confidence scoring, and storage schema.
-2. **Verify consistency** — every change must satisfy the documented invariants (17-feature
+2. **Verify consistency** — every change must satisfy the documented invariants (23-feature
    vector, 96-slot granularity, bias-correction EMA, solar-scaling factor, confidence floor).
 3. **Update the docs** when a change intentionally alters ML semantics. Docs and
    implementation must never diverge silently.
@@ -108,7 +108,7 @@ Rules:
 Quick checklist before opening an ML PR:
 
 - [ ] `docs/ml_documentation.md` read and understood
-- [ ] Feature vector stays at 17 canonical features
+- [ ] Feature vector stays at 23 canonical features
 - [ ] Slot granularity is 96 (15-min), never hourly (0-23)
 - [ ] Bias correction is an additive offset: `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset`
 - [ ] Predictions are never clamped at 0 (prices can be negative)

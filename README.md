@@ -21,8 +21,10 @@ and continuously improves accuracy via per-slot bias correction.
 
 - **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
   predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day)
-- **17-feature model** — time, wind, solar, temperature, and market-demand
-  features, implemented in pure NumPy (no scikit-learn dependency)
+- **23-feature model** — time, local weather, zone weather from Open-Meteo
+  (wind at 80 m, temperature, irradiance, pressure, humidity across the
+  bidding zone), and market-demand features, implemented in pure NumPy (no
+  scikit-learn dependency)
 - **Real consumer prices** — Stromligning integration provides prices with
   tariffs, fees, and VAT (what you actually pay) for display
 - **Spot price forecast** — the model learns the raw day-ahead spot price
@@ -57,6 +59,8 @@ and continuously improves accuracy via per-slot bias correction.
   [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) as
   fallback (API key) and ECB exchange rates for DKK/SEK/NOK
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
+- **Open-Meteo** — 15-minute weather at several points across the bidding
+  zone, 8 days ahead (no key; weather data by Open-Meteo.com, CC BY 4.0)
 - **Solcast** — solar generation forecast
 - **Nordpool prognoses** — market demand and generation forecasts
 
@@ -130,7 +134,7 @@ To use this package, you need the following integrations:
 Full documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ml_documentation.md)** — Model, 17-feature vector, confidence
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 23-feature vector, confidence
 - **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
 - **[Stromligning Integration](docs/stromligning_integration.md)** — Price sources (Stromligning, day-ahead)

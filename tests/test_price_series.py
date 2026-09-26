@@ -185,6 +185,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
         patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
+        patch(f"{module}.updater.OpenMeteoWeatherSource", autospec=True),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
         patch(f"{module}.tomorrow_prices.async_track_point_in_utc_time"),
         patch(f"{module}.updater.async_dispatcher_send"),

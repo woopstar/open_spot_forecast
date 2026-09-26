@@ -125,12 +125,14 @@ to its slot with `slot_index_in_day()` — never `date + n * 15 min` or
 with `dt_util.now()`, never naive `datetime.now()`.
 They work on the UTC timeline, so they stay correct across DST changes.
 
-### Feature Vector — 20 Features
+### Feature Vector — 23 Features
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Model
 input rows are built by `build_feature_vector()` (column order `FEATURE_NAMES`)
 and time features by `slot_time_features()`, both in `ml/features.py`; the
-production model comes from `create_price_model()` in `ml/models.py`. Never
+production model comes from `create_price_model()` in `ml/models.py`. The
+zone weather features (#22) are aggregated from stored Open-Meteo rows by
+`ZoneWeatherIndex` (`ml/zone_weather.py`) in training and prediction alike. Never
 inline a feature list. Adding/removing a feature is a model change — see the
 `osf-ml-change` skill.
 

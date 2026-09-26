@@ -64,10 +64,10 @@ def built_rows(monkeypatch: pytest.MonkeyPatch) -> list[list[float]]:
     return rows
 
 
-def test_feature_vector_has_17_unique_features():
-    """The model input is the 17 canonical features."""
-    assert len(FEATURE_NAMES) == 17
-    assert len(set(FEATURE_NAMES)) == 17
+def test_feature_vector_has_23_unique_features():
+    """The model input is the 23 canonical features (6 zone weather, #22)."""
+    assert len(FEATURE_NAMES) == 23
+    assert len(set(FEATURE_NAMES)) == 23
     assert "price_mean" not in FEATURE_NAMES
 
 
