@@ -27,6 +27,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .api import NordpoolPrognosisSource, forecast_prognoses
+from .api.entsoe_load import EntsoeLoadSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.time_series_source import TimeSeriesSource
 from .const import (
@@ -41,6 +42,7 @@ from .const import (
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
+    ENTSOE_LOAD_REGIONS,
     PRICE_SOURCE_DAYAHEAD,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
@@ -179,6 +181,13 @@ class ForecastUpdater(HistoryUpdaterMixin):
             else None
         )
         self.settings = settings or PriceSettings.from_entry(entry)
+        # ENTSO-E's week-ahead load forecast (#30): with a key, where it helps
+        key = self.settings.entsoe_api_key
+        self.load = (
+            EntsoeLoadSource(hass, ml_predictor.storage, self.region, key)
+            if ml_predictor and key and self.region in ENTSOE_LOAD_REGIONS
+            else None
+        )
         self.dayahead = (
             DayAheadPrices(hass, storage, self.region, self.settings)
             if self.settings.dayahead and storage is not None
@@ -198,6 +207,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         )
         api_data["history_prices"] = self.history_prices is not None
         api_data["zone_weather"] = self.weather is not None
+        api_data["entsoe_load"] = self.load is not None
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -341,7 +351,12 @@ class ForecastUpdater(HistoryUpdaterMixin):
         weather_data = await self._read_weather()
         self.api_data["weather_data"] = weather_data
         await self._update_prognoses(weather_data)
-        await self._update_zone_weather(weather_data)
+        await self._update_ahead(
+            self.weather, weather_data, "zone_weather", "Open-Meteo weather"
+        )
+        await self._update_ahead(
+            self.load, weather_data, "load_forecast", "ENTSO-E load forecast"
+        )
 
         ml_predictor = self.ml_predictor
         if ml_predictor and weather_data:
@@ -404,28 +419,33 @@ class ForecastUpdater(HistoryUpdaterMixin):
         if rows is not None:
             weather_data.update(forecast_prognoses(rows))
 
-    async def _update_zone_weather(self, weather_data: dict[str, Any]) -> None:
-        """Refresh the zone weather from yesterday to the forecast's end.
+    async def _update_ahead(
+        self,
+        source: TimeSeriesSource | None,
+        weather_data: dict[str, Any],
+        key: str,
+        label: str,
+    ) -> None:
+        """Refresh a revised forecast from yesterday to the forecast's end.
 
-        Open-Meteo revises its forecasts, so yesterday and every day ahead
-        are re-fetched; the stored rows from today on are attached for the
-        prediction (``zone_weather``).
+        Open-Meteo (``zone_weather``, #22) and ENTSO-E (``load_forecast``,
+        #30) revise their forecasts, so yesterday and every day ahead are
+        re-fetched; the stored rows from today on are attached for the
+        prediction as ``weather_data[key]``.
         """
-        if self.weather is None:
+        if source is None:
             return
         today = dt_util.now().date()
         start = local_midnight(today)
         end = local_midnight(today + timedelta(days=FORECAST_DAYS + 1))
-        rows = await self._refresh(
-            self.weather, start - timedelta(days=1), end, "Open-Meteo weather"
-        )
+        rows = await self._refresh(source, start - timedelta(days=1), end, label)
         ahead = [
             row
             for row in rows or []
             if datetime.fromisoformat(row["timestamp"]) >= start
         ]
         if ahead:
-            weather_data["zone_weather"] = ahead
+            weather_data[key] = ahead
 
     async def async_initial_fetch(self) -> None:
         """Read the prices and weather and run the first forecast at setup."""

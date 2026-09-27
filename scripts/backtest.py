@@ -29,12 +29,13 @@ import importlib.util
 import json
 import logging
 import math
+import os
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, tzinfo
 from pathlib import Path
@@ -46,12 +47,18 @@ import numpy as np
 from custom_components.open_spot_forecast.api.dayahead_prices import (
     parse_energy_charts as parse_dayahead_rows,
 )
+from custom_components.open_spot_forecast.api.entsoe import entsoe_period
+from custom_components.open_spot_forecast.api.entsoe_load import (
+    load_curve,
+    parse_entsoe_load,
+)
 from custom_components.open_spot_forecast.api.openmeteo_weather import (
     open_meteo_query,
     parse_open_meteo,
 )
 from custom_components.open_spot_forecast.const import (
     ENERGY_CHARTS_API,
+    ENTSOE_API,
     OPEN_METEO_ARCHIVE_API,
     REGIONS,
     WEATHER_POINTS,
@@ -261,6 +268,78 @@ def load_energy_charts_prices(
     return merge_series(parts)
 
 
+def _http_get_text(url: str) -> str:
+    """Fetch a text document; an HTTP 400 answer is returned too.
+
+    ENTSO-E answers "no matching data" with 400 and an acknowledgement
+    document. The URL (with the ENTSO-E token) is never printed.
+    """
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "open-spot-forecast-backtest"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return str(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as err:
+        if err.code != 400:
+            raise
+        return str(err.read().decode("utf-8"))
+
+
+def load_entsoe_load(
+    region: str,
+    first: date,
+    last: date,
+    cache_dir: Path,
+    api_key: str,
+    fetch: Callable[[str], str] = _http_get_text,
+    today: date | None = None,
+) -> dict[int, float]:
+    """Load ENTSO-E's week-ahead load forecast for the local days ``first``..``last``.
+
+    One request per calendar month (A65/A31), turned into the integration's
+    15-minute curve (``load_curve``) and keyed by slot start (UTC epoch).
+    Complete past months are cached in ``cache_dir`` as the daily (min, max)
+    values; the token is never cached or printed.
+    """
+    zone = REGIONS[region]
+    tz = ZoneInfo(str(zone["tz"]))
+    today = today or date.today()
+    days: dict[date, tuple[float, float]] = {}
+    for month_start, month_end in _month_chunks(first, last):
+        cache_file = cache_dir / f"entsoe_load_{region}_{month_start:%Y-%m}.json"
+        if cache_file.exists():
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            month = {date.fromisoformat(k): (v[0], v[1]) for k, v in cached.items()}
+        else:
+            query = urllib.parse.urlencode(
+                {
+                    "documentType": "A65",
+                    "processType": "A31",
+                    "outBiddingZone_Domain": str(zone["entsoe"]),
+                    **entsoe_period(
+                        datetime.combine(month_start, datetime.min.time(), tz),
+                        datetime.combine(
+                            month_end + timedelta(days=1), datetime.min.time(), tz
+                        ),
+                    ),
+                    "securityToken": api_key,
+                }
+            )
+            month = parse_entsoe_load(fetch(f"{ENTSOE_API}?{query}"), tz)
+            if month_end < today:
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(
+                    json.dumps({k.isoformat(): list(v) for k, v in month.items()}),
+                    encoding="utf-8",
+                )
+        days.update(month)
+    return {
+        int(datetime.fromisoformat(row["timestamp"]).timestamp()): row["load"]
+        for row in load_curve(days, tz)
+    }
+
+
 def load_open_meteo_weather(
     region: str,
     first: date,
@@ -306,19 +385,24 @@ def feature_matrix(
     tz: tzinfo,
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
+    load: Mapping[int, float] | None = None,
 ) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
     Rows come from ``build_feature_row``, as in training and prediction. The
     zone weather (#22) comes from Open-Meteo's archived forecasts, for
-    training and target slots alike, and the sun features (#25) from the
-    ``region``'s zone centre. The local weather entity and Nordpool inputs have no
-    year of history, so they are unknown (NaN).
+    training and target slots alike, the sun features (#25) from the
+    ``region``'s zone centre and ``load`` is ENTSO-E's week-ahead load
+    forecast by slot start (#30). The local weather entity and Nordpool
+    inputs have no year of history, so they are unknown (NaN).
     """
     rows = []
     for start in starts.tolist():
         moment = datetime.fromtimestamp(start, tz)
-        inputs = SlotInputs(**zone.for_slot(moment)) if zone else SlotInputs()
+        inputs = SlotInputs(
+            **(zone.for_slot(moment) if zone else {}),
+            load_forecast=load.get(start) if load else None,
+        )
         rows.append(build_feature_vector(build_feature_row(moment, inputs, region)))
     return np.array(rows, dtype=float).reshape(len(rows), len(FEATURE_NAMES))
 
@@ -329,11 +413,12 @@ def _feature_rows(
     tz: tzinfo,
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
+    load: Mapping[int, float] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (training rows, target rows) for the slot times and zone weather."""
+    """Return (training rows, target rows) for the slot times and inputs."""
     return (
-        feature_matrix(history.starts, tz, zone, region),
-        feature_matrix(targets, tz, zone, region),
+        feature_matrix(history.starts, tz, zone, region, load),
+        feature_matrix(targets, tz, zone, region, load),
     )
 
 
@@ -377,11 +462,12 @@ class CurrentModel:
     name: str = "current (NumPy GBM)"
     zone: ZoneWeatherIndex | None = None
     region: str | None = None
+    load: Mapping[int, float] | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region
+            history, targets, self.tz, self.zone, self.region, self.load
         )
         model = self.model_factory()
         model.fit(train_rows, history.prices)
@@ -400,13 +486,14 @@ class LightGbmReference:
     name: str = "lightgbm (reference)"
     zone: ZoneWeatherIndex | None = None
     region: str | None = None
+    load: Mapping[int, float] | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
         import lightgbm  # optional dev-only dependency (requirements_backtest.txt)
 
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region
+            history, targets, self.tz, self.zone, self.region, self.load
         )
         dataset = lightgbm.Dataset(
             train_rows, label=history.prices, feature_name=list(FEATURE_NAMES)
@@ -427,6 +514,7 @@ def build_models(
     tz: tzinfo,
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
+    load: Mapping[int, float] | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}."""
     models: list[Forecaster] = []
@@ -435,10 +523,12 @@ def build_models(
         if name == "naive":
             models.append(NaiveLastWeek(tz))
         elif name == "current":
-            models.append(CurrentModel(tz, zone=zone, region=region))
+            models.append(CurrentModel(tz, zone=zone, region=region, load=load))
         elif name == "lightgbm":
             if _lightgbm_available():
-                models.append(LightGbmReference(tz, zone=zone, region=region))
+                models.append(
+                    LightGbmReference(tz, zone=zone, region=region, load=load)
+                )
             else:
                 skipped[LightGbmReference.name] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
@@ -705,6 +795,18 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="zone weather inputs: Open-Meteo's archived forecasts, or none",
     )
     parser.add_argument(
+        "--horizon-days",
+        type=int,
+        default=3,
+        help="forecast days scored per origin (1d, 2d, ...); 7 covers days 3-7",
+    )
+    parser.add_argument(
+        "--load",
+        choices=("none", "entsoe"),
+        default="none",
+        help="ENTSO-E's week-ahead load forecast (#30); needs ENTSOE_API_KEY",
+    )
+    parser.add_argument(
         "--days",
         choices=("all", "holidays"),
         default="all",
@@ -713,8 +815,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
-    if args.window_days < 7 or args.step_days < 1:
-        parser.error("--window-days must be >= 7 and --step-days >= 1")
+    if args.window_days < 7 or args.step_days < 1 or args.horizon_days < 1:
+        parser.error("--window-days must be >= 7, --step-days and --horizon-days >= 1")
+    if args.load == "entsoe" and not os.environ.get("ENTSOE_API_KEY"):
+        parser.error("--load entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
     return args
 
 
@@ -732,8 +836,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         first_origin=first,
         last_origin=last,
         window_days=args.window_days,
+        horizon_days=args.horizon_days,
         step_days=args.step_days,
-        score_days=holiday_days(args.region, first, last + timedelta(days=2))
+        score_days=holiday_days(
+            args.region, first, last + timedelta(days=args.horizon_days - 1)
+        )
         if args.days == "holidays"
         else None,
     )
@@ -749,7 +856,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_last + timedelta(days=1),
             args.cache_dir,
         )
-    models, skipped = build_models(names, tz, zone, args.region)
+    load = None
+    if args.load == "entsoe":
+        print(f"Loading {args.region} load forecast from ENTSO-E ...", file=sys.stderr)
+        load = load_entsoe_load(
+            args.region,
+            data_first - timedelta(days=1),
+            data_last + timedelta(days=1),
+            args.cache_dir,
+            os.environ["ENTSOE_API_KEY"],
+        )
+    models, skipped = build_models(names, tz, zone, args.region, load)
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(

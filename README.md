@@ -21,8 +21,9 @@ and continuously improves accuracy via per-slot bias correction.
 
 - **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
   predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day)
-- **22-feature model** — 15-minute time of day, public holidays, sun
-  position over the bidding zone, zone weather from Open-Meteo (wind at 80 m,
+- **23-feature model** — 15-minute time of day, public holidays, sun
+  position over the bidding zone, ENTSO-E's week-ahead load forecast (with
+  an API key), zone weather from Open-Meteo (wind at 80 m,
   temperature, irradiance, pressure, humidity across the bidding zone;
   trained on archived forecasts, like the forecasts it predicts from) and
   market-demand features, implemented in pure NumPy (no scikit-learn
@@ -64,6 +65,8 @@ and continuously improves accuracy via per-slot bias correction.
   for every region without an extra integration, with the
   [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/) as
   fallback (API key) and ECB exchange rates for DKK/SEK/NOK
+- **ENTSO-E load forecast** (optional, API key) — the week-ahead load
+  forecast of the bidding zone, the model's demand input for days 3-7
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
 - **Open-Meteo** — 15-minute weather at several points across the bidding
   zone, 8 days ahead (no key; weather data by Open-Meteo.com, CC BY 4.0)
@@ -78,7 +81,9 @@ and continuously improves accuracy via per-slot bias correction.
 2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
 3. **Choose a price source** — Stromligning's sensors (DK1/DK2, consumer
    prices with tariffs) or the day-ahead price (all regions, spot price +
-   VAT; optionally an ENTSO-E API key as fallback).
+   VAT; optionally an ENTSO-E API key as fallback, which also adds ENTSO-E's
+   week-ahead load forecast to the model; it can be added later in the
+   options).
 4. **Add weather sensors** (optional) to score the local weather forecast in
    the confidence; the model's weather comes from Open-Meteo.
 5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.
@@ -141,7 +146,7 @@ To use this package, you need the following integrations:
 Full documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ml_documentation.md)** — Model, 22-feature vector, confidence
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 23-feature vector, confidence
 - **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
 - **[Stromligning Integration](docs/stromligning_integration.md)** — Price sources (Stromligning, day-ahead)
@@ -151,15 +156,15 @@ Full documentation is available in the [`docs/`](docs/) directory:
 
 ## Data Sources and Attribution
 
-| Source                                                                       | Used for                                                       | Licence / terms                                                                                                                                                                                                                            |
-| ---------------------------------------------------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Stromligning](https://github.com/MTrab/stromligning)                        | Consumer and spot prices (DK1/DK2, `stromligning` source)      | The Stromligning integration's terms                                                                                                                                                                                                       |
-| [energy-charts.info](https://energy-charts.info/) (Fraunhofer ISE)           | Day-ahead prices (`dayahead` source), the backtest's prices    | Per zone, as the API reports it: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), Bundesnetzagentur \| SMARD.de (e.g. DK1, DK2, NO2, NL, FR, DE-LU); EPEX SPOT data for private and internal use only (e.g. SE3, FI, EE, LT, LV) |
-| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)             | Day-ahead price fallback (with an API key)                     | [ENTSO-E terms and conditions](https://transparency.entsoe.eu/content/static_content/Static%20content/terms%20and%20conditions/terms%20and%20conditions.html)                                                                              |
-| [European Central Bank](https://data.ecb.europa.eu/)                         | EUR reference exchange rates (day-ahead prices in DKK/SEK/NOK) | ECB data, reusable with the source acknowledged                                                                                                                                                                                            |
-| [Open-Meteo.com](https://open-meteo.com/)                                    | Zone weather forecasts; archived forecasts for the backtest    | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)                                                                                                                                                                                  |
-| [Nord Pool](https://data.nordpoolgroup.com/)                                 | Consumption and production prognoses                           | Nord Pool's data portal terms                                                                                                                                                                                                              |
-| Met.no (HA weather), [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Local weather, solar forecast                                  | Their integrations' terms                                                                                                                                                                                                                  |
+| Source                                                                       | Used for                                                        | Licence / terms                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Stromligning](https://github.com/MTrab/stromligning)                        | Consumer and spot prices (DK1/DK2, `stromligning` source)       | The Stromligning integration's terms                                                                                                                                                                                                       |
+| [energy-charts.info](https://energy-charts.info/) (Fraunhofer ISE)           | Day-ahead prices (`dayahead` source), the backtest's prices     | Per zone, as the API reports it: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), Bundesnetzagentur \| SMARD.de (e.g. DK1, DK2, NO2, NL, FR, DE-LU); EPEX SPOT data for private and internal use only (e.g. SE3, FI, EE, LT, LV) |
+| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)             | Day-ahead price fallback and week-ahead load forecast (API key) | [ENTSO-E terms and conditions](https://transparency.entsoe.eu/content/static_content/Static%20content/terms%20and%20conditions/terms%20and%20conditions.html)                                                                              |
+| [European Central Bank](https://data.ecb.europa.eu/)                         | EUR reference exchange rates (day-ahead prices in DKK/SEK/NOK)  | ECB data, reusable with the source acknowledged                                                                                                                                                                                            |
+| [Open-Meteo.com](https://open-meteo.com/)                                    | Zone weather forecasts; archived forecasts for the backtest     | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)                                                                                                                                                                                  |
+| [Nord Pool](https://data.nordpoolgroup.com/)                                 | Consumption and production prognoses                            | Nord Pool's data portal terms                                                                                                                                                                                                              |
+| Met.no (HA weather), [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Local weather, solar forecast                                   | Their integrations' terms                                                                                                                                                                                                                  |
 
 Every entity credits the sources its value comes from in Home Assistant's
 **attribution** (the entity's more-info dialog): the price sensors the price
@@ -167,12 +172,14 @@ sources (energy-charts.info with the zone's licence, and ENTSO-E when its
 fallback is configured), and the forecast, confidence, learning and accuracy
 sensors everything the model learns from, e.g. _Prices: energy-charts.info
 (CC BY 4.0, Bundesnetzagentur | SMARD.de) · Weather: Open-Meteo.com (CC BY
-4.0) · Prognoses: Nord Pool_. Stromligning's prices are credited by the
+4.0) · Prognoses: Nord Pool_, plus _Load forecast: ENTSO-E Transparency
+Platform_ with an ENTSO-E key. Stromligning's prices are credited by the
 Stromligning integration.
 
 **Credit: [EpexPredictor](https://github.com/b3nn0/EpexPredictor)** (BSD-3-Clause)
 inspired much of OSF's data and model design: gap-aware incremental data
 stores, day-ahead prices from energy-charts.info with ENTSO-E as fallback,
+ENTSO-E's week-ahead load forecast as a daily min/max curve,
 weather from Open-Meteo at several points per bidding zone, training on
 archived forecasts, and the rolling backtest with a LightGBM reference. OSF
 (MIT) reimplements these ideas; no EpexPredictor code is copied, so no BSD-3

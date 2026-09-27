@@ -21,10 +21,6 @@ from __future__ import annotations
 
 import json
 import logging
-
-# The stdlib parser: its expat guards against entity expansion, and ENTSO-E is
-# an official HTTPS source (defusedxml is not a dependency)
-import xml.etree.ElementTree as ET  # nosec B405
 from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
@@ -32,9 +28,17 @@ from zoneinfo import ZoneInfo
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ..const import ENERGY_CHARTS_API, ENTSOE_API, REGIONS
+from ..const import ENERGY_CHARTS_API, REGIONS
 from ..ml.series_storage import DAYAHEAD_PRICES
 from ..time_series import TimeRange, day_chunks, missing_ranges
+from .entsoe import (
+    async_entsoe_get,
+    child_text,
+    children,
+    entsoe_period,
+    period_bounds,
+    time_series,
+)
 from .http import async_get
 from .time_series_source import TimeSeriesSource
 
@@ -92,33 +96,6 @@ def parse_energy_charts(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return rows
 
 
-def _local_name(element: ET.Element) -> str:
-    return element.tag.rsplit("}", 1)[-1]
-
-
-def _child(element: ET.Element, name: str) -> ET.Element | None:
-    return next((c for c in element if _local_name(c) == name), None)
-
-
-def _child_text(element: ET.Element, *path: str) -> str | None:
-    node: ET.Element | None = element
-    for name in path:
-        node = _child(node, name) if node is not None else None
-    return node.text if node is not None else None
-
-
-def _resolution(value: str | None) -> timedelta | None:
-    """Return an ISO 8601 duration such as ``PT15M`` or ``PT60M``."""
-    if not value or not value.startswith("PT"):
-        return None
-    number, unit = value[2:-1], value[-1]
-    if not number.isdigit() or unit not in "HM":
-        return None
-    return (
-        timedelta(hours=int(number)) if unit == "H" else timedelta(minutes=int(number))
-    )
-
-
 def parse_entsoe(text: str) -> list[dict[str, Any]]:
     """Return ``dayahead_prices`` rows from an ENTSO-E A44 document.
 
@@ -129,25 +106,21 @@ def parse_entsoe(text: str) -> list[dict[str, Any]]:
     Raises:
         ValueError: If the text is not XML.
     """
-    try:
-        root = ET.fromstring(text)  # nosec B314
-    except ET.ParseError as err:
-        raise ValueError("ENTSO-E response is not XML") from err
     rows: list[dict[str, Any]] = []
-    for series in (e for e in root.iter() if _local_name(e) == "TimeSeries"):
-        fill_forward = _child_text(series, "curveType") == "A03"
-        for period in (e for e in series if _local_name(e) == "Period"):
-            start_text = _child_text(period, "timeInterval", "start")
-            end_text = _child_text(period, "timeInterval", "end")
-            step = _resolution(_child_text(period, "resolution"))
-            if not start_text or not end_text or step is None:
+    for series in time_series(text):
+        fill_forward = child_text(series, "curveType") == "A03"
+        for period in children(series, "Period"):
+            bounds = period_bounds(period)
+            if bounds is None:
                 continue
-            start = datetime.fromisoformat(start_text)
-            end = datetime.fromisoformat(end_text)
+            start, end, step = bounds
+            # A price lasts at most an hour; a daily resolution is not a price
+            if end is None or step > _HOUR:
+                continue
             points: dict[int, float] = {}
-            for point in (e for e in period if _local_name(e) == "Point"):
-                index = _child_text(point, "position")
-                amount = _child_text(point, "price.amount")
+            for point in children(period, "Point"):
+                index = child_text(point, "position")
+                amount = child_text(point, "price.amount")
                 if index and amount:
                     points[int(index)] = float(amount)
             price: float | None = None
@@ -262,26 +235,16 @@ class DayAheadPriceSource(TimeSeriesSource):
     async def _fetch_entsoe(
         self, start: datetime, end: datetime
     ) -> list[dict[str, Any]] | None:
-        response = await async_get(
-            async_get_clientsession(self.hass),
-            ENTSOE_API,
-            "ENTSO-E",
-            params={
-                "documentType": "A44",
-                "in_Domain": self.eic,
-                "out_Domain": self.eic,
-                "periodStart": start.astimezone(UTC).strftime("%Y%m%d%H%M"),
-                "periodEnd": end.astimezone(UTC).strftime("%Y%m%d%H%M"),
-                "securityToken": self._entsoe_api_key or "",
-            },
+        text = await async_entsoe_get(
+            self.hass,
+            self._entsoe_api_key or "",
+            {"documentType": "A44", "in_Domain": self.eic, "out_Domain": self.eic}
+            | entsoe_period(start, end),
         )
-        # "No matching data" is an acknowledgement with status 200 or 400
-        if response is None or response.status not in (200, 400):
-            if response is not None:
-                _LOGGER.warning("ENTSO-E returned %d", response.status)
+        if text is None:
             return None
         try:
-            return parse_entsoe(response.text)
+            return parse_entsoe(text)
         except ValueError as err:
             _LOGGER.warning("Unusable ENTSO-E response: %s", err)
             return None

@@ -43,6 +43,8 @@ KNOWN_END = datetime(2026, 9, 24, 22, 0, tzinfo=UTC)
 NOW = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
 ZONE_ROW = {"timestamp": "2026-09-24T08:00:00+00:00", "point": "57.40,10.24"}
 YESTERDAY_ZONE_ROW = {"timestamp": "2026-09-22T21:45:00+00:00", "point": "x"}
+LOAD_ROW = {"timestamp": "2026-09-24T08:00:00Z", "load": 3200.0}
+YESTERDAY_LOAD_ROW = {"timestamp": "2026-09-22T21:45:00Z", "load": 2900.0}
 NP_ROW = {
     "timestamp": "2026-09-24T10:00:00Z",
     "consumption": 4000.0,
@@ -97,6 +99,7 @@ class Harness:
     weather: Mock
     read_forecast: AsyncMock
     dispatch: Mock
+    load: Mock
 
 
 @pytest.fixture
@@ -110,6 +113,10 @@ def make() -> Iterator[Callable[..., Harness]]:
     weather.async_update = AsyncMock(return_value=True)
     weather.async_load = AsyncMock(return_value=[YESTERDAY_ZONE_ROW, ZONE_ROW])
     weather.async_prune = AsyncMock(return_value=7)
+    load = Mock()
+    load.async_update = AsyncMock(return_value=True)
+    load.async_load = AsyncMock(return_value=[YESTERDAY_LOAD_ROW, LOAD_ROW])
+    load.async_prune = AsyncMock(return_value=9)
     dayahead = Mock()
     dayahead.async_read = AsyncMock(return_value=_dayahead_spot())
     dayahead.async_history = AsyncMock(return_value={})
@@ -120,6 +127,7 @@ def make() -> Iterator[Callable[..., Harness]]:
         patch(f"{MODULE}.NordpoolPrognosisSource", return_value=nordpool) as source,
         patch(f"{MODULE}.DayAheadPrices", return_value=dayahead),
         patch(f"{MODULE}.OpenMeteoWeatherSource", return_value=weather),
+        patch(f"{MODULE}.EntsoeLoadSource", return_value=load),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -129,6 +137,8 @@ def make() -> Iterator[Callable[..., Harness]]:
             sensors: SensorEntities | None = None,
             ml: bool = True,
             price_source: str = "stromligning",
+            entsoe_key: str | None = None,
+            region: str = "DK1",
         ) -> Harness:
             sensors = sensors or _sensors()
 
@@ -155,7 +165,7 @@ def make() -> Iterator[Callable[..., Harness]]:
             predictor.storage.delete_old_weather.return_value = 1
             predictor.storage.delete_old_prices.return_value = 2
             api_data: dict[str, Any] = {
-                "region": "DK1",
+                "region": region,
                 "prices_today": [],
                 "prices_tomorrow": [],
                 "ml_predictions": [],
@@ -171,7 +181,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 sensors,
                 reader,
                 predictor if ml else None,
-                PriceSettings(price_source, "DKK", 0.25),
+                PriceSettings(price_source, "DKK", 0.25, entsoe_key),
                 predictor.storage if ml else Mock(),
             )
             return Harness(
@@ -186,6 +196,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 weather,
                 read_forecast,
                 dispatch,
+                load,
             )
 
         yield build
@@ -992,6 +1003,77 @@ async def test_zone_weather_is_pruned_with_the_history(
 
 def test_zone_weather_needs_the_model(make: Callable[..., Harness]) -> None:
     assert make(ml=False).updater.weather is None
+
+
+# --- ENTSO-E load forecast (#30) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("key", "region", "ml", "used"),
+    [
+        ("token", "DK1", True, True),
+        (None, "DK1", True, False),
+        ("token", "DK1", False, False),
+        ("token", "DE", True, False),
+    ],
+)
+def test_the_load_forecast_needs_a_key_the_model_and_a_region_it_helps(
+    make: Callable[..., Harness], key: str | None, region: str, ml: bool, used: bool
+) -> None:
+    harness = make(entsoe_key=key, region=region, ml=ml)
+
+    assert (harness.updater.load is harness.load) is used
+    assert (harness.updater.load is None) is not used
+    assert harness.api_data["entsoe_load"] is used
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_run_forecast_refreshes_the_load_forecast(
+    make: Callable[..., Harness],
+) -> None:
+    """Like the zone weather: yesterday to the forecast's end, today on attached."""
+    harness = make(entsoe_key="token")
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.run_forecast()
+
+    harness.load.async_update.assert_awaited_once_with(
+        datetime(2026, 9, 23, tzinfo=CPH), datetime(2026, 10, 2, tzinfo=CPH)
+    )
+    assert harness.api_data["weather_data"]["load_forecast"] == [LOAD_ROW]
+    harness.predictor.predict.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_without_a_key_there_is_no_load_forecast(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+
+    await harness.updater.run_forecast()
+
+    harness.load.async_update.assert_not_awaited()
+    assert "load_forecast" not in harness.api_data["weather_data"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_the_load_forecast_is_backfilled_and_pruned_with_the_history(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(entsoe_key="token")
+    harness.predictor.price_history = [{"date": "2026-09-01", "prices": [1.0] * 96}]
+    harness.updater.refresh_forecast = AsyncMock()  # type: ignore[method-assign]
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.backfill_history()
+        await harness.updater.prune_history()
+
+    harness.load.async_update.assert_awaited_once_with(
+        datetime(2026, 9, 1, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH)
+    )
+    harness.load.async_prune.assert_awaited_once_with(datetime(2026, 8, 23, tzinfo=CPH))
 
 
 # --- Attribution (#41) ---------------------------------------------------------------

@@ -307,6 +307,16 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): vol.In(TRAINING_DAYS_OPTIONS),
+                # Added after setup too: enables ENTSO-E's load forecast (#30)
+                vol.Optional(
+                    CONF_ENTSOE_API_KEY,
+                    description={
+                        "suggested_value": self.config_entry.options.get(
+                            CONF_ENTSOE_API_KEY,
+                            self.config_entry.data.get(CONF_ENTSOE_API_KEY),
+                        )
+                    },
+                ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 vol.Optional(
                     CONF_STROMLIGNING_SENSOR,
                     default=self.config_entry.options.get(

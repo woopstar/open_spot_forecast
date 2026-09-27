@@ -11,11 +11,11 @@
           "precision": "Decimal Præcision",
           "price_type": "Prisenhed (kWh, MWh eller Wh)",
           "price_source": "Priskilde",
-          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri reserve)"
+          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)"
         },
         "data_description": {
           "price_source": "Stromlignings sensorer (kun DK1 og DK2, forbrugerpriser med tariffer) eller day-ahead-auktionsprisen fra energy-charts.info (alle områder, spotpris med moms).",
-          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Bruges, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig."
+          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig."
         }
       },
       "sensors": {
@@ -69,7 +69,11 @@
           "temperature_sensor": "Temperatur Sensor",
           "vat": "Moms",
           "precision": "Decimal Præcision",
-          "training_days": "Træningsdage (prishistorik, som modellen lærer af)"
+          "training_days": "Træningsdage (prishistorik, som modellen lærer af)",
+          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)"
+        },
+        "data_description": {
+          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig."
         }
       }
     }

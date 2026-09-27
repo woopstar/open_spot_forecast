@@ -17,6 +17,7 @@ All learning data is stored in a single SQLite database:
 | `price_history`      | `date` (YYYY-MM-DD)         | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                   |
 | `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
 | `openmeteo_weather`  | `(timestamp, point)`        | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
+| `entsoe_load`        | `timestamp` (UTC slot key)  | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
@@ -31,8 +32,9 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
-`lead_time_accuracy` is created with `CREATE TABLE IF NOT EXISTS` on every
-startup, so existing databases gain it without a versioned migration. Rows
+`lead_time_accuracy` and `entsoe_load` are created with `CREATE TABLE IF NOT
+EXISTS` on every startup, so existing databases gain them without a
+versioned migration. Rows
 older than the 30-day rolling window are pruned whenever the metrics are
 refreshed. The table is dropped and recreated by `clear_all()`.
 
@@ -146,7 +148,10 @@ source fetches only what it is missing:
   and value columns. `nordpool_prognoses` is `NORDPOOL_PROGNOSES` (hourly),
   `dayahead_prices` is `DAYAHEAD_PRICES` (15-minute, #27) and
   `openmeteo_weather` is `OPENMETEO_WEATHER` (15-minute, keyed by point,
-  #22: a slot counts as stored when every point of the region has it).
+  #22: a slot counts as stored when every point of the region has it) and
+  `entsoe_load` is `ENTSOE_LOAD` (15-minute, #30: the curve built from each
+  day's forecast minimum and maximum, requested in whole local days with a
+  day on each side for the curve's edges).
 - A grid point counts as stored when its row has a value in every column
   (and, for a keyed table, every expected key has such a row). Nordpool rows
   without the per-type production breakdown are therefore incomplete until
@@ -179,7 +184,7 @@ History is kept for the training window (**Training days**, default 60,
 `max_history_days`, #24) plus
 2 days. Once a day (at midnight) older `weather_history` snapshots,
 `price_history` days, `nordpool_prognoses` rows, `openmeteo_weather` rows,
-`dayahead_prices` rows and remembered holes are deleted. Without the ML model only `dayahead_prices` is
+`entsoe_load` rows, `dayahead_prices` rows and remembered holes are deleted. Without the ML model only `dayahead_prices` is
 stored, and only the margin is kept. Before #32 only `weather_history` was pruned, to a fixed 30 days,
 whenever the snapshot count was a multiple of 100.
 

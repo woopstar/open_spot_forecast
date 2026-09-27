@@ -11,11 +11,11 @@
           "precision": "Decimal Precision",
           "price_type": "Price Unit (kWh, MWh, or Wh)",
           "price_source": "Price source",
-          "entsoe_api_key": "ENTSO-E API key (optional fallback)"
+          "entsoe_api_key": "ENTSO-E API key (optional)"
         },
         "data_description": {
           "price_source": "Stromligning's sensors (DK1 and DK2 only, consumer prices with tariffs) or the day-ahead auction price from energy-charts.info (all regions, spot price with VAT).",
-          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Used when energy-charts.info has no prices. Stored in the config entry and never logged."
+          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged."
         }
       },
       "sensors": {
@@ -69,7 +69,11 @@
           "temperature_sensor": "Temperature Sensor",
           "vat": "VAT Rate",
           "precision": "Decimal Precision",
-          "training_days": "Training days (price history the model learns from)"
+          "training_days": "Training days (price history the model learns from)",
+          "entsoe_api_key": "ENTSO-E API key (optional)"
+        },
+        "data_description": {
+          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged."
         }
       }
     }

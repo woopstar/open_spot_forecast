@@ -70,6 +70,15 @@ OPENMETEO_WEATHER = SeriesSpec(
 )
 
 
+# ENTSO-E's week-ahead load forecast as a 15-min curve, MW (#30)
+ENTSOE_LOAD = SeriesSpec(
+    name="entsoe_load",
+    table="entsoe_load",
+    columns=("load",),
+    step_minutes=15,
+)
+
+
 def _utc_key(moment: datetime) -> str:
     """Return a datetime as the stored ``…Z`` key."""
     return moment.astimezone(UTC).strftime(UTC_KEY_FORMAT)

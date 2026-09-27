@@ -717,3 +717,98 @@ def test_feature_rows_carry_the_zone_weather() -> None:
     column = list(backtest.FEATURE_NAMES).index("zone_wind")
     assert with_zone[0, column] == pytest.approx(9.0)
     assert math.isnan(without[0, column])
+
+
+# --- ENTSO-E load forecast (#30) -----------------------------------------------------
+
+LOAD_DOCUMENT = """<?xml version="1.0" encoding="utf-8"?>
+<GL_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-6:generationloaddocument:3:0">
+  <TimeSeries><businessType>A60</businessType><Period>
+    <timeInterval><start>{start}</start><end>{end}</end></timeInterval>
+    <resolution>P1D</resolution>{lows}</Period></TimeSeries>
+  <TimeSeries><businessType>A61</businessType><Period>
+    <timeInterval><start>{start}</start><end>{end}</end></timeInterval>
+    <resolution>P1D</resolution>{highs}</Period></TimeSeries>
+</GL_MarketDocument>"""
+
+
+def _load_document(url: str) -> str:
+    """One month of daily minima 2000 and maxima 4000 for the requested period."""
+    query = dict(pair.split("=", 1) for pair in url.split("?", 1)[1].split("&"))
+    start = datetime.strptime(query["periodStart"], "%Y%m%d%H%M")
+    end = datetime.strptime(query["periodEnd"], "%Y%m%d%H%M")
+    days = round((end - start) / timedelta(days=1))
+
+    def points(value: float) -> str:
+        return "".join(
+            f"<Point><position>{i + 1}</position><quantity>{value}</quantity></Point>"
+            for i in range(days)
+        )
+
+    return LOAD_DOCUMENT.format(
+        start=start.strftime("%Y-%m-%dT%H:%MZ"),
+        end=end.strftime("%Y-%m-%dT%H:%MZ"),
+        lows=points(2000.0),
+        highs=points(4000.0),
+    )
+
+
+def test_entsoe_load_is_fetched_per_month_and_cached(tmp_path: Path) -> None:
+    urls: list[str] = []
+
+    def fetch(url: str) -> str:
+        urls.append(url)
+        return _load_document(url)
+
+    load = backtest.load_entsoe_load(
+        "DK1",
+        date(2026, 1, 30),
+        date(2026, 2, 2),
+        tmp_path,
+        "tok",
+        fetch,
+        date(2026, 9, 1),
+    )
+    again = backtest.load_entsoe_load(
+        "DK1",
+        date(2026, 1, 30),
+        date(2026, 2, 2),
+        tmp_path,
+        "tok",
+        fetch,
+        date(2026, 9, 1),
+    )
+
+    assert len(urls) == 2  # January and February, then from the cache
+    assert "documentType=A65" in urls[0] and "processType=A31" in urls[0]
+    assert "outBiddingZone_Domain=10YDK-1--------W" in urls[0]
+    assert "periodStart=202512312300" in urls[0]
+    assert again == load
+    assert "tok" not in "".join(p.read_text() for p in tmp_path.iterdir())
+    three_am = int(datetime(2026, 2, 1, 3, tzinfo=TZ).timestamp())
+    seven_pm = int(datetime(2026, 2, 1, 19, tzinfo=TZ).timestamp())
+    assert load[three_am] == pytest.approx(2000.0)
+    assert load[seven_pm] == pytest.approx(4000.0)
+
+
+def test_feature_rows_carry_the_load_forecast() -> None:
+    start = datetime(2026, 2, 7, 12, tzinfo=TZ)
+    starts = np.array([int(start.timestamp())])
+
+    with_load = backtest.feature_matrix(
+        starts, TZ, load={int(start.timestamp()): 3.5e3}
+    )
+    without = backtest.feature_matrix(starts, TZ)
+
+    column = list(backtest.FEATURE_NAMES).index("load_forecast")
+    assert with_load[0, column] == pytest.approx(3500.0)
+    assert math.isnan(without[0, column])
+
+
+def test_the_load_forecast_needs_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ENTSOE_API_KEY", raising=False)
+    with pytest.raises(SystemExit):
+        backtest.parse_args(["--load", "entsoe"])
+    monkeypatch.setenv("ENTSOE_API_KEY", "tok")
+    args = backtest.parse_args(["--load", "entsoe", "--horizon-days", "7"])
+    assert (args.load, args.horizon_days) == ("entsoe", 7)

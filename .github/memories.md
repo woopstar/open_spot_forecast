@@ -64,6 +64,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day       |
 | `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                           |
 | `dayahead_prices.py`    | `DayAheadPriceSource` — energy-charts (+ ENTSO-E fallback) day-ahead prices as `dayahead_prices` rows (#27)             |
+| `entsoe.py`             | ENTSO-E request (`async_entsoe_get`) and XML helpers, shared by the price fallback and the load forecast                |
+| `entsoe_load.py`        | `EntsoeLoadSource` — ENTSO-E week-ahead load (A65/A31, daily min/max) as a 15-min curve in `entsoe_load` (#30)          |
 | `openmeteo_weather.py`  | `OpenMeteoWeatherSource` — Open-Meteo 15-min weather at the region's `WEATHER_POINTS` as `openmeteo_weather` rows (#22) |
 | `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                                     |
 | `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params            |
@@ -172,7 +174,7 @@ not to `storage.py`.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (22 features)
+## Feature Vector (23 features)
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
 and prediction alike, comes from `build_feature_row(slot_start, SlotInputs, region)` in
@@ -205,12 +207,13 @@ Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 | 13  | `wind_onshore`         | Nordpool API |
 | 14  | `net_demand`           | Derived      |
 | 15  | `wind_share`           | Derived      |
-| 16  | `zone_wind`            | Open-Meteo   |
-| 17  | `zone_wind_power`      | Open-Meteo   |
-| 18  | `zone_temperature`     | Open-Meteo   |
-| 19  | `zone_irradiance`      | Open-Meteo   |
-| 20  | `zone_pressure`        | Open-Meteo   |
-| 21  | `zone_humidity`        | Open-Meteo   |
+| 16  | `load_forecast`        | ENTSO-E      |
+| 17  | `zone_wind`            | Open-Meteo   |
+| 18  | `zone_wind_power`      | Open-Meteo   |
+| 19  | `zone_temperature`     | Open-Meteo   |
+| 20  | `zone_irradiance`      | Open-Meteo   |
+| 21  | `zone_pressure`        | Open-Meteo   |
+| 22  | `zone_humidity`        | Open-Meteo   |
 
 Time features follow the local wall clock per 15-min slot (`slot_time_features()`); sun
 features come from `sun_features()` in `ml/sun.py` (astral, at the region's `zone_centre()`,
@@ -219,6 +222,9 @@ positions inline or from `sun.sun` (current state only, home location). `holiday
 `public_holiday(local_date, region)` in `ml/public_holidays.py` (`holidays` package, country per
 region in `REGIONS[...]["holidays"]`, subdivision share per `HOLIDAY_SUBDIVISIONS`; Sunday = 1),
 cached per country and year; never build a `holidays` calendar in the event loop.
+`load_forecast` (#30) is ENTSO-E's week-ahead load curve (`load_curve()`, `entsoe_load` table),
+only with an ENTSO-E key and in `ENTSOE_LOAD_REGIONS`; it is its own feature, never merged into
+Nordpool's `consumption_forecast`. The ENTSO-E key is optional in the config and options flow.
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.
