@@ -43,6 +43,7 @@ KNOWN_END = datetime(2026, 9, 24, 22, 0, tzinfo=UTC)
 NOW = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
 ZONE_ROW = {"timestamp": "2026-09-24T08:00:00+00:00", "point": "57.40,10.24"}
 YESTERDAY_ZONE_ROW = {"timestamp": "2026-09-22T21:45:00+00:00", "point": "x"}
+GAS_ROW = {"timestamp": "2026-09-23T00:00:00Z", "price": 310.0}
 LOAD_ROW = {"timestamp": "2026-09-24T08:00:00Z", "load": 3200.0}
 YESTERDAY_LOAD_ROW = {"timestamp": "2026-09-22T21:45:00Z", "load": 2900.0}
 NP_ROW = {
@@ -117,6 +118,10 @@ def make() -> Iterator[Callable[..., Harness]]:
     load.async_update = AsyncMock(return_value=True)
     load.async_load = AsyncMock(return_value=[YESTERDAY_LOAD_ROW, LOAD_ROW])
     load.async_prune = AsyncMock(return_value=9)
+    gas = Mock()
+    gas.async_update = AsyncMock(return_value=False)
+    gas.async_load = AsyncMock(return_value=[GAS_ROW])
+    gas.async_prune = AsyncMock(return_value=0)
     dayahead = Mock()
     dayahead.async_read = AsyncMock(return_value=_dayahead_spot())
     dayahead.async_history = AsyncMock(return_value={})
@@ -128,6 +133,7 @@ def make() -> Iterator[Callable[..., Harness]]:
         patch(f"{MODULE}.DayAheadPrices", return_value=dayahead),
         patch(f"{MODULE}.OpenMeteoWeatherSource", return_value=weather),
         patch(f"{MODULE}.EntsoeLoadSource", return_value=load),
+        patch(f"{MODULE}.GasPriceSource", return_value=gas),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -380,6 +386,8 @@ async def test_run_forecast_without_weather_or_prognoses_does_not_predict(
 ) -> None:
     harness = make(_sensors(temperature=None))
     harness.nordpool.async_load.return_value = []
+    assert harness.updater.gas is not None
+    harness.updater.gas.async_load.return_value = []  # type: ignore[attr-defined]
 
     await harness.updater.run_forecast()
 

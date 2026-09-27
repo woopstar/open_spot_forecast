@@ -241,6 +241,11 @@ NEIGHBOURS: dict[str, tuple[str, ...]] = {
 # Germany and the Netherlands, so it stays off there
 ENTSOE_LOAD_REGIONS = frozenset(REGIONS) - {"DE", "NL"}
 
+# Regions whose model uses the natural-gas price (#28): gas plants often set
+# the marginal price. On where the backtest found a lower error at every
+# horizon; off in SE3 and the Baltics, where it did not (docs/ml_documentation.md)
+GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
+
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions
 # are surfaced as entity attributes: up to 72 hours in the detailed format, up
@@ -322,6 +327,10 @@ ENERGY_CHARTS_API = "https://api.energy-charts.info/price"
 ENTSOE_API = "https://web-api.tp.entsoe.eu/api"
 # ECB euro reference rates, to convert EUR/MWh into the configured currency
 ECB_RATES_API = "https://data-api.ecb.europa.eu/service/data/EXR"
+# Day-ahead natural-gas price (#28): Instrat's daily TGE gas day-ahead index
+# (PLN/MWh, energy.instrat.pl, CC BY-NC 4.0), a machine-readable proxy for the
+# European gas price level; it scores like THE Day Ahead in the backtest
+INSTRAT_GAS_API = "https://energy-api.instrat.pl/api/prices/gas_price_rdn_daily"
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"

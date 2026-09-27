@@ -64,6 +64,8 @@ class LearningStorage(
                         (series_storage.py; energy-charts / ENTSO-E source)
       openmeteo_weather — Open-Meteo weather per sampling point and UTC
                         15-min slot (series_storage.py; Open-Meteo source)
+      gas_prices      — the daily natural-gas price per UTC day (#28;
+                        series_storage.py)
       neighbour_prices — neighbouring zones' raw day-ahead prices, EUR/MWh
                         per zone and UTC 15-min slot (#29; series_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
@@ -289,6 +291,11 @@ class LearningStorage(
             CREATE TABLE IF NOT EXISTS entsoe_load (
                 timestamp       TEXT    PRIMARY KEY,
                 load            REAL
+            );
+
+            CREATE TABLE IF NOT EXISTS gas_prices (
+                timestamp       TEXT    PRIMARY KEY,
+                price           REAL
             );
 
             CREATE TABLE IF NOT EXISTS neighbour_prices (

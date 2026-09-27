@@ -2,7 +2,7 @@
 
 ## Model
 
-A single **Gradient Boosting** regressor predicts the spot price from 23
+A single **Gradient Boosting** regressor predicts the spot price from 24
 features. It is a histogram-based GBM in the style of LightGBM, implemented
 in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
 scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
@@ -109,7 +109,7 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (23 features)
+## Feature Vector (24 features)
 
 | #   | Feature                | Source             | Description                                      |
 | --- | ---------------------- | ------------------ | ------------------------------------------------ |
@@ -130,17 +130,18 @@ until the next optimization.
 | 14  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)    |
 | 15  | `wind_share`           | Derived            | (offshore + onshore) / consumption               |
 | 16  | `load_forecast`        | ENTSO-E (API key)  | Week-ahead load forecast curve for the slot (MW) |
-| 17  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)   |
-| 18  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1   |
-| 19  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                     |
-| 20  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)         |
-| 21  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                    |
-| 22  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)                |
+| 17  | `gas_price`            | Instrat (#28)      | Gas price known before the slot's day (PLN/MWh)  |
+| 18  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)   |
+| 19  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1   |
+| 20  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                     |
+| 21  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)         |
+| 22  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                    |
+| 23  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)                |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`. With the cross-border
 model (#29, option) the price model's input has one more column per
-neighbour after these 23: `cross_price_<zone>`, stage 1's price for the
-slot (see [Cross-Border Model](#cross-border-model-29)). The 23 stay the
+neighbour after these 24: `cross_price_<zone>`, stage 1's price for the
+slot (see [Cross-Border Model](#cross-border-model-29)). The 24 stay the
 canonical vector; stage 1 uses them too.
 
 **Time of day and the sun** (#25). Since October 2025 the day-ahead market
@@ -207,6 +208,24 @@ EpexPredictor's backtests found it hurts; `ENTSOE_LOAD_REGIONS` in
 `const.py`), it is NaN in every row. A week-ahead forecast published once
 a week may not reach day 7; those slots are NaN too.
 
+**Gas price** (#28). Gas-fired plants often set the marginal price, so
+the gas price level moves the electricity price. `gas_price`
+(`ml/gas_price.py`) is the latest daily gas price dated **before the
+slot's local day**: the price known the day before, so a training row
+never sees its own day's price and a forecast days ahead gets the latest
+published one, as in training. A price older than 14 days
+(`GAS_LOOKBACK_DAYS`) is not used, so a source that stopped updating gives
+NaN rather than a stale level. The source is Instrat's JSON API
+(`api/gas_prices.py`, CC BY-NC 4.0): the TGE (Polish exchange) gas
+day-ahead index in PLN/MWh, every day including weekends. It is a proxy for
+the European gas price level; the German THE Day Ahead price, which
+EpexPredictor scrapes from a Bundesnetzagentur page, scored the same in the
+backtest, and scraping HTML breaks when the page changes. Only a level
+matters to a tree model, so neither the currency nor the hub needs
+converting. The regions in `GAS_PRICE_REGIONS` (`const.py`) fetch it; the
+[backtest](#gas-price-28) chose them. Elsewhere, or when the source fails,
+it is NaN.
+
 **Zone weather** (#22). The local weather entity is one place, at 10 m,
 about 48 hours ahead and hourly. The zone features describe
 the whole bidding zone instead: Open-Meteo's 15-minute forecast at a few
@@ -229,7 +248,7 @@ in where a slot's `SlotInputs` come from (see
 Time features (0, 1, 3-5) come from `slot_time_features()`, `holiday` (2)
 from `public_holiday()` with the region's calendar and sun features (6-9)
 from `sun_features()` with the region's `zone_centre()`; derived features
-(14, 15, 18) are computed from the slot's own inputs.
+(14, 15, 19) are computed from the slot's own inputs.
 
 **Missing inputs are NaN.** An input that is unknown for a slot (no zone
 weather stored for it, Nordpool prognoses only exist for today and
@@ -290,7 +309,7 @@ reimplemented in `ml/cross_border.py`):
    the region itself and are NaN. It is the production price model
    (`create_price_model()`).
 2. **Stage 2**: the region's price model, with a `cross_price_<zone>` column
-   per neighbour after the 23 features: stage 1's price for the slot.
+   per neighbour after the 24 features: stage 1's price for the slot.
 
 **Stage-1 values in training rows are out of sample.** A model's fitted
 values are much closer to the actual prices than its forecasts: on DK1's
@@ -350,6 +369,7 @@ per neighbour), not because of accuracy.
 | Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min        | `openmeteo_weather`: zone features, both phases        |
 | Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min        | `openmeteo_weather` days before yesterday (training)   |
 | ENTSO-E week-ahead load (A65/A31, API key, #30)     | Load forecast       | Daily min/max | `entsoe_load` curve: `load_forecast`, both phases      |
+| Instrat TGE gas day-ahead index (#28)               | Gas price           | Daily         | `gas_prices`: `gas_price`, both phases                 |
 | `holidays` package (#26)                            | Public holidays     | Daily         | `holiday` feature, both phases                         |
 | energy-charts.info, neighbouring zones (#29)        | Raw spot price      | 15-min        | `neighbour_prices`: stage-1 targets (cross-border)     |
 | Open-Meteo at the neighbours' points (#29)          | Zone weather        | 15-min        | `openmeteo_weather`: stage-1 inputs (cross-border)     |
@@ -394,6 +414,10 @@ error, rather than from measured weather it never sees at prediction.
 | **Training**   | `openmeteo_weather`: archived forecasts, and the last live one | `nordpool_prognoses` row for the hour |
 | **Prediction** | `openmeteo_weather`: the current live forecast                 | Live prognoses for the slot's hour    |
 
+The gas price (#28) is stored per day in `gas_prices` (backfilled with the
+training window plus 14 days, refreshed at every forecast run); both phases
+take the latest price dated before the slot's day from it.
+
 The ENTSO-E load forecast (#30) works the same way: `entsoe_load` holds, for
 the training window's days, the week-ahead forecasts ENTSO-E published for
 them (backfilled with the rest of the history), and from yesterday on the
@@ -411,7 +435,7 @@ The zone weather is one stored table for both phases:
   fetched for it.
 
 The local weather entity is no longer a model input (see
-[Feature Vector](#feature-vector-23-features)). Its snapshots
+[Feature Vector](#feature-vector-24-features)). Its snapshots
 (`weather_history`) only score its forecast: the confidence's
 forecast-error penalty compares the forecast recorded with a prediction
 with the snapshot taken in the slot. They do not trigger a retrain.
@@ -597,7 +621,7 @@ solar_scale = EMA(actual_power / solcast_estimate)
 
 Updated every prediction run (`_update_solar_scale`) and persisted. Since
 #17 it is **not applied to the price model**: the model no longer has a site
-solar feature (see [Feature Vector](#feature-vector-23-features)), and a
+solar feature (see [Feature Vector](#feature-vector-24-features)), and a
 factor applied to prediction rows only would make them differ from training
 rows again.
 
@@ -689,7 +713,7 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **Zone weather from Open-Meteo's archive.** The zone features (17-22) come
+- **Zone weather from Open-Meteo's archive.** The zone features (18-23) come
   from Open-Meteo's historical forecast API (`historical-forecast-api`, 90
   days per request, cached in `.cache/backtest/`) at the region's
   `WEATHER_POINTS`, for training and target slots alike (`--weather none`
@@ -710,6 +734,11 @@ pipeline:
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state) and
   hyperparameters restored from HPO are not applied.
+- **Gas price only with `--gas`.** Feature 17 comes from Instrat's daily
+  history (one request per month, cached in `.cache/backtest/`); every
+  origin only sees prices dated before its horizon cutoff, so all target
+  days get the latest price published before the forecast, as in
+  production. Without the flag it is NaN.
 - **Cross-border model only with `--cross-border`.** The `current` and
   `lightgbm` rows then become two-stage models (#29) for a region in
   `NEIGHBOURS`: stage 1 is the integration's `Stage1Model` per neighbour,
@@ -724,6 +753,7 @@ pip install -r requirements_backtest.txt   # optional LightGBM row
 python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --window-days 30
 python -m scripts.backtest --region DK1 --window-days 60 --days holidays
 python -m scripts.backtest --region DK1 --window-days 60 --cross-border
+python -m scripts.backtest --region DK1 --window-days 60 --gas
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 ```
 
@@ -791,7 +821,7 @@ forecasts have an archive: the whole training window's zone weather is
 available on the first day, from the same kind of source the model
 predicts from, where measured weather would have to accumulate first.
 The local weather entity's features were removed for the same reason (see
-[Feature Vector](#feature-vector-23-features)); the backtest never had them
+[Feature Vector](#feature-vector-24-features)); the backtest never had them
 (no history), so its numbers do not change.
 
 ### Sun position and 15-minute time (#25)
@@ -919,6 +949,55 @@ model, as EpexPredictor does, changed nothing (1.88 / 2.02 / 2.08).
   fit.
 - **Cost**: about 7 times the training time (see
   [Cross-Border Model](#cross-border-model-29)).
+
+### Gas price (#28)
+
+365 daily origins from 2025-09-24 to 2026-09-23, 60-day window, retrained
+daily, EUR ct/kWh, NumPy GBM with every earlier feature. `before` is
+without the gas price, `after` with it (`--gas`). Recorded 2026-09-27.
+
+| Region | before 1d / 2d / 3d MAE | after 1d / 2d / 3d MAE | Gas price      |
+| ------ | ----------------------: | ---------------------: | -------------- |
+| DK1    |      2.29 / 2.46 / 2.52 |     2.19 / 2.37 / 2.43 | on             |
+| DK2    |      2.52 / 2.69 / 2.73 |     2.46 / 2.64 / 2.70 | on             |
+| DE     |      2.11 / 2.23 / 2.26 |     2.02 / 2.14 / 2.18 | on             |
+| BE     |      2.27 / 2.40 / 2.45 |     2.15 / 2.31 / 2.36 | on             |
+| NL     |      2.16 / 2.29 / 2.33 |     2.08 / 2.24 / 2.31 | on             |
+| NO2    |      1.73 / 1.88 / 1.95 |     1.57 / 1.77 / 1.88 | on             |
+| SE3    |      2.26 / 2.45 / 2.50 |     2.21 / 2.43 / 2.54 | off (3d worse) |
+| SE4    |      2.84 / 3.06 / 3.13 |     2.76 / 2.99 / 3.08 | on             |
+| FI     |      2.64 / 2.92 / 2.98 |     2.53 / 2.81 / 2.91 | on             |
+| EE     |      3.85 / 4.04 / 4.07 |     3.87 / 4.12 / 4.17 | off (worse)    |
+| LT     |      3.89 / 4.14 / 4.23 |     3.89 / 4.18 / 4.32 | off (worse)    |
+| LV     |      3.83 / 4.06 / 4.12 |     3.80 / 4.13 / 4.25 | off (2d/3d)    |
+| FR     |      2.58 / 2.78 / 2.89 |     2.43 / 2.67 / 2.77 | on             |
+
+A region gets the gas price (`GAS_PRICE_REGIONS`) where it lowers the MAE
+at every horizon. Which price, on DK1 / DE / BE (1d / 2d / 3d MAE, same
+period):
+
+| Gas price                                 | DK1                | DE                 | BE                 |
+| ----------------------------------------- | ------------------ | ------------------ | ------------------ |
+| none                                      | 2.29 / 2.46 / 2.52 | 2.11 / 2.23 / 2.26 | 2.27 / 2.40 / 2.45 |
+| THE Day Ahead (Bundesnetzagentur, scrape) | 2.19 / 2.34 / 2.43 | 2.03 / 2.16 / 2.21 | 2.16 / 2.31 / 2.35 |
+| THE Month+1 (Bundesnetzagentur, scrape)   | 2.22 / 2.39 / 2.46 | 2.02 / 2.16 / 2.22 | 2.15 / 2.29 / 2.34 |
+| TGE day-ahead (Instrat API, chosen)       | 2.19 / 2.37 / 2.43 | 2.02 / 2.14 / 2.18 | 2.15 / 2.31 / 2.36 |
+
+- **The gas price helps in most regions**, by 0.06-0.16 ct/kWh at 1d.
+  EpexPredictor's backtests found it worse for DK and SE, with THE Month+1
+  and its own setup; here THE Month+1 helps DK1 too. With a 60-day window
+  the gas level explains part of the price level within the window. In EE
+  and SE3 it does not help, nor in LT and LV at 2-3 days, so the Baltics
+  and SE3 do without.
+- **The three prices score alike**: only the European gas price level
+  matters, not the hub. Instrat's API is machine-readable and complete
+  (weekends included), where the THE prices would have to be scraped from
+  HTML.
+- **It adds to the cross-border model** (#29): DK1 two-stage scores
+  1.84 / 1.97 / 2.05 with the gas price, against 1.90 / 2.02 / 2.07
+  without (stage 1 does not use it).
+- The gas price is known before the day, so unlike the zone weather it is
+  not optimistic at 2-3 days ahead.
 
 ### ENTSO-E load forecast (#30)
 

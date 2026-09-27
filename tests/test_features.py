@@ -64,10 +64,10 @@ def built_rows(monkeypatch: pytest.MonkeyPatch) -> list[list[float]]:
     return rows
 
 
-def test_feature_vector_has_23_unique_features():
-    """The model input: time, holidays, sun, Nordpool, load and zone weather."""
-    assert len(FEATURE_NAMES) == 23
-    assert len(set(FEATURE_NAMES)) == 23
+def test_feature_vector_has_24_unique_features():
+    """The model input: time, holidays, sun, Nordpool, load, gas and zone weather."""
+    assert len(FEATURE_NAMES) == 24
+    assert len(set(FEATURE_NAMES)) == 24
     assert "temperature" not in FEATURE_NAMES
     assert "price_mean" not in FEATURE_NAMES
     # Hour-only time features were replaced by 15-minute ones (#25)

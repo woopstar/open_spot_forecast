@@ -75,7 +75,7 @@ def _updater(predictor: Mock | None) -> ForecastUpdater:
     hass = Mock()
     hass.async_add_executor_job = run_inline
     sensors = SensorEntities(*([None] * 9))
-    return ForecastUpdater(
+    updater = ForecastUpdater(
         hass,
         MagicMock(),
         {"region": "DK1", "sensor_config": sensors.sensor_config()},
@@ -85,6 +85,9 @@ def _updater(predictor: Mock | None) -> ForecastUpdater:
         PriceSettings("stromligning", "DKK", entsoe_api_key="token"),
         predictor.storage if predictor else Mock(),
     )
+    # The gas price (#28) has its own tests
+    updater.gas = None
+    return updater
 
 
 def test_neighbour_sources_exist_only_with_the_cross_border_model() -> None:

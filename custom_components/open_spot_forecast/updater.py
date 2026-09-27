@@ -28,6 +28,7 @@ from homeassistant.util import dt as dt_util, slugify as util_slugify
 
 from .api import NordpoolPrognosisSource, forecast_prognoses
 from .api.entsoe_load import EntsoeLoadSource
+from .api.gas_prices import GasPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.time_series_source import TimeSeriesSource
 from .const import (
@@ -43,6 +44,7 @@ from .const import (
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     ENTSOE_LOAD_REGIONS,
+    GAS_PRICE_REGIONS,
     PRICE_SOURCE_DAYAHEAD,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
@@ -188,6 +190,12 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if ml_predictor and key and self.region in ENTSOE_LOAD_REGIONS
             else None
         )
+        # The natural-gas price (#28), in the regions where it helps
+        self.gas = (
+            GasPriceSource(hass, ml_predictor.storage)
+            if ml_predictor and self.region in GAS_PRICE_REGIONS
+            else None
+        )
         # The neighbours' prices and zone weather: the cross-border model's
         # stage 1 (#29), only when the option is on
         self.neighbour_prices, self.neighbour_weather = neighbour_sources(
@@ -214,6 +222,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         api_data["zone_weather"] = self.weather is not None
         api_data["entsoe_load"] = self.load is not None
         api_data["cross_border"] = bool(self.neighbour_prices)
+        api_data["gas_price"] = self.gas is not None
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -363,6 +372,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         await self._update_ahead(
             self.load, weather_data, "load_forecast", "ENTSO-E load forecast"
         )
+        await self.update_gas_price(weather_data)
         await self.update_neighbours(
             local_midnight(dt_util.now().date() + timedelta(days=FORECAST_DAYS + 1))
         )

@@ -24,6 +24,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)     |
 | ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)         |
 | energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)        |
+| Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)     |
 
 ## Component Architecture
 
@@ -233,7 +234,7 @@ The system uses **one model** — a Gradient Boosting regressor that takes 23
 features and directly predicts the spot price. Wind, solar, and temperature
 are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
-[ML Documentation](ml_documentation.md#feature-vector-23-features)).
+[ML Documentation](ml_documentation.md#feature-vector-24-features)).
 
 ```
 Features (23):

@@ -9,7 +9,7 @@ file.
 | ------------------------------------------------------- | ---------------------------------------- |
 | [Home](home.md)                                         | Landing page and project overview        |
 | [Architecture](architecture.md)                         | System overview, data sources, data flow |
-| [ML Documentation](ml_documentation.md)                 | Model, 23-feature vector, confidence     |
+| [ML Documentation](ml_documentation.md)                 | Model, 24-feature vector, confidence     |
 | [Self-Learning](self_learning.md)                       | Self-learning loop and bias correction   |
 | [Persistence](persistence.md)                           | SQLite storage schema and migrations     |
 | [Stromligning Integration](stromligning_integration.md) | Price-source priority                    |

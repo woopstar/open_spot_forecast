@@ -37,7 +37,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Any, Protocol
 from zoneinfo import ZoneInfo
@@ -52,6 +52,10 @@ from custom_components.open_spot_forecast.api.entsoe_load import (
     load_curve,
     parse_entsoe_load,
 )
+from custom_components.open_spot_forecast.api.gas_prices import (
+    instrat_query,
+    parse_instrat_gas,
+)
 from custom_components.open_spot_forecast.api.openmeteo_weather import (
     open_meteo_query,
     parse_open_meteo,
@@ -59,6 +63,7 @@ from custom_components.open_spot_forecast.api.openmeteo_weather import (
 from custom_components.open_spot_forecast.const import (
     ENERGY_CHARTS_API,
     ENTSOE_API,
+    INSTRAT_GAS_API,
     NEIGHBOURS,
     OPEN_METEO_ARCHIVE_API,
     REGIONS,
@@ -75,6 +80,10 @@ from custom_components.open_spot_forecast.ml.features import (
     SlotInputs,
     build_feature_row,
     build_feature_vector,
+)
+from custom_components.open_spot_forecast.ml.gas_price import (
+    GAS_LOOKBACK_DAYS,
+    GasPriceIndex,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
@@ -384,6 +393,39 @@ def load_open_meteo_weather(
     return ZoneWeatherIndex(rows)
 
 
+def load_gas_prices(
+    first: date,
+    last: date,
+    cache_dir: Path,
+    fetch: Callable[[str], Any] = _http_get_json,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Load the daily gas prices (#28) for the UTC days ``first``..``last``.
+
+    Instrat's TGE gas day-ahead index, one request per calendar month;
+    complete past months are cached in ``cache_dir``. CC BY-NC 4.0,
+    energy.instrat.pl.
+    """
+    today = today or date.today()
+    rows: list[dict[str, Any]] = []
+    for month_start, month_end in _month_chunks(first, last):
+        cache_file = cache_dir / f"gas_instrat_{month_start:%Y-%m}.json"
+        if cache_file.exists():
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+        else:
+            start = datetime.combine(month_start, datetime.min.time(), UTC)
+            end = datetime.combine(
+                month_end + timedelta(days=1), datetime.min.time(), UTC
+            )
+            query = urllib.parse.urlencode(instrat_query(start, end))
+            payload = fetch(f"{INSTRAT_GAS_API}?{query}")
+            if month_end < today - timedelta(days=2):
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+        rows.extend(parse_instrat_gas(payload))
+    return rows
+
+
 def load_cross_border(
     region: str,
     first: date,
@@ -416,15 +458,17 @@ def feature_matrix(
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
     load: Mapping[int, float] | None = None,
+    gas: GasPriceIndex | None = None,
 ) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
     Rows come from ``build_feature_row``, as in training and prediction. The
     zone weather (#22) comes from Open-Meteo's archived forecasts, for
     training and target slots alike, the sun features (#25) from the
-    ``region``'s zone centre and ``load`` is ENTSO-E's week-ahead load
-    forecast by slot start (#30). The local weather entity and Nordpool
-    inputs have no year of history, so they are unknown (NaN).
+    ``region``'s zone centre, ``load`` is ENTSO-E's week-ahead load
+    forecast by slot start (#30) and ``gas`` the gas prices (#28). The local
+    weather entity and Nordpool inputs have no year of history, so they are
+    unknown (NaN).
     """
     rows = []
     for start in starts.tolist():
@@ -432,6 +476,7 @@ def feature_matrix(
         inputs = SlotInputs(
             **(zone.for_slot(moment) if zone else {}),
             load_forecast=load.get(start) if load else None,
+            gas_price=gas.before(moment.date()) if gas else None,
         )
         rows.append(build_feature_vector(build_feature_row(moment, inputs, region)))
     return np.array(rows, dtype=float).reshape(len(rows), len(FEATURE_NAMES))
@@ -518,13 +563,23 @@ def _feature_rows(
     region: str | None = None,
     load: Mapping[int, float] | None = None,
     cross: CrossBorderInputs | None = None,
+    gas: Sequence[dict[str, Any]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (training rows, target rows) for the slot times and inputs.
 
     With ``cross`` the stage-1 price columns (#29) follow the features.
+    ``gas`` holds the daily gas price rows (#28); only those dated before
+    the horizon cutoff are used, so a target day gets the latest price
+    published before the forecast, as in production.
     """
-    train = feature_matrix(history.starts, tz, zone, region, load)
-    target = feature_matrix(targets, tz, zone, region, load)
+    index = None
+    if gas is not None:
+        cutoff = datetime.fromtimestamp(int(targets.min()), tz).date()
+        index = GasPriceIndex(
+            row for row in gas if date.fromisoformat(row["timestamp"][:10]) < cutoff
+        )
+    train = feature_matrix(history.starts, tz, zone, region, load, index)
+    target = feature_matrix(targets, tz, zone, region, load, index)
     if cross is None:
         return train, target
     train_columns, target_columns = cross.columns(history, targets)
@@ -575,11 +630,19 @@ class CurrentModel:
     region: str | None = None
     load: Mapping[int, float] | None = None
     cross: CrossBorderInputs | None = None
+    gas: Sequence[dict[str, Any]] | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region, self.load, self.cross
+            history,
+            targets,
+            self.tz,
+            self.zone,
+            self.region,
+            self.load,
+            self.cross,
+            self.gas,
         )
         model = self.model_factory()
         model.fit(train_rows, history.prices)
@@ -600,13 +663,21 @@ class LightGbmReference:
     region: str | None = None
     load: Mapping[int, float] | None = None
     cross: CrossBorderInputs | None = None
+    gas: Sequence[dict[str, Any]] | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
         import lightgbm  # optional dev-only dependency (requirements_backtest.txt)
 
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region, self.load, self.cross
+            history,
+            targets,
+            self.tz,
+            self.zone,
+            self.region,
+            self.load,
+            self.cross,
+            self.gas,
         )
         names = [*FEATURE_NAMES, *(self.cross.names if self.cross else ())]
         dataset = lightgbm.Dataset(train_rows, label=history.prices, feature_name=names)
@@ -628,6 +699,7 @@ def build_models(
     region: str | None = None,
     load: Mapping[int, float] | None = None,
     cross: CrossBorderInputs | None = None,
+    gas: Sequence[dict[str, Any]] | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
@@ -648,6 +720,7 @@ def build_models(
                     region=region,
                     load=load,
                     cross=cross,
+                    gas=gas,
                 )
             )
         elif name == "lightgbm":
@@ -660,6 +733,7 @@ def build_models(
                         region=region,
                         load=load,
                         cross=cross,
+                        gas=gas,
                     )
                 )
             else:
@@ -940,6 +1014,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="ENTSO-E's week-ahead load forecast (#30); needs ENTSOE_API_KEY",
     )
     parser.add_argument(
+        "--gas",
+        action="store_true",
+        help="the daily gas price feature (#28), from Instrat",
+    )
+    parser.add_argument(
         "--cross-border",
         action="store_true",
         help="two-stage model with the neighbouring zones' prices (#29)",
@@ -1015,7 +1094,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.cache_dir,
             with_weather=args.weather == "openmeteo",
         )
-    models, skipped = build_models(names, tz, zone, args.region, load, cross)
+    gas = None
+    if args.gas:
+        print("Loading gas prices from Instrat ...", file=sys.stderr)
+        gas = load_gas_prices(
+            data_first - timedelta(days=GAS_LOOKBACK_DAYS), data_last, args.cache_dir
+        )
+    models, skipped = build_models(names, tz, zone, args.region, load, cross, gas)
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(

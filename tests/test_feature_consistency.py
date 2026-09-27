@@ -18,9 +18,11 @@ from custom_components.open_spot_forecast.ml.features import (
     slot_time_features,
     wind_power_curve,
 )
+from custom_components.open_spot_forecast.ml.gas_price import GasPriceIndex
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import (
     ENTSOE_LOAD,
+    GAS_PRICES,
     NORDPOOL_PROGNOSES,
     OPENMETEO_WEATHER,
 )
@@ -45,6 +47,7 @@ ZONE = {
     "humidity": 70.0,
 }
 LOAD = 3200.0
+GAS = 310.0
 NORDPOOL = {
     "consumption": 3000.0,
     "solar": 500.0,
@@ -99,6 +102,7 @@ def _store_history(predictor: SpotPricePredictor, start: datetime) -> None:
     )
     predictor.storage.upsert_series(OPENMETEO_WEATHER, _zone_rows(start))
     predictor.storage.upsert_series(ENTSOE_LOAD, _load_rows(start))
+    predictor.storage.upsert_series(GAS_PRICES, _gas_rows(start))
 
 
 def _zone_rows(start: datetime, **values: float) -> list[dict]:
@@ -112,6 +116,15 @@ def _zone_rows(start: datetime, **values: float) -> list[dict]:
 def _load_rows(start: datetime) -> list[dict]:
     """ENTSO-E load forecast rows of the slot (#30)."""
     return [{"timestamp": _utc_iso(start), "load": LOAD}]
+
+
+def _gas_rows(start: datetime) -> list[dict]:
+    """Gas prices (#28): the day before the slot's (used) and the slot's day."""
+    day = datetime.combine(start.date(), datetime.min.time(), UTC)
+    return [
+        {"timestamp": _utc_iso(day - timedelta(days=1)), "price": GAS},
+        {"timestamp": _utc_iso(day), "price": GAS + 50},
+    ]
 
 
 def _live_data(start: datetime) -> dict:
@@ -129,6 +142,7 @@ def _live_data(start: datetime) -> dict:
         ],
         "zone_weather": _zone_rows(start),
         "load_forecast": _load_rows(start),
+        "gas_price": _gas_rows(start),
         "consumption_prognosis": {_utc_iso(start): NORDPOOL["consumption"]},
         "production_prognosis": [
             {
@@ -157,7 +171,10 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     training = build_feature_vector(training_row)
     live = _live_data(SLOT)
     (prediction_row,) = predictor._combine_features(
-        [slot_time_features(SLOT)], live, predictor._zone_index(live)
+        [slot_time_features(SLOT)],
+        live,
+        predictor._zone_index(live),
+        GasPriceIndex(live["gas_price"]),
     )
     prediction = build_feature_vector(prediction_row)
 
@@ -172,6 +189,8 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     assert row["net_demand"] == pytest.approx(3000 - 500 - 800 - 700)
     assert row["wind_share"] == pytest.approx(1500 / 3000)
     assert row["load_forecast"] == pytest.approx(LOAD)
+    # The price known before the slot's day, not the day's own (#28)
+    assert row["gas_price"] == pytest.approx(GAS)
 
 
 def test_every_quarter_of_an_hour_uses_the_hours_prognosis(
@@ -272,6 +291,9 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
                     for q in range(4)
                 ],
             )
+        predictor.storage.upsert_series(
+            GAS_PRICES, [{"timestamp": f"{date}T00:00:00Z", "price": 300.0 + day}]
+        )
     predictor.price_history = entries
 
     _, features = predictor.get_all_historical_prices()

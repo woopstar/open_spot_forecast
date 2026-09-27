@@ -16,6 +16,7 @@ from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
 from .features import FeatureMixin, optional_float
+from .gas_price import GasPriceIndex
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
 from .models import ModelMixin, create_price_model
@@ -192,7 +193,10 @@ class SpotPricePredictor(
 
             # Build every slot's row with the same builder training uses
             all_features = self._combine_features(
-                time_features, weather_data, self._zone_index(weather_data)
+                time_features,
+                weather_data,
+                self._zone_index(weather_data),
+                GasPriceIndex(weather_data.get("gas_price") or []),
             )
 
             _LOGGER.info(
