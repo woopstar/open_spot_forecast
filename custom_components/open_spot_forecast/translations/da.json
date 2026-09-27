@@ -34,7 +34,7 @@
           "temperature_sensor": "Temperatur Sensor",
           "dmi_api_key": "DMI API Nøgle (alternativ vejrdatakilde)",
           "enable_ml_prediction": "Aktiver ML Forudsigelser",
-          "prediction_hours": "Forudsigelsestimer (12 til 72)",
+          "prediction_hours": "Prognosetimer (12 til 72; op til 168 med det kompakte format)",
           "training_days": "Træningsdage (prishistorik, som modellen lærer af)"
         }
       }
@@ -55,7 +55,7 @@
         "description": "Konfigurer avancerede indstillinger for spotpris prognoser",
         "data": {
           "enable_ml_prediction": "Aktiver ML Prisforudsigelser",
-          "prediction_hours": "Forudsigelsestimer (12 til 72)",
+          "prediction_hours": "Prognosetimer (12 til 72; op til 168 med det kompakte format)",
           "dmi_api_key": "DMI API Nøgle (til vejrdata)",
           "stromligning_sensor": "Stromligning Sensor (reelle priser med tariffer/moms)",
           "stromligning_tomorrow_sensor": "Stromligning Sensor for i morgen (morgendagens priser)",
@@ -72,12 +72,14 @@
           "training_days": "Træningsdage (prishistorik, som modellen lærer af)",
           "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)",
           "surcharge": "Tillæg pr. enhed (lægges til før moms)",
-          "hourly_average": "Timegennemsnitspriser"
+          "hourly_average": "Timegennemsnitspriser",
+          "attribute_format": "Format for prognoseattributter"
         },
         "data_description": {
           "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig.",
           "surcharge": "Fast beløb i din valuta pr. prisenhed, der lægges til spotprisen før moms: total = (spot + tillæg) × (1 + moms). Gælder day-ahead-priserne og prognosen; Strømlignings priser indeholder det allerede. Træder i kraft, når integrationen genindlæses.",
-          "hourly_average": "Vis gennemsnittet af hver times fire 15-minutters priser, til aftaler der afregnes pr. time. Træder i kraft, når integrationen genindlæses."
+          "hourly_average": "Vis gennemsnittet af hver times fire 15-minutters priser, til aftaler der afregnes pr. time. Træder i kraft, når integrationen genindlæses.",
+          "attribute_format": "Detaljeret: én post pr. interval med start, slut, pris, enhed og sikkerhed (op til 72 timer). Kompakt: parallelle lister med starttider (s, unix-sekunder), priser (t) og sikkerhed i procent (c), cirka seks gange mindre, så op til 168 timer kan være inden for Home Assistants grænse på 16 KB for attributter. Træder i kraft, når integrationen genindlæses."
         }
       }
     }
@@ -115,6 +117,12 @@
       "options": {
         "stromligning": "Stromligning-sensorer (DK1/DK2)",
         "dayahead": "Day-ahead-pris (energy-charts.info, ENTSO-E som reserve)"
+      }
+    },
+    "attribute_format": {
+      "options": {
+        "detailed": "Detaljeret (én post pr. interval)",
+        "compact": "Kompakt (parallelle lister, op til 168 timer)"
       }
     }
   },

@@ -19,6 +19,8 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    ATTRIBUTE_FORMATS,
+    CONF_ATTRIBUTE_FORMAT,
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
@@ -40,6 +42,7 @@ from .const import (
     CONF_VAT,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
+    DEFAULT_ATTRIBUTE_FORMAT,
     DEFAULT_CURRENCY,
     DEFAULT_HOURLY_AVERAGE,
     DEFAULT_PRECISION,
@@ -302,6 +305,19 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): vol.In(PREDICTION_HOURS_OPTIONS),
+                # Compact attributes fit up to 168 hours (#38)
+                vol.Optional(
+                    CONF_ATTRIBUTE_FORMAT,
+                    default=self.config_entry.options.get(
+                        CONF_ATTRIBUTE_FORMAT, DEFAULT_ATTRIBUTE_FORMAT
+                    ),
+                ): SelectSelector(
+                    SelectSelectorConfig(
+                        options=list(ATTRIBUTE_FORMATS),
+                        mode=SelectSelectorMode.LIST,
+                        translation_key=CONF_ATTRIBUTE_FORMAT,
+                    )
+                ),
                 vol.Optional(
                     CONF_TRAINING_DAYS,
                     default=self.config_entry.options.get(

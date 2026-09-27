@@ -19,15 +19,20 @@ from homeassistant.util import dt as dt_util, slugify as util_slugify
 from .accuracy_sensor import build_lead_time_accuracy_sensors
 from .attribution import ModelAttributionMixin, PriceAttributionMixin
 from .const import (
+    ATTRIBUTE_FORMAT_COMPACT,
+    CONF_ATTRIBUTE_FORMAT,
     CONF_PREDICTION_HOURS,
     CONF_REGION,
+    DEFAULT_ATTRIBUTE_FORMAT,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_REGION,
+    DETAILED_MAX_PREDICTION_HOURS,
     DOMAIN,
     PRICE_SOURCE_DAYAHEAD,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
 from .price_source import PriceSettings
@@ -104,6 +109,9 @@ async def async_setup_entry(
         CONF_PREDICTION_HOURS,
         entry.data.get(CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS),
     )
+    attribute_format = entry.options.get(
+        CONF_ATTRIBUTE_FORMAT, DEFAULT_ATTRIBUTE_FORMAT
+    )
 
     sensors = [
         SpotPriceSensor(hass, entry, api_data, region, currency, output),
@@ -113,7 +121,15 @@ async def async_setup_entry(
         TomorrowMinSensor(hass, entry, api_data, currency, output),
         TomorrowMaxSensor(hass, entry, api_data, currency, output),
         TomorrowMeanSensor(hass, entry, api_data, currency, output),
-        MLPredictionSensor(hass, entry, api_data, currency, output, prediction_hours),
+        MLPredictionSensor(
+            hass,
+            entry,
+            api_data,
+            currency,
+            output,
+            prediction_hours,
+            attribute_format,
+        ),
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
     ]
@@ -350,18 +366,22 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         currency: str,
         output: PriceOutput,
         prediction_hours: int = DEFAULT_PREDICTION_HOURS,
+        attribute_format: str = DEFAULT_ATTRIBUTE_FORMAT,
     ):
         self.hass = hass
         self.entry = entry
         self.api_data = api_data
         self.currency = currency
         self.output = output
+        self.compact = attribute_format == ATTRIBUTE_FORMAT_COMPACT
 
-        # Cap the predictions exposed as attributes to the configured hourly
-        # window (12-hour steps, up to 72 hours) to stay under HA's 16 KB limit.
-        self._max_predictions = (
-            int(prediction_hours) * HOUR_MINUTES // output.interval_minutes
-        )
+        # Cap the predictions exposed as attributes to the configured window
+        # to stay under HA's 16 KB limit: up to 72 hours in the detailed
+        # format, up to 168 in the compact one (#38)
+        hours = int(prediction_hours)
+        if not self.compact:
+            hours = min(hours, DETAILED_MAX_PREDICTION_HOURS)
+        self._max_predictions = hours * HOUR_MINUTES // output.interval_minutes
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
@@ -405,9 +425,12 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             unit = self.output.unit(self.currency)
             # Only surface the configured hourly window to stay under HA's
             # 16 KB attribute limit
-            attrs["predictions"] = [
-                {**entry, "unit": unit} for entry in forecast[: self._max_predictions]
-            ]
+            window = forecast[: self._max_predictions]
+            attrs["predictions"] = (
+                compact_forecast(window, unit, self.output.interval_minutes)
+                if self.compact
+                else detailed_forecast(window, unit)
+            )
             # The slot whose prediction is the state
             state_entry = current_prediction(forecast, dt_util.utcnow())
             attrs["state_slot_start"] = state_entry["start"] if state_entry else None
@@ -435,6 +458,8 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
                 attrs["total_predictions"] = stats.get("total_predictions")
                 attrs["is_ml_model"] = stats.get("is_ml_model")
                 attrs["training_samples"] = stats.get("training_samples")
+            if self.compact:
+                fit_compact(attrs, "predictions")
         return attrs
 
 
