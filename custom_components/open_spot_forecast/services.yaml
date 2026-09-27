@@ -1,0 +1,19 @@
+get_forecast:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: open_spot_forecast
+    start:
+      selector:
+        datetime:
+    hours:
+      selector:
+        number:
+          min: 1
+          max: 216
+          unit_of_measurement: h
+          mode: box
+    hourly:
+      selector:
+        boolean:

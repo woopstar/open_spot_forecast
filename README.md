@@ -60,6 +60,26 @@ and continuously improves accuracy via per-slot bias correction.
 - Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
 - Binary sensors for tomorrow's price availability and ML model training status
 
+### Actions
+
+`open_spot_forecast.get_forecast` returns the whole forecast (up to 7 days,
+beyond the sensor's attribute window) as response data, with the same unit,
+surcharge and VAT as the forecast sensor:
+
+```yaml
+action: open_spot_forecast.get_forecast
+data:
+  hours: 48 # optional; default: the whole forecast
+  hourly: true # optional; default: the entry's hourly-average option
+  # start: "2026-09-25 00:00"  # optional; default: now
+  # config_entry_id: ...        # optional with one entry
+response_variable: forecast
+```
+
+The response has `known_until` (end of the confirmed prices), `unit`,
+`interval_minutes` and `forecast`, a list of `start`, `end`, `price` and
+`confidence`.
+
 ### Data Sources
 
 - **Stromligning** — confirmed consumer prices (96/day) and the raw spot price
