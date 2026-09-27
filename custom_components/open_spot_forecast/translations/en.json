@@ -111,6 +111,9 @@
       },
       "forecast_rmse_day_4_plus": {
         "name": "Forecast RMSE day 4+"
+      },
+      "forecast_evaluation": {
+        "name": "Forecast evaluation"
       }
     }
   },
@@ -152,6 +155,10 @@
         "include_known": {
           "name": "Include confirmed prices",
           "description": "Start with the confirmed spot prices (source: actual) up to known_until, then the predictions (source: predicted). Default: the entry's option."
+        },
+        "evaluation": {
+          "name": "Evaluation",
+          "description": "Also return, for the last 7 days of slots, the prediction made about a day ahead next to the actual price (evaluation: start, end, predicted, actual, lead_hours)."
         }
       }
     }

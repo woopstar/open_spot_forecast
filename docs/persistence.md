@@ -21,6 +21,7 @@ All learning data is stored in a single SQLite database:
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
+| `evaluation`         | `timestamp` (UTC slot key)  | Per scored slot: the prediction made closest to 24 h ahead, the actual price and its lead time (#36)            |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -32,9 +33,10 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
-`lead_time_accuracy` and `entsoe_load` are created with `CREATE TABLE IF NOT
-EXISTS` on every startup, so existing databases gain them without a
-versioned migration. Rows
+`lead_time_accuracy`, `evaluation` and `entsoe_load` are created with `CREATE
+TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
+a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
+whenever it is written or reloaded; about 700 rows). Rows
 older than the 30-day rolling window are pruned whenever the metrics are
 refreshed. The table is dropped and recreated by `clear_all()`.
 
@@ -52,6 +54,7 @@ tables:
 | `ml/series_storage.py`     | `SeriesStorageMixin`           | Time-series source tables (`nordpool_prognoses`), source state in `meta` |
 | `ml/state_storage.py`      | `LearningStateStorageMixin`    | `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk save/load |
 | `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`                                                     |
+| `ml/evaluation_storage.py` | `EvaluationStorageMixin`       | `evaluation`                                                             |
 
 The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
 the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking

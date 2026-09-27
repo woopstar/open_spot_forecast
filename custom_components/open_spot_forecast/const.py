@@ -267,6 +267,13 @@ LEAD_TIME_BUCKETS: tuple[tuple[str, float], ...] = (
 # Rolling window (days of slots) the per-bucket MAE/RMSE are computed over.
 LEAD_TIME_WINDOW_DAYS = 30
 
+# Predicted vs actual (#36): per slot, the prediction made closest to this
+# long ahead is kept next to the actual price, for EVALUATION_KEEP_DAYS; the
+# evaluation sensor shows the last EVALUATION_WINDOW_HOURS
+EVALUATION_LEAD_HOURS = 24.0
+EVALUATION_WINDOW_HOURS = 48
+EVALUATION_KEEP_DAYS = 7
+
 # Open-Meteo weather (#22): no key, 15-minute data, 16 days ahead. Each region
 # is sampled at a few fixed points across its bidding zone (wind and demand
 # centres, plus an offshore wind area where there is one), as lat/lon

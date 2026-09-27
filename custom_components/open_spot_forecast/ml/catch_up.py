@@ -108,6 +108,7 @@ class CatchUpMixin(PredictorBase):
                     total_learned += 1
 
                 self.record_lead_time_accuracy(matching, actual_price)
+                self.record_evaluation(slot_start, matching, actual_price)
 
                 # Update bias correction after processing this slot
                 self._update_bias_correction(slot)

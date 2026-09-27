@@ -38,6 +38,7 @@ ATTR_START = "start"
 ATTR_HOURS = "hours"
 ATTR_HOURLY = "hourly"
 ATTR_INCLUDE_KNOWN = "include_known"
+ATTR_EVALUATION = "evaluation"
 
 # The forecast reaches 7 days past the known prices: at most 9 days in all
 MAX_FORECAST_HOURS = 9 * 24
@@ -52,6 +53,7 @@ GET_FORECAST_SCHEMA = vol.Schema(
         ),
         vol.Optional(ATTR_HOURLY): cv.boolean,
         vol.Optional(ATTR_INCLUDE_KNOWN): cv.boolean,
+        vol.Optional(ATTR_EVALUATION, default=False): cv.boolean,
     }
 )
 
@@ -129,7 +131,7 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     if include_known:
         # Confirmed prices from start, then the predictions (#40)
         predictions = with_known_prices(spot_data, predictions, start)
-    return forecast_response(
+    response = forecast_response(
         predictions,
         output,
         settings.currency,
@@ -137,6 +139,10 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
         start,
         call.data.get(ATTR_HOURS),
     )
+    if call.data[ATTR_EVALUATION]:
+        # Every kept slot's day-ahead prediction next to its actual price (#36)
+        response["evaluation"] = settings.output.evaluation(ml_predictor.evaluation)
+    return response
 
 
 @callback

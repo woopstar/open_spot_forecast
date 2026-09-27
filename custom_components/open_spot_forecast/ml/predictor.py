@@ -100,6 +100,8 @@ class SpotPricePredictor(
         self.max_history_days = training_days
         # Live MAE/RMSE per lead-time bucket (see lead_time.py)
         self.lead_time_accuracy: dict[str, dict[str, float | int]] = {}
+        # Recent slots' day-ahead prediction next to the actual price (#36)
+        self.evaluation: list[dict[str, Any]] = []
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)

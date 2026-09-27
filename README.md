@@ -60,6 +60,8 @@ and continuously improves accuracy via per-slot bias correction.
   hours in Home Assistant's attribute limit
 - Prediction confidence and learning metrics
 - Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
+- Diagnostic forecast evaluation sensor: the day-ahead prediction next to
+  the actual price for the last 48 hours, to chart predicted against actual
 - Binary sensors for tomorrow's price availability and ML model training status
 
 ### Actions

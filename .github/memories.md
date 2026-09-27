@@ -19,6 +19,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `const.py`               | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                                                                               |
 | `config_flow.py`         | Two-step config flow (basic settings → sensor configuration) + options flow                                                                                |
 | `sensor.py`              | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                          |
+| `evaluation_sensor.py`   | Diagnostic `Forecast evaluation` sensor (#36): MAE and s/t/a arrays of the day-ahead prediction vs the actual price, last 48 h                             |
 | `accuracy_sensor.py`     | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                   |
 | `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                          |
 | `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                                                                        |
@@ -56,6 +57,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state   |
 | `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
 | `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
+| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the day-ahead prediction next to the actual price, #36)                              |
 | `retraining.py`         | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
 | `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
@@ -299,6 +301,7 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 | `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
 | `meta`               | `key`                 | Training state, schema version                                          |
 | `lead_time_accuracy` | `(date, bucket)`      | Daily per-lead-time error sums (rolling 30 days)                        |
+| `evaluation`         | `timestamp` (UTC key) | Per scored slot: the ~24 h-ahead prediction and the actual price (#36)  |
 
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning

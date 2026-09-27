@@ -185,7 +185,10 @@ one entry exists; unknown or unloaded entries raise a translated
 Fields: `start` (default now: the interval containing it), `hours` (default:
 the whole forecast), `hourly` (default: the entry's `hourly_average`) and
 `include_known` (default: the entry's `include_known_prices`: confirmed prices
-from `start`, then the predictions, see above).
+from `start`, then the predictions, see above). With `evaluation: true` the
+response also has `evaluation`: every kept slot's day-ahead prediction next to
+its actual price (`start`, `end`, `predicted`, `actual`, `lead_hours`; see
+[self-learning](self_learning.md#predicted-vs-actual-36)).
 Prices go through the entry's `PriceOutput`, so the action and the forecast
 sensor always agree; the action has no 16 KB attribute limit. Without the ML
 model it raises `ml_prediction_disabled`.

@@ -273,3 +273,22 @@ class PriceOutput:
             {**entry, "price": self.convert(entry["price"])}
             for entry in self.forecast_series(predictions)
         ]
+
+    def evaluation(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Return evaluated slots (#36) with both prices converted.
+
+        Args:
+            rows: ``{"start", "end", "predicted", "actual", "lead_hours"}``
+                per slot, prices raw spot (the predictor's ``evaluation``).
+
+        Returns:
+            The same entries, ``predicted`` and ``actual`` as exposed.
+        """
+        return [
+            {
+                **row,
+                "predicted": self.convert(row["predicted"]),
+                "actual": self.convert(row["actual"]),
+            }
+            for row in rows
+        ]

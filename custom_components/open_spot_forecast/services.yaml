@@ -20,3 +20,6 @@ get_forecast:
     include_known:
       selector:
         boolean:
+    evaluation:
+      selector:
+        boolean:

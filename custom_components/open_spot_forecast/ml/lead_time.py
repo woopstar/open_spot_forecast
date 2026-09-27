@@ -5,17 +5,27 @@ Every stored prediction records when it was made (``stored_at``) and the
 known, the signed error of each matched prediction is bucketed by its lead
 time (``start - stored_at``) and added to daily per-bucket sums in SQLite.
 MAE, RMSE and bias per bucket are then reported over a rolling window.
+
+The prediction made closest to ``EVALUATION_LEAD_HOURS`` before its slot is
+also kept next to the actual price (``evaluation`` table, #36), so the
+predicted and the actual series can be charted side by side.
 """
 
 import logging
 import math
 import sqlite3
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import LEAD_TIME_BUCKETS, LEAD_TIME_WINDOW_DAYS
+from ..const import (
+    EVALUATION_KEEP_DAYS,
+    EVALUATION_LEAD_HOURS,
+    LEAD_TIME_BUCKETS,
+    LEAD_TIME_WINDOW_DAYS,
+)
+from ..time_slots import SLOT_MINUTES, UTC_KEY_FORMAT, utc_slot_key
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,6 +95,32 @@ def bucket_errors(
     return errors
 
 
+def evaluation_prediction(
+    predictions: list[dict[str, Any]], target_hours: float = EVALUATION_LEAD_HOURS
+) -> tuple[dict[str, Any], float] | None:
+    """Return the prediction made closest to ``target_hours`` before its slot.
+
+    Args:
+        predictions: Matched prediction rows for one slot, with ``start``,
+            ``stored_at`` and ``price``.
+        target_hours: The lead time to evaluate (a day ahead by default).
+
+    Returns:
+        The prediction and its lead time in hours; None if no prediction has
+        a valid, non-negative lead time. Ties go to the later prediction.
+    """
+    best: tuple[dict[str, Any], float] | None = None
+    for prediction in predictions:
+        lead = lead_time_hours(
+            str(prediction.get("start", "")), str(prediction.get("stored_at", ""))
+        )
+        if lead is None or lead < 0:
+            continue
+        if best is None or abs(lead - target_hours) <= abs(best[1] - target_hours):
+            best = (prediction, lead)
+    return best
+
+
 def summarize_error_sums(
     sums: dict[str, tuple[int, float, float, float]],
 ) -> dict[str, dict[str, float | int]]:
@@ -132,6 +168,62 @@ class LeadTimeMixin(PredictorBase):
             self.refresh_lead_time_accuracy()
         except sqlite3.Error as err:
             _LOGGER.error("Failed to record lead-time accuracy: %s", err)
+
+    def record_evaluation(
+        self,
+        slot_start: datetime,
+        predictions: list[dict[str, Any]],
+        actual_price: float,
+    ) -> None:
+        """Keep the slot's day-ahead prediction next to its actual price (blocking).
+
+        A storage failure is logged and never interrupts the learning loop.
+
+        Args:
+            slot_start: Start of the matched slot; naive is Home Assistant's
+                local time.
+            predictions: All stored predictions matched for the slot.
+            actual_price: Actual price of the slot.
+        """
+        start = dt_util.as_utc(slot_start)
+        chosen = evaluation_prediction(predictions)
+        # Older slots (the startup catch-up) would be pruned right away
+        if chosen is None or start < dt_util.utcnow() - timedelta(
+            days=EVALUATION_KEEP_DAYS
+        ):
+            return
+        prediction, lead = chosen
+        try:
+            self.storage.upsert_evaluation(
+                utc_slot_key(start),
+                float(prediction["price"]),
+                actual_price,
+                round(lead, 2),
+            )
+            self.refresh_evaluation()
+        except sqlite3.Error as err:
+            _LOGGER.error("Failed to record the evaluation: %s", err)
+
+    def refresh_evaluation(self) -> None:
+        """Prune slots older than the kept days and reload the series (blocking)."""
+        cutoff = utc_slot_key(dt_util.utcnow() - timedelta(days=EVALUATION_KEEP_DAYS))
+        self.storage.delete_evaluation_before(cutoff)
+        evaluation = []
+        for row in self.storage.get_evaluation(cutoff):
+            start = datetime.strptime(row["timestamp"], UTC_KEY_FORMAT).replace(
+                tzinfo=UTC
+            )
+            end = start + timedelta(minutes=SLOT_MINUTES)
+            evaluation.append(
+                {
+                    "start": dt_util.as_local(start).isoformat(),
+                    "end": dt_util.as_local(end).isoformat(),
+                    "predicted": row["predicted"],
+                    "actual": row["actual"],
+                    "lead_hours": row["lead_hours"],
+                }
+            )
+        self.evaluation = evaluation
 
     def refresh_lead_time_accuracy(self) -> None:
         """Prune rows outside the rolling window and reload the summary (blocking)."""
