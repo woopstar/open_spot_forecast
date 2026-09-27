@@ -117,5 +117,34 @@
         "dayahead": "Day-ahead price (energy-charts.info, ENTSO-E fallback)"
       }
     }
+  },
+  "services": {
+    "get_forecast": {
+      "name": "Get forecast",
+      "description": "Returns the whole price forecast (up to 7 days past the known prices) as response data, converted like the forecast sensor: unit, surcharge and VAT.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Open Spot Forecast entry (region) to read. Can be left out when only one is set up."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Return the forecast from the interval containing this time. Default: now."
+        },
+        "hours": {
+          "name": "Hours",
+          "description": "Number of hours to return from the start. Default: the whole forecast."
+        },
+        "hourly": {
+          "name": "Hourly",
+          "description": "Average the four 15-minute prices of each hour. Default: the entry's hourly average option."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "ml_prediction_disabled": {
+      "message": "ML predictions are disabled for {entry_title}, so it has no forecast"
+    }
   }
 }

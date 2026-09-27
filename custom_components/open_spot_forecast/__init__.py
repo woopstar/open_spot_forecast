@@ -2,7 +2,9 @@
 
 Sets up a config entry: reads its configuration, builds the ML predictor and
 the ``ForecastUpdater`` (``updater.py``), runs the initial fetch and
-registers the timed updates, which ``async_unload_entry`` cancels.
+registers the timed updates, which ``async_unload_entry`` cancels. The
+integration's actions (``services.py``) are registered once, in
+``async_setup``.
 """
 
 import logging
@@ -10,7 +12,9 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .const import (
@@ -28,10 +32,20 @@ from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
 from .price_source import PriceSettings
 from .sensor_reader import SensorReader
+from .services import async_setup_services
 from .tomorrow_prices import TomorrowPriceChecker
 from .updater import ForecastUpdater, SensorEntities
 
 _LOGGER = logging.getLogger(__name__)
+
+# Set up through config entries only; there is no YAML configuration
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's actions, whether or not an entry loads."""
+    async_setup_services(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

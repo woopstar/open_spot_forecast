@@ -105,6 +105,28 @@ Statistics are taken over the raw series, then converted: the conversion is
 affine and increasing, so this equals converting first. The options flow has
 no update listener: option changes apply after the integration reloads.
 
+## Actions
+
+`open_spot_forecast.get_forecast` (`services.py`, #37) is registered once in
+`async_setup` (not per entry) with `SupportsResponse.ONLY`, so it validates
+even while no entry is loaded. It finds the entry with Home Assistant's
+`service.async_get_config_entry()` (`config_entry_id` may be left out when
+one entry exists; unknown or unloaded entries raise a translated
+`ServiceValidationError`) and returns `forecast_response()`:
+
+| Field              | Content                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `known_until`      | End of the last confirmed spot price slot (local ISO), or null          |
+| `unit`             | e.g. `DKK/kWh`                                                          |
+| `interval_minutes` | 15, or 60 with `hourly`                                                 |
+| `forecast`         | `start`, `end`, `price`, `confidence` per interval, from `start` onward |
+
+Fields: `start` (default now: the interval containing it), `hours` (default:
+the whole forecast) and `hourly` (default: the entry's `hourly_average`).
+Prices go through the entry's `PriceOutput`, so the action and the forecast
+sensor always agree; the action has no 16 KB attribute limit. Without the ML
+model it raises `ml_prediction_disabled`.
+
 ## Data Flow
 
 ```

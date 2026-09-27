@@ -117,5 +117,34 @@
         "dayahead": "Day-ahead-pris (energy-charts.info, ENTSO-E som reserve)"
       }
     }
+  },
+  "services": {
+    "get_forecast": {
+      "name": "Hent prognose",
+      "description": "Returnerer hele prisprognosen (op til 7 dage efter de kendte priser) som svardata, omregnet som prognosesensoren: enhed, tillæg og moms.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationspost",
+          "description": "Den Open Spot Forecast-post (region), der skal læses. Kan udelades, når der kun er én."
+        },
+        "start": {
+          "name": "Starttidspunkt",
+          "description": "Returnér prognosen fra det interval, der indeholder dette tidspunkt. Standard: nu."
+        },
+        "hours": {
+          "name": "Timer",
+          "description": "Antal timer, der returneres fra starten. Standard: hele prognosen."
+        },
+        "hourly": {
+          "name": "Pr. time",
+          "description": "Gennemsnit af hver times fire 15-minutters priser. Standard: postens indstilling for timegennemsnit."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "ml_prediction_disabled": {
+      "message": "ML-prognoser er slået fra for {entry_title}, så der er ingen prognose"
+    }
   }
 }
