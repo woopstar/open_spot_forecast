@@ -231,8 +231,20 @@ ENTSOE_LOAD_REGIONS = frozenset(REGIONS) - {"DE", "NL"}
 
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions
-# are surfaced as entity attributes. Configurable in 12-hour steps up to 72 hours.
-PREDICTION_HOURS_OPTIONS = [12, 24, 36, 48, 60, 72]
+# are surfaced as entity attributes: up to 72 hours in the detailed format, up
+# to 168 in the compact one (#38). The get_forecast action returns them all.
+PREDICTION_HOURS_OPTIONS = [12, 24, 36, 48, 60, 72, 96, 120, 144, 168]
+DETAILED_MAX_PREDICTION_HOURS = 72
+
+# Forecast attribute layout (#38): one dict per interval (detailed), or
+# parallel arrays of start times, prices and confidences (compact, ~6x smaller)
+CONF_ATTRIBUTE_FORMAT = "attribute_format"
+ATTRIBUTE_FORMAT_DETAILED = "detailed"
+ATTRIBUTE_FORMAT_COMPACT = "compact"
+ATTRIBUTE_FORMATS = (ATTRIBUTE_FORMAT_DETAILED, ATTRIBUTE_FORMAT_COMPACT)
+DEFAULT_ATTRIBUTE_FORMAT = ATTRIBUTE_FORMAT_DETAILED
+# The recorder does not store a state's attributes above this size (JSON bytes)
+RECORDER_MAX_ATTRIBUTES_BYTES = 16384
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
 # Live forecast accuracy per lead time (slot start - time the prediction was

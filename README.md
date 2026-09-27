@@ -55,7 +55,9 @@ and continuously improves accuracy via per-slot bias correction.
 ### Sensors
 
 - Current price, today/tomorrow min/max/mean
-- ML prediction (7-day forecast) with per-slot confidence
+- ML prediction (7-day forecast) with per-slot confidence; the forecast
+  attribute can use a compact layout (parallel arrays) that fits up to 168
+  hours in Home Assistant's attribute limit
 - Prediction confidence and learning metrics
 - Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
 - Binary sensors for tomorrow's price availability and ML model training status
