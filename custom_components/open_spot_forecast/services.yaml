@@ -17,3 +17,6 @@ get_forecast:
     hourly:
       selector:
         boolean:
+    include_known:
+      selector:
+        boolean:

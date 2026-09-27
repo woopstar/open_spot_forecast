@@ -9,15 +9,15 @@ price (tariffs, fees and VAT included) is only displayed; the model never
 sees it.
 """
 
-from collections.abc import Callable, Iterable
-from datetime import date, datetime, timedelta
+from collections.abc import Callable, Iterable, Sequence
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from .const import PRICE_IN
+from .const import PRICE_IN, SOURCE_ACTUAL, SOURCE_PREDICTED
 from .price_series import align_to_grid, is_invalid_price_series
-from .time_slots import parse_utc
+from .time_slots import floor_to_slot, parse_utc, slot_start_in_day
 
 
 def extract_latest_known_timestamp(
@@ -88,6 +88,67 @@ def ml_price_inputs(
     return prices, extract_latest_known_timestamp(raw)
 
 
+def known_until(spot_data: dict | None) -> datetime | None:
+    """Return the end of the last confirmed spot price slot (UTC), or None.
+
+    Predictions start there (``ml_price_inputs``); it is exposed as
+    ``known_until`` by the forecast sensor and the ``get_forecast`` action.
+    """
+    return ml_price_inputs(spot_data)[1]
+
+
+def with_known_prices(
+    spot_data: dict | None,
+    predictions: Sequence[dict[str, Any]],
+    since: datetime,
+) -> list[dict[str, Any]]:
+    """Return the confirmed spot prices from ``since``, then the predictions (#40).
+
+    Args:
+        spot_data: ``read_spot_prices()``-shaped data; its ``day`` is the
+            local date of the ``today`` list (today if missing).
+        predictions: The model's predictions (raw spot prices).
+        since: The series starts at the slot containing this moment.
+
+    Returns:
+        Raw entries in time order, each with a ``source``: every confirmed
+        slot from ``since`` on (``actual``, confidence 1.0), then the
+        predictions that start at or after the end of the last confirmed
+        slot (``predicted``). So no slot appears twice, and the series has
+        no gap at the boundary even when the predictions are older than the
+        confirmed prices. A slot missing in the source stays missing.
+    """
+    first = floor_to_slot(since.astimezone(UTC))
+    data = spot_data or {}
+    day: date = data.get("day") or dt_util.now().date()
+    actual: list[dict[str, Any]] = []
+    # Where the predictions take over: the end of the last confirmed slot
+    boundary = first
+    for offset, key in enumerate(("today", "tomorrow")):
+        list_day = day + timedelta(days=offset)
+        for index, price in enumerate(data.get(key) or []):
+            start = slot_start_in_day(list_day, index)
+            if price is None or start < first:
+                continue
+            boundary = slot_start_in_day(list_day, index + 1)
+            actual.append(
+                {
+                    "start": start.isoformat(),
+                    "end": boundary.isoformat(),
+                    "price": price,
+                    "confidence": 1.0,
+                    "source": SOURCE_ACTUAL,
+                }
+            )
+    predicted = [
+        {**prediction, "source": SOURCE_PREDICTED}
+        for prediction in predictions
+        if (begins := parse_utc(prediction.get("start"))) is not None
+        and begins >= boundary
+    ]
+    return actual + predicted
+
+
 def _samples_by_day(
     rows: Iterable[dict[str, Any]],
 ) -> dict[date, list[tuple[datetime, float]]]:
@@ -138,7 +199,7 @@ def dayahead_spot_data(
     rows: Iterable[dict[str, Any]],
     rate: Callable[[date], float | None],
     today: date,
-) -> dict[str, list]:
+) -> dict[str, Any]:
     """Return today's and tomorrow's day-ahead prices as ``read_spot_prices()`` does.
 
     Args:
@@ -147,14 +208,16 @@ def dayahead_spot_data(
         today: Today's local date.
 
     Returns:
-        ``today``/``tomorrow`` (currency/kWh excl. VAT, one per slot) and
-        ``raw_today``/``raw_tomorrow`` (``start`` of each priced slot).
+        ``today``/``tomorrow`` (currency/kWh excl. VAT, one per slot),
+        ``raw_today``/``raw_tomorrow`` (``start`` of each priced slot) and
+        ``day`` (``today``).
     """
-    result: dict[str, list] = {
+    result: dict[str, Any] = {
         "today": [],
         "tomorrow": [],
         "raw_today": [],
         "raw_tomorrow": [],
+        "day": today,
     }
     by_day = _samples_by_day(rows)
     for key, day in (("today", today), ("tomorrow", today + timedelta(days=1))):

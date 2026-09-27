@@ -25,6 +25,7 @@ from .const import (
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
     CONF_HOURLY_AVERAGE,
+    CONF_INCLUDE_KNOWN_PRICES,
     CONF_PRECISION,
     CONF_PREDICTION_HOURS,
     CONF_PRICE_SOURCE,
@@ -45,6 +46,7 @@ from .const import (
     DEFAULT_ATTRIBUTE_FORMAT,
     DEFAULT_CURRENCY,
     DEFAULT_HOURLY_AVERAGE,
+    DEFAULT_INCLUDE_KNOWN_PRICES,
     DEFAULT_PRECISION,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_SOURCE,
@@ -318,6 +320,13 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         translation_key=CONF_ATTRIBUTE_FORMAT,
                     )
                 ),
+                # Confirmed prices before the forecast (#40)
+                vol.Optional(
+                    CONF_INCLUDE_KNOWN_PRICES,
+                    default=self.config_entry.options.get(
+                        CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES
+                    ),
+                ): bool,
                 vol.Optional(
                     CONF_TRAINING_DAYS,
                     default=self.config_entry.options.get(

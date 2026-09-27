@@ -145,6 +145,27 @@ data_generator: |
   return p.s.map((s, i) => [s * 1000, p.t[i]]);
 ```
 
+### Known prices and `known_until` (#40)
+
+`known_until` (attribute of the forecast sensor, field of the action) is the
+end of the last confirmed spot price slot, local ISO with offset
+(`known_until()` in `spot_prices.py`); the model's predictions start there.
+
+With the option `include_known_prices` (default off; the action's
+`include_known` field) the `predictions` attribute is one continuous series
+from the current slot: the confirmed spot prices up to `known_until`, then the
+predictions (`with_known_prices()`). Every entry has a `source`, `actual`
+(confidence 1.0) or `predicted`; an hour is `actual` only if all its slots
+are. The compact layout adds `known_count`, the number of leading confirmed
+entries. Predictions that start before the end of the confirmed prices (an
+older forecast) are dropped, so no slot appears twice and there is no gap at
+the boundary; a slot missing in the source stays missing. Confirmed prices go
+through the same `PriceOutput` as the predictions, so both are
+`(spot + surcharge) × (1 + VAT)`. The sensor's state stays the model's
+prediction. The `today`/`tomorrow` lists are placed on their local day by the
+spot data's `day`, so the series is right in the first second after midnight
+too.
+
 ## Actions
 
 `open_spot_forecast.get_forecast` (`services.py`, #37) is registered once in
@@ -162,7 +183,9 @@ one entry exists; unknown or unloaded entries raise a translated
 | `forecast`         | `start`, `end`, `price`, `confidence` per interval, from `start` onward |
 
 Fields: `start` (default now: the interval containing it), `hours` (default:
-the whole forecast) and `hourly` (default: the entry's `hourly_average`).
+the whole forecast), `hourly` (default: the entry's `hourly_average`) and
+`include_known` (default: the entry's `include_known_prices`: confirmed prices
+from `start`, then the predictions, see above).
 Prices go through the entry's `PriceOutput`, so the action and the forecast
 sensor always agree; the action has no 16 KB attribute limit. Without the ML
 model it raises `ml_prediction_disabled`.

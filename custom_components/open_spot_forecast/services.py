@@ -26,10 +26,10 @@ from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv, service
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES, DOMAIN
 from .price_output import PriceOutput
 from .price_source import PriceSettings
-from .spot_prices import ml_price_inputs
+from .spot_prices import known_until, with_known_prices
 from .time_slots import floor_to_slot, parse_utc
 
 SERVICE_GET_FORECAST = "get_forecast"
@@ -37,6 +37,7 @@ ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_START = "start"
 ATTR_HOURS = "hours"
 ATTR_HOURLY = "hourly"
+ATTR_INCLUDE_KNOWN = "include_known"
 
 # The forecast reaches 7 days past the known prices: at most 9 days in all
 MAX_FORECAST_HOURS = 9 * 24
@@ -50,6 +51,7 @@ GET_FORECAST_SCHEMA = vol.Schema(
             vol.Coerce(int), vol.Range(min=1, max=MAX_FORECAST_HOURS)
         ),
         vol.Optional(ATTR_HOURLY): cv.boolean,
+        vol.Optional(ATTR_INCLUDE_KNOWN): cv.boolean,
     }
 )
 
@@ -117,13 +119,22 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     if ATTR_HOURLY in call.data:
         output = replace(output, hourly_average=call.data[ATTR_HOURLY])
     start = call.data.get(ATTR_START)
-    _, known_until = ml_price_inputs(api_data.get("spot_data"))
+    start = dt_util.as_utc(start) if start is not None else dt_util.utcnow()
+    spot_data = api_data.get("spot_data")
+    predictions = ml_predictor.predictions
+    include_known = call.data.get(
+        ATTR_INCLUDE_KNOWN,
+        entry.options.get(CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES),
+    )
+    if include_known:
+        # Confirmed prices from start, then the predictions (#40)
+        predictions = with_known_prices(spot_data, predictions, start)
     return forecast_response(
-        ml_predictor.predictions,
+        predictions,
         output,
         settings.currency,
-        known_until,
-        dt_util.as_utc(start) if start is not None else dt_util.utcnow(),
+        known_until(spot_data),
+        start,
         call.data.get(ATTR_HOURS),
     )
 

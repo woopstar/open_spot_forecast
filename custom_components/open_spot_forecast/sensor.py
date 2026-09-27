@@ -21,9 +21,11 @@ from .attribution import ModelAttributionMixin, PriceAttributionMixin
 from .const import (
     ATTRIBUTE_FORMAT_COMPACT,
     CONF_ATTRIBUTE_FORMAT,
+    CONF_INCLUDE_KNOWN_PRICES,
     CONF_PREDICTION_HOURS,
     CONF_REGION,
     DEFAULT_ATTRIBUTE_FORMAT,
+    DEFAULT_INCLUDE_KNOWN_PRICES,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_REGION,
     DETAILED_MAX_PREDICTION_HOURS,
@@ -36,6 +38,7 @@ from .forecast_attributes import compact_forecast, detailed_forecast, fit_compac
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
 from .price_source import PriceSettings
+from .spot_prices import known_until, with_known_prices
 from .time_slots import SLOT_MINUTES, parse_utc
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,6 +115,9 @@ async def async_setup_entry(
     attribute_format = entry.options.get(
         CONF_ATTRIBUTE_FORMAT, DEFAULT_ATTRIBUTE_FORMAT
     )
+    include_known = entry.options.get(
+        CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES
+    )
 
     sensors = [
         SpotPriceSensor(hass, entry, api_data, region, currency, output),
@@ -129,6 +135,7 @@ async def async_setup_entry(
             output,
             prediction_hours,
             attribute_format,
+            include_known,
         ),
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
@@ -352,6 +359,8 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     The model predicts the raw spot price excl. VAT and tariffs (#16). The
     surcharge and VAT are applied here, exactly once, by ``PriceOutput`` to
     the state and to every price attribute (#39); tariffs are not included.
+    With ``include_known`` the ``predictions`` attribute starts at the
+    current slot with the confirmed spot prices, then the forecast (#40).
     """
 
     _attr_has_entity_name = True
@@ -367,6 +376,7 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         output: PriceOutput,
         prediction_hours: int = DEFAULT_PREDICTION_HOURS,
         attribute_format: str = DEFAULT_ATTRIBUTE_FORMAT,
+        include_known: bool = DEFAULT_INCLUDE_KNOWN_PRICES,
     ):
         self.hass = hass
         self.entry = entry
@@ -374,6 +384,7 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         self.currency = currency
         self.output = output
         self.compact = attribute_format == ATTRIBUTE_FORMAT_COMPACT
+        self.include_known = include_known
 
         # Cap the predictions exposed as attributes to the configured window
         # to stay under HA's 16 KB limit: up to 72 hours in the detailed
@@ -421,19 +432,33 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         ml_predictor = self.api_data.get("ml_predictor")
         attrs: dict[str, Any] = {}
         if ml_predictor:
+            now = dt_util.utcnow()
             forecast = self._forecast()
             unit = self.output.unit(self.currency)
+            spot_data = self.api_data.get("spot_data")
+            series = (
+                self.output.forecast(
+                    with_known_prices(spot_data, ml_predictor.predictions, now)
+                )
+                if self.include_known
+                else forecast
+            )
             # Only surface the configured hourly window to stay under HA's
             # 16 KB attribute limit
-            window = forecast[: self._max_predictions]
+            window = series[: self._max_predictions]
             attrs["predictions"] = (
                 compact_forecast(window, unit, self.output.interval_minutes)
                 if self.compact
                 else detailed_forecast(window, unit)
             )
             # The slot whose prediction is the state
-            state_entry = current_prediction(forecast, dt_util.utcnow())
+            state_entry = current_prediction(forecast, now)
             attrs["state_slot_start"] = state_entry["start"] if state_entry else None
+            # End of the confirmed spot prices: predictions start there (#40)
+            known_end = known_until(spot_data)
+            attrs["known_until"] = (
+                dt_util.as_local(known_end).isoformat() if known_end else None
+            )
             # Every price above and below: (spot + surcharge) + VAT, no tariffs
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = False

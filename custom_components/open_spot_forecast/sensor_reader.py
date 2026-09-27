@@ -261,6 +261,8 @@ class SensorReader:
         # price_series.align_to_grid), placed by the items' own timestamps
         today = dt_util.now().date()
         days = {"today": today, "tomorrow": today + timedelta(days=1)}
+        # The local day of the "today" list (the "tomorrow" list is the next)
+        result["day"] = today
 
         if prices_attr and isinstance(prices_attr, list):
             samples: list[tuple[PriceSample, dict]] = []
@@ -381,7 +383,8 @@ class SensorReader:
 
         Returns:
             Dict with ``today``/``tomorrow`` (one price per 15-min slot, None
-            for a missing slot) and ``raw_today``/``raw_tomorrow`` items.
+            for a missing slot), ``raw_today``/``raw_tomorrow`` items and the
+            local ``day`` of the ``today`` list (None without a sensor).
         """
         today = self.read_stromligning_sensor(entity_id) if entity_id else {}
         result: dict[str, Any] = {
@@ -389,6 +392,7 @@ class SensorReader:
             "tomorrow": today.get("tomorrow", []),
             "raw_today": today.get("raw_today", []),
             "raw_tomorrow": today.get("raw_tomorrow", []),
+            "day": today.get("day"),
         }
         if tomorrow_entity_id:
             tomorrow = self.read_stromligning_tomorrow_sensor(tomorrow_entity_id)
