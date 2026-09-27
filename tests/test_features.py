@@ -64,12 +64,14 @@ def built_rows(monkeypatch: pytest.MonkeyPatch) -> list[list[float]]:
     return rows
 
 
-def test_feature_vector_has_17_unique_features():
-    """The model input: time, Nordpool and zone weather; no local weather (#23)."""
-    assert len(FEATURE_NAMES) == 17
-    assert len(set(FEATURE_NAMES)) == 17
+def test_feature_vector_has_21_unique_features():
+    """The model input: time, sun, Nordpool and zone weather; no local weather (#23)."""
+    assert len(FEATURE_NAMES) == 21
+    assert len(set(FEATURE_NAMES)) == 21
     assert "temperature" not in FEATURE_NAMES
     assert "price_mean" not in FEATURE_NAMES
+    # Hour-only time features were replaced by 15-minute ones (#25)
+    assert not {"hour", "hour_sin", "hour_cos"} & set(FEATURE_NAMES)
 
 
 def test_feature_names_match_the_documented_vector():
@@ -105,7 +107,7 @@ def test_build_feature_vector_sanitizes_values():
             FEATURE_NAMES,
             build_feature_vector(
                 {
-                    "hour": None,
+                    "slot_sin": None,
                     "zone_humidity": "n/a",
                     "zone_temperature": "21.5",
                     "is_weekend": True,
@@ -118,7 +120,7 @@ def test_build_feature_vector_sanitizes_values():
         )
     )
 
-    assert math.isnan(vector["hour"])
+    assert math.isnan(vector["slot_sin"])
     assert math.isnan(vector["zone_humidity"])
     assert vector["zone_temperature"] == pytest.approx(21.5)
     assert vector["is_weekend"] == pytest.approx(1.0)
@@ -140,8 +142,9 @@ def test_slot_time_features_fields():
         1,
         6,
     )
-    assert feature["hour_sin"] == pytest.approx(math.sin(2 * math.pi * 18 / 24))
-    assert feature["hour_cos"] == pytest.approx(math.cos(2 * math.pi * 18 / 24))
+    assert feature["slot_sin"] == pytest.approx(math.sin(2 * math.pi * 18.75 / 24))
+    assert feature["slot_cos"] == pytest.approx(math.cos(2 * math.pi * 18.75 / 24))
+    assert feature["morning_peak"] == (18 * 60 + 45 - 8 * 60) * 60
     assert feature["dow_sin"] == pytest.approx(math.sin(2 * math.pi * 5 / 7))
 
 

@@ -301,20 +301,24 @@ def load_open_meteo_weather(
 
 
 def feature_matrix(
-    starts: np.ndarray, tz: tzinfo, zone: ZoneWeatherIndex | None = None
+    starts: np.ndarray,
+    tz: tzinfo,
+    zone: ZoneWeatherIndex | None = None,
+    region: str | None = None,
 ) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
     Rows come from ``build_feature_row``, as in training and prediction. The
     zone weather (#22) comes from Open-Meteo's archived forecasts, for
-    training and target slots alike. The local weather entity and Nordpool
-    inputs have no year of history, so they are unknown (NaN).
+    training and target slots alike, and the sun features (#25) from the
+    ``region``'s zone centre. The local weather entity and Nordpool inputs have no
+    year of history, so they are unknown (NaN).
     """
     rows = []
     for start in starts.tolist():
         moment = datetime.fromtimestamp(start, tz)
         inputs = SlotInputs(**zone.for_slot(moment)) if zone else SlotInputs()
-        rows.append(build_feature_vector(build_feature_row(moment, inputs)))
+        rows.append(build_feature_vector(build_feature_row(moment, inputs, region)))
     return np.array(rows, dtype=float).reshape(len(rows), len(FEATURE_NAMES))
 
 
@@ -323,9 +327,13 @@ def _feature_rows(
     targets: np.ndarray,
     tz: tzinfo,
     zone: ZoneWeatherIndex | None = None,
+    region: str | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (training rows, target rows) for the slot times and zone weather."""
-    return feature_matrix(history.starts, tz, zone), feature_matrix(targets, tz, zone)
+    return (
+        feature_matrix(history.starts, tz, zone, region),
+        feature_matrix(targets, tz, zone, region),
+    )
 
 
 class Forecaster(Protocol):
@@ -367,10 +375,13 @@ class CurrentModel:
     model_factory: Callable[[], NumpyGradientBoosting] = create_price_model
     name: str = "current (NumPy GBM)"
     zone: ZoneWeatherIndex | None = None
+    region: str | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
-        train_rows, target_rows = _feature_rows(history, targets, self.tz, self.zone)
+        train_rows, target_rows = _feature_rows(
+            history, targets, self.tz, self.zone, self.region
+        )
         model = self.model_factory()
         model.fit(train_rows, history.prices)
         return model.predict(target_rows)
@@ -387,12 +398,15 @@ class LightGbmReference:
     tz: tzinfo
     name: str = "lightgbm (reference)"
     zone: ZoneWeatherIndex | None = None
+    region: str | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
         import lightgbm  # optional dev-only dependency (requirements_backtest.txt)
 
-        train_rows, target_rows = _feature_rows(history, targets, self.tz, self.zone)
+        train_rows, target_rows = _feature_rows(
+            history, targets, self.tz, self.zone, self.region
+        )
         dataset = lightgbm.Dataset(
             train_rows, label=history.prices, feature_name=list(FEATURE_NAMES)
         )
@@ -408,7 +422,10 @@ def _lightgbm_available() -> bool:
 
 
 def build_models(
-    names: Sequence[str], tz: tzinfo, zone: ZoneWeatherIndex | None = None
+    names: Sequence[str],
+    tz: tzinfo,
+    zone: ZoneWeatherIndex | None = None,
+    region: str | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}."""
     models: list[Forecaster] = []
@@ -417,10 +434,10 @@ def build_models(
         if name == "naive":
             models.append(NaiveLastWeek(tz))
         elif name == "current":
-            models.append(CurrentModel(tz, zone=zone))
+            models.append(CurrentModel(tz, zone=zone, region=region))
         elif name == "lightgbm":
             if _lightgbm_available():
-                models.append(LightGbmReference(tz, zone=zone))
+                models.append(LightGbmReference(tz, zone=zone, region=region))
             else:
                 skipped[LightGbmReference.name] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
@@ -694,7 +711,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             data_last + timedelta(days=1),
             args.cache_dir,
         )
-    models, skipped = build_models(names, tz, zone)
+    models, skipped = build_models(names, tz, zone, args.region)
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(

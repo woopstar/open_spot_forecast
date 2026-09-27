@@ -38,6 +38,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
 | `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
+| `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                     |
 | `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                         |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
@@ -170,10 +171,10 @@ not to `storage.py`.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (17 features)
+## Feature Vector (21 features)
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
-and prediction alike, comes from `build_feature_row(slot_start, SlotInputs)` in
+and prediction alike, comes from `build_feature_row(slot_start, SlotInputs, region)` in
 `ml/features.py`, then `build_feature_vector()` in `FEATURE_NAMES` order. Only the inputs
 differ: `TrainingInputs` (`ml/training_inputs.py`, stored zone weather + `nordpool_prognoses`,
 matched by UTC epoch) vs `FeatureMixin._combine_features()` (stored/live forecasts, matched by
@@ -187,23 +188,32 @@ Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
 | #   | Feature                | Source       |
 | --- | ---------------------- | ------------ |
-| 0   | `hour`                 | Time         |
-| 1   | `day_of_week`          | Time         |
-| 2   | `is_weekend`           | Time         |
-| 3   | `hour_sin`             | Time         |
-| 4   | `hour_cos`             | Time         |
-| 5   | `consumption_forecast` | Nordpool API |
-| 6   | `solar_generation`     | Nordpool API |
-| 7   | `wind_offshore`        | Nordpool API |
-| 8   | `wind_onshore`         | Nordpool API |
-| 9   | `net_demand`           | Derived      |
-| 10  | `wind_share`           | Derived      |
-| 11  | `zone_wind`            | Open-Meteo   |
-| 12  | `zone_wind_power`      | Open-Meteo   |
-| 13  | `zone_temperature`     | Open-Meteo   |
-| 14  | `zone_irradiance`      | Open-Meteo   |
-| 15  | `zone_pressure`        | Open-Meteo   |
-| 16  | `zone_humidity`        | Open-Meteo   |
+| 0   | `day_of_week`          | Time         |
+| 1   | `is_weekend`           | Time         |
+| 2   | `slot_sin`             | Time         |
+| 3   | `slot_cos`             | Time         |
+| 4   | `morning_peak`         | Time         |
+| 5   | `sun_elevation`        | Sun          |
+| 6   | `sun_azimuth`          | Sun          |
+| 7   | `since_sunrise`        | Sun          |
+| 8   | `since_sunset`         | Sun          |
+| 9   | `consumption_forecast` | Nordpool API |
+| 10  | `solar_generation`     | Nordpool API |
+| 11  | `wind_offshore`        | Nordpool API |
+| 12  | `wind_onshore`         | Nordpool API |
+| 13  | `net_demand`           | Derived      |
+| 14  | `wind_share`           | Derived      |
+| 15  | `zone_wind`            | Open-Meteo   |
+| 16  | `zone_wind_power`      | Open-Meteo   |
+| 17  | `zone_temperature`     | Open-Meteo   |
+| 18  | `zone_irradiance`      | Open-Meteo   |
+| 19  | `zone_pressure`        | Open-Meteo   |
+| 20  | `zone_humidity`        | Open-Meteo   |
+
+Time features follow the local wall clock per 15-min slot (`slot_time_features()`); sun
+features come from `sun_features()` in `ml/sun.py` (astral, at the region's `zone_centre()`,
+the mean of its `WEATHER_POINTS`). `build_feature_row(start, inputs, region)` looks it up; never compute sun
+positions inline or from `sun.sun` (current state only, home location).
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.

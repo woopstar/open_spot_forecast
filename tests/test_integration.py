@@ -66,8 +66,8 @@ class TestSpotPricePredictor:
         assert "hour" in features[0]
         assert "day_of_week" in features[0]
         assert "is_weekend" in features[0]
-        assert "hour_sin" in features[0]
-        assert "hour_cos" in features[0]
+        assert "slot_sin" in features[0]
+        assert "slot_cos" in features[0]
 
     def test_extract_hourly_pattern(self):
         """Test hourly pattern extraction."""

@@ -108,19 +108,20 @@ known-data end → predict → save.
 
 ## Model: Single Price Predictor
 
-The system uses **one model** — a Gradient Boosting regressor that takes 17
+The system uses **one model** — a Gradient Boosting regressor that takes 21
 features and directly predicts the spot price. Wind, solar, and temperature
 are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
-[ML Documentation](ml_documentation.md#feature-vector-17-features)).
+[ML Documentation](ml_documentation.md#feature-vector-21-features)).
 
 ```
-Features (17):
-  [hour, day_of_week, is_weekend, hour_sin, hour_cos,
-   wind_speed_mean, wind_power_estimate, wind_direction,
-   cloud_coverage, humidity, temperature,
+Features (21):
+  [day_of_week, is_weekend, slot_sin, slot_cos, morning_peak,
+   sun_elevation, sun_azimuth, since_sunrise, since_sunset,
    consumption_forecast, solar_generation, wind_offshore, wind_onshore,
-   net_demand, wind_share]
+   net_demand, wind_share,
+   zone_wind, zone_wind_power, zone_temperature, zone_irradiance,
+   zone_pressure, zone_humidity]
                     │
                     ▼
   GradientBoosting (200 depth-limited trees)

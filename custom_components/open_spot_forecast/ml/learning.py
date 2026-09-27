@@ -167,7 +167,9 @@ class LearningMixin(PredictorBase):
                     continue
                 start = slot_start_in_day(date.date(), interval, self.tz)
                 all_prices.append(price)
-                all_features.append(build_feature_row(start, inputs.for_slot(start)))
+                all_features.append(
+                    build_feature_row(start, inputs.for_slot(start), self.region)
+                )
 
         _LOGGER.info(
             "Retrieved %d historical prices from %d days",
