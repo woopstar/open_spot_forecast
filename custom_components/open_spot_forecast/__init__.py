@@ -18,10 +18,12 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 
 from .const import (
+    CONF_CROSS_BORDER,
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
     CONF_TRAINING_DAYS,
+    DEFAULT_CROSS_BORDER,
     DEFAULT_TRAINING_DAYS,
     DOMAIN,
     PLATFORMS,
@@ -96,7 +98,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 entry.data.get(CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS),
             )
         )
-        ml_predictor = SpotPricePredictor(hass, region, tz_name, training_days)
+        cross_border = bool(entry.options.get(CONF_CROSS_BORDER, DEFAULT_CROSS_BORDER))
+        ml_predictor = SpotPricePredictor(
+            hass, region, tz_name, training_days, cross_border
+        )
         # Load learning data asynchronously
         await ml_predictor._load_learning_data()
         await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)

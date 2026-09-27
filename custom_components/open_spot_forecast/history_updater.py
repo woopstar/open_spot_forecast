@@ -5,8 +5,9 @@ the background at setup and after midnight: the missing price days of the
 training window first (from the day-ahead APIs, whatever the displayed price
 source, #24), then for every stored
 price day the zone weather (Open-Meteo's archived forecasts, #23), the
-Nordpool prognoses and, with an ENTSO-E key, the week-ahead load forecast
-(#30); if anything was added, the forecast is refreshed, so
+Nordpool prognoses, with an ENTSO-E key the week-ahead load forecast
+(#30) and, with the cross-border model, the neighbours' prices and zone
+weather (#29); if anything was added, the forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
 so an interrupted backfill resumes where it stopped. Once a day, history older than the training window plus
 ``HISTORY_MARGIN_DAYS`` is deleted.
@@ -15,19 +16,21 @@ so an interrupted backfill resumes where it stopped. Once a day, history older t
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
+from .api.dayahead_prices import NeighbourPriceSource
+from .api.openmeteo_weather import OpenMeteoWeatherSource
+from .const import WEATHER_POINTS
 from .time_slots import local_midnight
 
 if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
     from .api.entsoe_load import EntsoeLoadSource
-    from .api.openmeteo_weather import OpenMeteoWeatherSource
     from .api.time_series_source import TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
@@ -36,6 +39,30 @@ _LOGGER = logging.getLogger(__name__)
 
 # Stored history is kept this many days beyond the training window
 HISTORY_MARGIN_DAYS = 2
+
+
+def neighbour_sources(
+    hass: HomeAssistant,
+    ml_predictor: SpotPricePredictor | None,
+    entsoe_api_key: str | None,
+) -> tuple[list[NeighbourPriceSource], list[OpenMeteoWeatherSource]]:
+    """Return the neighbours' price and zone weather sources (#29).
+
+    Empty unless the predictor has the cross-border model. They share the
+    model's database with the region's own sources.
+    """
+    if ml_predictor is None or ml_predictor.cross_border is None:
+        return [], []
+    zones = ml_predictor.cross_border.zones
+    storage = ml_predictor.storage
+    return (
+        [NeighbourPriceSource(hass, storage, zone, entsoe_api_key) for zone in zones],
+        [
+            OpenMeteoWeatherSource(hass, storage, zone, neighbour=True)
+            for zone in zones
+            if zone in WEATHER_POINTS
+        ],
+    )
 
 
 class HistoryUpdaterMixin:
@@ -48,6 +75,9 @@ class HistoryUpdaterMixin:
     nordpool: NordpoolPrognosisSource | None
     weather: OpenMeteoWeatherSource | None
     load: EntsoeLoadSource | None
+    # The cross-border model's neighbour sources (#29); empty when it is off
+    neighbour_prices: list[NeighbourPriceSource]
+    neighbour_weather: list[OpenMeteoWeatherSource]
     dayahead: DayAheadPrices | None
     history_prices: DayAheadPrices | None
 
@@ -112,8 +142,9 @@ class HistoryUpdaterMixin:
         """Fetch the history the model trains on that is still missing.
 
         Day-ahead price days first, then for the stored price days the zone
-        weather, the Nordpool prognoses and the ENTSO-E load forecast. If anything was added the
-        forecast is refreshed, so the model retrains on it.
+        weather, the Nordpool prognoses, the ENTSO-E load forecast and the
+        cross-border model's neighbour prices and weather (#29). If anything
+        was added the forecast is refreshed, so the model retrains on it.
         """
         ml_predictor = self.ml_predictor
         if ml_predictor is None or self.nordpool is None:
@@ -125,8 +156,31 @@ class HistoryUpdaterMixin:
             prognoses = await self._backfill_source(self.nordpool, first, "Nordpool")
             load = await self._backfill_source(self.load, first, "ENTSO-E load")
             changed = changed or weather or prognoses or load
+            for source in [*self.neighbour_prices, *self.neighbour_weather]:
+                if await self._backfill_source(source, first, source.spec.name):
+                    changed = True
         if changed:
             await self.refresh_forecast()
+
+    async def update_neighbours(self, forecast_end: datetime) -> None:
+        """Refresh the neighbours' recent prices and weather forecast (#29).
+
+        Stage 1 reads both from storage, like the region's own inputs: the
+        prices from yesterday to tomorrow, the weather from yesterday to
+        ``forecast_end`` (Open-Meteo revises it).
+        """
+        today = dt_util.now().date()
+        yesterday = local_midnight(today - timedelta(days=1))
+        tomorrow_end = local_midnight(today + timedelta(days=2))
+        updates: list[tuple[TimeSeriesSource, datetime]] = [
+            *((source, tomorrow_end) for source in self.neighbour_prices),
+            *((source, forecast_end) for source in self.neighbour_weather),
+        ]
+        for source, end in updates:
+            try:
+                await source.async_update(yesterday, end)
+            except Exception as err:
+                _LOGGER.warning("Could not update %s: %s", source.spec.name, err)
 
     def start_history_backfill(self) -> None:
         """Run ``backfill_history`` in the background (it can take minutes)."""
@@ -166,6 +220,8 @@ class HistoryUpdaterMixin:
                 zone = await self.weather.async_prune(cutoff)
             if self.load is not None:
                 load = await self.load.async_prune(cutoff)
+            for source in [*self.neighbour_prices, *self.neighbour_weather]:
+                await source.async_prune(cutoff)
         except Exception as err:
             _LOGGER.warning("Could not prune the stored history: %s", err)
             return

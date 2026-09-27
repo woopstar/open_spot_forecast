@@ -12,13 +12,16 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime, tzinfo
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
 from .gbm import NumpyGradientBoosting
 from .numpy_models import NumpyRandomForest
 from .storage import LearningStorage
+
+if TYPE_CHECKING:
+    from .cross_border import CrossBorderModels
 
 
 class PredictorBase:
@@ -54,6 +57,8 @@ class PredictorBase:
     price_history: list[dict[str, Any]]
     max_history_days: int
     storage: LearningStorage
+    # Neighbours' stage-1 price models (#29); None when the option is off
+    cross_border: CrossBorderModels | None
     lead_time_accuracy: dict[str, dict[str, float | int]]
     evaluation: list[dict[str, Any]]
     _prediction_insert_counter: int = 0

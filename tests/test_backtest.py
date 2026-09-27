@@ -812,3 +812,92 @@ def test_the_load_forecast_needs_a_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ENTSOE_API_KEY", "tok")
     args = backtest.parse_args(["--load", "entsoe", "--horizon-days", "7"])
     assert (args.load, args.horizon_days) == ("entsoe", 7)
+
+
+# --- Two-stage cross-border model (#29) -------------------------------------------
+
+
+def _cross(series: PriceSeries) -> backtest.CrossBorderInputs:
+    return backtest.CrossBorderInputs(TZ, {"DE": series}, {"DE": None})
+
+
+@pytest.mark.parametrize("model_class", [CurrentModel, LightGbmReference])
+def test_future_neighbour_prices_cannot_change_the_forecast(model_class):
+    """Stage 1 only sees the neighbours' prices before the horizon cutoff."""
+    if model_class is LightGbmReference:
+        pytest.importorskip("lightgbm")
+    origin = date(2026, 6, 15)
+    region = _noisy_series(date(2026, 5, 20), 30)
+    neighbour = _noisy_series(date(2026, 5, 20), 30, seed=11)
+    future = neighbour.starts >= local_midnight(origin, TZ)
+    config = _config(origin, window_days=21)
+    targets, _ = target_slots(origin, config)
+    history = history_for(region, origin, config)
+
+    forecasts = []
+    for poison in (None, 1e6, math.nan):
+        prices = neighbour.prices.copy()
+        if poison is not None:
+            prices[future] = poison
+        cross = _cross(PriceSeries(neighbour.starts, prices))
+        forecasts.append(model_class(TZ, cross=cross).forecast(history, targets))
+
+    train, target = _cross(neighbour).columns(history, targets)
+    assert np.isfinite(train).all()
+    assert np.isfinite(target).all()
+    np.testing.assert_array_equal(forecasts[0], forecasts[1])
+    np.testing.assert_array_equal(forecasts[0], forecasts[2])
+
+
+def test_the_stage_1_columns_are_shared_by_the_rows_of_an_origin() -> None:
+    origin = date(2026, 6, 15)
+    series = _noisy_series(date(2026, 5, 20), 30)
+    config = _config(origin, window_days=21)
+    targets, _ = target_slots(origin, config)
+    history = history_for(series, origin, config)
+    cross = _cross(series)
+
+    first = cross.columns(history, targets)
+    again = cross.columns(history, targets)
+    assert all(a is b for a, b in zip(again, first, strict=True))
+    assert cross.names == ["cross_price_DE"]
+
+
+def test_build_models_names_the_two_stage_rows() -> None:
+    cross = _cross(_noisy_series(date(2026, 5, 20), 3))
+    models, skipped = build_models(["current", "lightgbm"], TZ, cross=cross)
+
+    names = [model.name for model in models] + list(skipped)
+    assert names[0] == "current (NumPy GBM, two-stage)"
+    assert names[1] == "lightgbm (reference, two-stage)"
+
+
+def test_the_cross_border_model_needs_a_region_with_neighbours() -> None:
+    with pytest.raises(SystemExit):
+        backtest.parse_args(["--cross-border", "--region", "SE3"])
+    assert backtest.parse_args(["--cross-border", "--region", "DK2"]).cross_border
+
+
+def test_neighbours_are_loaded_from_the_cache(tmp_path: Path) -> None:
+    """Every neighbour's prices and zone weather, one month and chunk each."""
+    first, last = date(2026, 6, 1), date(2026, 6, 30)
+    prices = {"unit": "EUR / MWh", "unix_seconds": [], "price": []}
+    for zone in ("DK1", "DE-LU", "SE4"):
+        (tmp_path / f"energy_charts_{zone}_2026-06.json").write_text(
+            json.dumps(prices), encoding="utf-8"
+        )
+    for region in ("DK1", "DE", "SE4"):
+        points = backtest.WEATHER_POINTS[region]
+        (tmp_path / f"openmeteo_{region}_2026-05-31_2026-07-01.json").write_text(
+            json.dumps([{"minutely_15": {"time": []}} for _ in points]),
+            encoding="utf-8",
+        )
+
+    cross = backtest.load_cross_border("DK2", first, last, tmp_path)
+    without = backtest.load_cross_border(
+        "DK2", first, last, tmp_path, with_weather=False
+    )
+
+    assert list(cross.prices) == ["DK1", "DE", "SE4"]
+    assert all(weather is not None for weather in cross.weather.values())
+    assert all(weather is None for weather in without.weather.values())

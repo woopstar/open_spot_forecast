@@ -21,6 +21,11 @@ NumpyGradientBoosting(          create_price_model() in ml/models.py
 )
 ```
 
+With the **cross-border model** (option, #29) this model is stage 2 of a
+two-stage model: it also gets one price column per neighbouring zone, from
+a stage-1 model per neighbour (see
+[Cross-Border Model](#cross-border-model-29)).
+
 These values were chosen with the [backtest](#backtesting): with the current
 inputs, deeper or less regularized trees (e.g. `max_depth` 6,
 `learning_rate` 0.1, `min_samples_leaf` 20) fit the noise of single
@@ -74,6 +79,9 @@ compares two UTC timestamps:
     prognoses does not count)
   - an Open-Meteo zone weather row whose values changed (a revised or
     backfilled forecast)
+  - with the cross-border model (#29), a neighbour's stored price or zone
+    weather row that changed, so stage 2 retrains whenever any stage-1
+    input changes
 - `last_trained_at` — when the last successful training **started**, so data
   written during a training run triggers the next one
 
@@ -84,8 +92,10 @@ practice each scheduled run retrains; without new data (e.g. two runs back to
 back) it does not. Forecast runs are
 serialized so two retrains never overlap.
 
-Trained trees are kept in memory only, so the first forecast after a restart
-always retrains from the persisted history.
+Trained trees, including the stage-1 models of the cross-border model, are
+kept in memory only, so the first forecast after a restart always retrains
+from the persisted history. The log line
+`ML model trained in … s: holdout MAE=…` gives each training's duration.
 
 **Hyperparameter optimization** (a grid search over `n_estimators` ∈ {100,
 200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2} and `max_depth` ∈ {2, 3, 4, 6})
@@ -127,7 +137,11 @@ until the next optimization.
 | 21  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                    |
 | 22  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)                |
 
-Column order is `FEATURE_NAMES` in `ml/features.py`.
+Column order is `FEATURE_NAMES` in `ml/features.py`. With the cross-border
+model (#29, option) the price model's input has one more column per
+neighbour after these 23: `cross_price_<zone>`, stage 1's price for the
+slot (see [Cross-Border Model](#cross-border-model-29)). The 23 stay the
+canonical vector; stage 1 uses them too.
 
 **Time of day and the sun** (#25). Since October 2025 the day-ahead market
 clears every 15 minutes, and prices often step within an hour, so the time
@@ -254,6 +268,71 @@ prediction:
   prognosis (`solar_generation`), the same source and unit in both phases.
   Irradiance came with #22 (`zone_irradiance`).
 
+## Cross-Border Model (#29)
+
+European day-ahead markets are coupled: an interconnector pulls a zone's
+price towards its neighbours' until it is congested. DK1 is linked to
+Germany, the Netherlands (COBRA), NO2 (Skagerrak), SE3 (Konti-Skan) and DK2
+(Great Belt), so a wind lull in Germany raises the DK1 price even when
+Jutland is windy. The single-stage model only sees DK1's own inputs.
+
+With the option **Cross-border model** (options flow, off by default; for
+DK1 and DK2, the regions in `NEIGHBOURS` in `const.py`: DK1 → DE, NL, NO2,
+SE3, DK2; DK2 → DK1, DE, SE4) the model is trained in two stages, after
+EpexPredictor (`pricepredictor.py` `get_cross_features`, BSD-3-Clause,
+reimplemented in `ml/cross_border.py`):
+
+1. **Stage 1**: one price model per neighbour (`Stage1Model`), fitted on the
+   neighbour's day-ahead prices (`neighbour_prices`, raw EUR/MWh) and rows
+   from `build_feature_row` for the neighbour: its local time, holidays,
+   sun position and Open-Meteo zone weather at its `WEATHER_POINTS`
+   (`neighbour_feature_rows`). Nordpool and ENTSO-E inputs only exist for
+   the region itself and are NaN. It is the production price model
+   (`create_price_model()`).
+2. **Stage 2**: the region's price model, with a `cross_price_<zone>` column
+   per neighbour after the 23 features: stage 1's price for the slot.
+
+**Stage-1 values in training rows are out of sample.** A model's fitted
+values are much closer to the actual prices than its forecasts: on DK1's
+neighbours (60-day window, weekly origins, mean over the five), the
+stage-1 error on its own training rows is 1.3 ct/kWh, while the same
+model's next-day forecast is off by 2.1 and an out-of-sample value (four
+interleaved folds) by 1.9. Trained on fitted values, stage 2
+would learn to trust the column more than any forecast deserves. So each
+neighbour's stage 1 is `STAGE1_FOLDS` = 2 models, fitted on interleaved
+local days (`local_day_fold`: the day's ordinal modulo 2): each training
+row gets the price of the model that did not see its day. Prediction rows
+get the mean of the two models, so no separate full fit is needed: two
+half-size fits cost about one full one. Interleaved days rather than
+contiguous blocks, because a block model extrapolates to the ends of the
+window (see the backtest below).
+
+Stage 1 reads the neighbours' prices and weather from storage in both
+phases, like the region's own inputs: archived forecasts for past days, the
+live forecast ahead. The forecast run refreshes the neighbours' prices up to
+tomorrow and their weather from yesterday to the forecast's end; the
+history backfill fills the training window; retention prunes them with the
+rest (see [persistence](persistence.md#retention)).
+
+**Missing neighbour data is NaN.** A neighbour with less than a week of
+prices in a fold's training days (`MIN_STAGE1_ROWS`), or whose data fails to
+load, has no stage-1 model and a NaN column, which the price model handles.
+A new install therefore predicts at once and gains the columns when the
+backfill has fetched the neighbours' history (which triggers a retrain).
+
+**Cost.** Each training fits `2 × neighbours` extra models on the training
+window and builds the neighbours' feature rows. With a 60-day window and
+synthetic full history, a DK1 training (stage 1, stage 2 and the holdout
+copy) takes 3.4 s on one aarch64 core of the development container with the
+option and 0.5 s without it. It was not measured on a Raspberry Pi: a Pi 4
+core is roughly 5-10 times slower, so expect 20-35 s per training there, in
+the executor, a few times a day (whenever an input changed). Prediction
+only adds the stage-1 forecasts of the forecast week's slots. The database
+grows by about 19 MB at 60 days: the neighbours' prices and their weather
+(DK1: 23 weather points besides its own 4). The option is off by default
+because of that cost and the extra requests (energy-charts and Open-Meteo,
+per neighbour), not because of accuracy.
+
 ## Data Sources
 
 | Source                                              | Type                | Resolution    | Used for                                               |
@@ -272,6 +351,8 @@ prediction:
 | Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min        | `openmeteo_weather` days before yesterday (training)   |
 | ENTSO-E week-ahead load (A65/A31, API key, #30)     | Load forecast       | Daily min/max | `entsoe_load` curve: `load_forecast`, both phases      |
 | `holidays` package (#26)                            | Public holidays     | Daily         | `holiday` feature, both phases                         |
+| energy-charts.info, neighbouring zones (#29)        | Raw spot price      | 15-min        | `neighbour_prices`: stage-1 targets (cross-border)     |
+| Open-Meteo at the neighbours' points (#29)          | Zone weather        | 15-min        | `openmeteo_weather`: stage-1 inputs (cross-border)     |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -388,7 +469,11 @@ uses the rows twice:
    [Backtesting](#backtesting)) also fits on its whole window.
 
 The split is chronological, never shuffled, so the holdout rows are always
-later than the rows the copy was fitted on, as in a real forecast. The extra
+later than the rows the copy was fitted on, as in a real forecast. With the
+cross-border model the holdout copy gets the same stage-1 columns as the
+live model: out of sample per day, but from stage-1 models fitted on the
+whole window, so the neighbours' prices around the holdout days are
+known to stage 1 and the holdout error is slightly optimistic. The extra
 fit roughly doubles training time. Like the rest of training, it runs in the
 executor.
 
@@ -625,6 +710,11 @@ pipeline:
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state) and
   hyperparameters restored from HPO are not applied.
+- **Cross-border model only with `--cross-border`.** The `current` and
+  `lightgbm` rows then become two-stage models (#29) for a region in
+  `NEIGHBOURS`: stage 1 is the integration's `Stage1Model` per neighbour,
+  fitted on the neighbour's energy-charts prices from the same window, cut
+  at the same horizon cutoff, with its Open-Meteo archive weather.
 
 ### Running
 
@@ -633,6 +723,7 @@ pip install -r requirements_backtest.txt   # optional LightGBM row
 ./scripts/quality.sh backtest --region DK1  # last 365 origins, 180-day window
 python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --window-days 30
 python -m scripts.backtest --region DK1 --window-days 60 --days holidays
+python -m scripts.backtest --region DK1 --window-days 60 --cross-border
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 ```
 
@@ -781,6 +872,53 @@ Variants on the holiday days (NumPy GBM, 60 days, 1d / 2d / 3d MAE):
   and the half-day value of 24/12 and 31/12 is not decided by these two
   days (in Denmark they are close to full holidays, 1 scores best; in
   Germany they are half days), so it stays at the issue's 0.5.
+
+### Cross-border model (#29)
+
+365 daily origins from 2025-09-24 to 2026-09-23, 60-day window, retrained
+daily, EUR ct/kWh, with the zone weather and every earlier feature.
+`before` is the single-stage model, `after` the two-stage model
+(`--cross-border`). Recorded 2026-09-27 with `lightgbm==4.7.0`.
+
+| Region | Model                | before 1d MAE | after 1d MAE | before 2d / 3d MAE | after 2d / 3d MAE |
+| ------ | -------------------- | ------------: | -----------: | -----------------: | ----------------: |
+| DK1    | current (NumPy GBM)  |          2.29 |     **1.90** |        2.46 / 2.52 |       2.02 / 2.07 |
+| DK1    | lightgbm (reference) |          2.27 |         1.82 |        2.48 / 2.55 |       1.97 / 2.02 |
+| DK2    | current (NumPy GBM)  |          2.52 |     **2.12** |        2.69 / 2.73 |       2.29 / 2.34 |
+| DK2    | lightgbm (reference) |          2.54 |         2.09 |        2.74 / 2.81 |       2.28 / 2.35 |
+
+RMSE falls alike (DK1 1d: 3.46 → 3.00; DK2 1d: 3.78 → 3.27). The naive
+baseline is 3.93 (DK1) and 4.12 (DK2).
+
+How stage 1 feeds stage 2 (DK1, NumPy GBM, same period; `s/origin` is the
+fit time per origin on one core here, stage 1 included):
+
+| Stage-1 values in training rows                 | 1d MAE | 2d MAE | 3d MAE | s/origin |
+| ----------------------------------------------- | -----: | -----: | -----: | -------: |
+| none (single-stage)                             |   2.29 |   2.46 |   2.52 |     0.17 |
+| fitted, in sample (EpexPredictor)               |   1.87 |   2.02 |   2.07 |     1.20 |
+| out of sample, 2 interleaved-day folds (chosen) |   1.90 |   2.03 |   2.07 |     1.60 |
+| out of sample, 4 interleaved-day folds          |   1.88 |   2.01 |   2.06 |     3.36 |
+
+On weekly origins (53) two more variants were tried: out of sample from 4
+contiguous blocks of days scored 2.12 / 2.18 / 2.13 (a block's model
+extrapolates to the window's ends), and the neighbours' zone weather as
+direct columns instead of stage 1 (30 columns) 2.06 / 2.08 / 2.08, against
+1.89 / 2.00 / 2.07 in sample and 2.17 / 2.35 / 2.48 single-stage. Germany
+alone as a neighbour gave 1.97 / 2.13 / 2.14; adding DK1's own stage-1
+model, as EpexPredictor does, changed nothing (1.88 / 2.02 / 2.08).
+
+- **The neighbours are the largest gain since the zone weather**: 17-18 %
+  lower MAE for DK1 and 14-16 % for DK2 at every horizon, for both learners.
+- **In and out of sample tie in the backtest**, but the backtest cannot show
+  the over-trust out-of-sample values guard against: its target rows get
+  Open-Meteo's archive, near-same-day forecasts even days ahead, so stage 1
+  forecasts the targets about as well as it fits its training rows. At
+  prediction, days 2-7 have real forecasts; out-of-sample training values
+  (error 1.9 against 1.3 fitted) match that. Two folds cost about one full
+  fit.
+- **Cost**: about 7 times the training time (see
+  [Cross-Border Model](#cross-border-model-29)).
 
 ### ENTSO-E load forecast (#30)
 

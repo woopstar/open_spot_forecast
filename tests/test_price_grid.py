@@ -244,6 +244,7 @@ async def test_quarter_update_skips_a_missing_slot(
     }
     reader.read_weather_sensors.return_value = {"temperature": 12.0}
     ml_predictor = Mock()
+    ml_predictor.cross_border = None
     ml_predictor._load_learning_data = AsyncMock()
     ml_predictor.save_learning_data = AsyncMock()
     ml_predictor.predictions = []

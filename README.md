@@ -96,6 +96,9 @@ confirmed prices in the forecast attribute").
   fallback (API key) and ECB exchange rates for DKK/SEK/NOK
 - **ENTSO-E load forecast** (optional, API key) — the week-ahead load
   forecast of the bidding zone, the model's demand input for days 3-7
+- **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
+  learns the neighbours' day-ahead prices from their weather and feeds the
+  forecasts to the region's model (more CPU per training)
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
 - **Open-Meteo** — 15-minute weather at several points across the bidding
   zone, 8 days ahead (no key; weather data by Open-Meteo.com, CC BY 4.0)

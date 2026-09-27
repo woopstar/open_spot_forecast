@@ -86,6 +86,10 @@ def test_model_attribution_credits_every_source_the_model_learns_from() -> None:
     assert model_attribution({"ml_predictor": model, "entsoe_load": True}) == (
         f"{PROGNOSES} · Load forecast: ENTSO-E Transparency Platform"
     )
+    # The cross-border model also learns from the neighbours' prices (#29)
+    assert model_attribution({"ml_predictor": model, "cross_border": True}) == (
+        f"{PROGNOSES} · Neighbour prices: energy-charts.info"
+    )
 
 
 def test_entities_show_the_attribution() -> None:

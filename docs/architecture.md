@@ -23,6 +23,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                  |
 | Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)     |
 | ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)         |
+| energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)        |
 
 ## Component Architecture
 

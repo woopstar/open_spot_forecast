@@ -11,9 +11,10 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_TRAINING_DAYS
+from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
+from .cross_border import CrossBorderModels
 from .features import FeatureMixin, optional_float
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
@@ -37,6 +38,7 @@ class SpotPricePredictor(
         region: str,
         tz_name: str = "Europe/Copenhagen",
         training_days: int = DEFAULT_TRAINING_DAYS,
+        cross_border: bool = False,
     ):
         """Initialize the predictor.
 
@@ -45,6 +47,8 @@ class SpotPricePredictor(
             region: Price region (bidding zone).
             tz_name: The region's time zone.
             training_days: Days of price history the model trains on (#24).
+            cross_border: Use the two-stage cross-border model (#29), for a
+                region with ``NEIGHBOURS``.
         """
         self.hass = hass
         self.region = region
@@ -105,6 +109,12 @@ class SpotPricePredictor(
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)
+        # Two-stage cross-border model (#29): the neighbours' stage-1 models
+        self.cross_border = (
+            CrossBorderModels(region, self.tz, self.storage)
+            if cross_border and region in NEIGHBOURS
+            else None
+        )
 
         # Note: Learning data is loaded asynchronously in __init__.py
 

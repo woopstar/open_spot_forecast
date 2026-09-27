@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -121,10 +122,17 @@ class OpenMeteoWeatherSource(TimeSeriesSource):
         storage: LearningStorage,
         region: str,
         horizon_cutoff: datetime | None = None,
+        neighbour: bool = False,
     ) -> None:
-        """Initialize the source for a region in ``WEATHER_POINTS``."""
+        """Initialize the source for a region in ``WEATHER_POINTS``.
+
+        A ``neighbour`` zone's points (cross-border model, #29) share the
+        table but keep their own source state.
+        """
         super().__init__(hass, storage, horizon_cutoff)
         self.points = WEATHER_POINTS[region]
+        if neighbour:
+            self.spec = replace(OPENMETEO_WEATHER, name=f"openmeteo_{region}")
 
     def keys(self) -> list[str]:
         """Return the region's point keys: a slot needs a row for each."""

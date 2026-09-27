@@ -45,6 +45,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                     |
 | `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)         |
 | `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                         |
+| `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)      |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
 | `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
@@ -69,6 +70,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `nordpool_prognoses.py` | `NordpoolPrognosisSource` — both prognoses as `nordpool_prognoses` rows, one request per missing CET delivery day       |
 | `time_series_source.py` | `TimeSeriesSource` — gap-aware incremental updates shared by every upstream time series (#32)                           |
 | `dayahead_prices.py`    | `DayAheadPriceSource` — energy-charts (+ ENTSO-E fallback) day-ahead prices as `dayahead_prices` rows (#27)             |
+|                         | `NeighbourPriceSource` — a neighbouring zone's day-ahead prices in `neighbour_prices`, keyed by zone (#29)              |
 | `entsoe.py`             | ENTSO-E request (`async_entsoe_get`) and XML helpers, shared by the price fallback and the load forecast                |
 | `entsoe_load.py`        | `EntsoeLoadSource` — ENTSO-E week-ahead load (A65/A31, daily min/max) as a 15-min curve in `entsoe_load` (#30)          |
 | `openmeteo_weather.py`  | `OpenMeteoWeatherSource` — Open-Meteo 15-min weather at the region's `WEATHER_POINTS` as `openmeteo_weather` rows (#22) |
@@ -233,6 +235,10 @@ cached per country and year; never build a `holidays` calendar in the event loop
 `load_forecast` (#30) is ENTSO-E's week-ahead load curve (`load_curve()`, `entsoe_load` table),
 only with an ENTSO-E key and in `ENTSOE_LOAD_REGIONS`; it is its own feature, never merged into
 Nordpool's `consumption_forecast`. The ENTSO-E key is optional in the config and options flow.
+The cross-border model (#29, option `cross_border`, regions in `NEIGHBOURS`) lives in
+`ml/cross_border.py`: stage-1 models per neighbour (`Stage1Model`, out-of-sample per
+`local_day_fold`) whose columns follow the 23 features via `ModelMixin._model_inputs()`;
+build model input rows there, never with `build_feature_vector()` alone.
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.

@@ -70,6 +70,7 @@
           "vat": "VAT Rate",
           "precision": "Decimal Precision",
           "training_days": "Training days (price history the model learns from)",
+          "cross_border": "Cross-border model (neighbouring zones' prices)",
           "entsoe_api_key": "ENTSO-E API key (optional)",
           "surcharge": "Surcharge per unit (added before VAT)",
           "hourly_average": "Hourly average prices",
@@ -81,7 +82,8 @@
           "surcharge": "Fixed amount in your currency per price unit, added to the spot price before VAT: total = (spot + surcharge) × (1 + VAT). Applies to the day-ahead prices and the forecast; Stromligning's prices already include it. Takes effect after the integration reloads.",
           "hourly_average": "Show the mean of each hour's four 15-minute prices, for contracts billed by the hour. Takes effect after the integration reloads.",
           "attribute_format": "Detailed: one entry per interval with start, end, price, unit and confidence (up to 72 hours). Compact: parallel arrays of start times (s, unix seconds), prices (t) and confidences in percent (c), about six times smaller, so up to 168 hours fit Home Assistant's 16 KB attribute limit. Takes effect after the integration reloads.",
-          "include_known_prices": "Start the forecast attribute at the current slot with the confirmed spot prices (source: actual), then the predictions (source: predicted), as one continuous series. In the compact format, known_count gives the number of confirmed entries. Takes effect after the integration reloads."
+          "include_known_prices": "Start the forecast attribute at the current slot with the confirmed spot prices (source: actual), then the predictions (source: predicted), as one continuous series. In the compact format, known_count gives the number of confirmed entries. Takes effect after the integration reloads.",
+          "cross_border": "Two-stage model: learns the neighbouring bidding zones' prices from their weather and gives the forecasts to this zone's model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Lowers the forecast error by about a sixth in the backtest, but trains two extra models per neighbour and stores their prices and weather: each training takes several times longer (tens of seconds on a Raspberry Pi 4). Takes effect after the integration reloads."
         }
       }
     }
