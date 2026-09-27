@@ -23,7 +23,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                          |
 | `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                                                                        |
 | `price_series.py`        | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                              |
-| `spot_prices.py`         | `ml_price_inputs()` (the model's raw spot prices + where they end), `extract_latest_known_timestamp()`                                                     |
+| `spot_prices.py`         | `ml_price_inputs()` (the model's raw spot prices + where they end), `known_until()`, `with_known_prices()` (confirmed, then predicted; #40)                |
 | `time_slots.py`          | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                             |
 | `tomorrow_prices.py`     | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                          |
 | `__init__.py`            | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                     |

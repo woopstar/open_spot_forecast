@@ -34,6 +34,8 @@ from .const import (
     DEFAULT_VAT,
     PRICE_IN,
     SLOTS_PER_HOUR,
+    SOURCE_ACTUAL,
+    SOURCE_PREDICTED,
 )
 from .time_slots import SLOT_MINUTES, floor_to_slot, parse_utc, slot_index_in_day
 
@@ -88,6 +90,21 @@ def _predicted_slots(
             yield start, prediction
 
 
+def _with_source(
+    entry: dict[str, Any], slots: Sequence[dict[str, Any]]
+) -> dict[str, Any]:
+    """Mark an entry ``actual`` or ``predicted`` if its slots are marked (#40).
+
+    An hour is ``actual`` only if all its slots are.
+    """
+    sources = {slot["source"] for slot in slots if "source" in slot}
+    if sources:
+        entry["source"] = (
+            SOURCE_ACTUAL if sources == {SOURCE_ACTUAL} else SOURCE_PREDICTED
+        )
+    return entry
+
+
 def slot_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return the predictions that have a start and a price, one per slot.
 
@@ -97,16 +114,22 @@ def slot_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
 
     Returns:
         ``{"start", "end", "price", "confidence"}`` entries; ``end`` is filled
-        in (start + 15 minutes) when a prediction has none.
+        in (start + 15 minutes) when a prediction has none. A prediction's
+        ``source`` (#40) is kept.
     """
     return [
-        {
-            "start": prediction["start"],
-            "end": prediction.get("end")
-            or dt_util.as_local(start + timedelta(minutes=SLOT_MINUTES)).isoformat(),
-            "price": prediction["price"],
-            "confidence": prediction.get("confidence"),
-        }
+        _with_source(
+            {
+                "start": prediction["start"],
+                "end": prediction.get("end")
+                or dt_util.as_local(
+                    start + timedelta(minutes=SLOT_MINUTES)
+                ).isoformat(),
+                "price": prediction["price"],
+                "confidence": prediction.get("confidence"),
+            },
+            [prediction],
+        )
         for start, prediction in _predicted_slots(predictions)
     ]
 
@@ -131,14 +154,17 @@ def hourly_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any
             [slot["confidence"] for slot in slots if slot.get("confidence") is not None]
         )
         forecast.append(
-            {
-                "start": dt_util.as_local(hour_start).isoformat(),
-                "end": dt_util.as_local(
-                    hour_start + timedelta(minutes=HOUR_MINUTES)
-                ).isoformat(),
-                "price": _mean([slot["price"] for slot in slots]),
-                "confidence": None if confidence is None else round(confidence, 2),
-            }
+            _with_source(
+                {
+                    "start": dt_util.as_local(hour_start).isoformat(),
+                    "end": dt_util.as_local(
+                        hour_start + timedelta(minutes=HOUR_MINUTES)
+                    ).isoformat(),
+                    "price": _mean([slot["price"] for slot in slots]),
+                    "confidence": None if confidence is None else round(confidence, 2),
+                },
+                slots,
+            )
         )
     return forecast
 

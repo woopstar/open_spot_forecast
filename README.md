@@ -73,6 +73,7 @@ action: open_spot_forecast.get_forecast
 data:
   hours: 48 # optional; default: the whole forecast
   hourly: true # optional; default: the entry's hourly-average option
+  include_known: true # optional; confirmed prices first, then the forecast
   # start: "2026-09-25 00:00"  # optional; default: now
   # config_entry_id: ...        # optional with one entry
 response_variable: forecast
@@ -80,7 +81,9 @@ response_variable: forecast
 
 The response has `known_until` (end of the confirmed prices), `unit`,
 `interval_minutes` and `forecast`, a list of `start`, `end`, `price` and
-`confidence`.
+`confidence` (and `source`, `actual` or `predicted`, with `include_known`).
+The forecast sensor can show the same continuous series (option "Include
+confirmed prices in the forecast attribute").
 
 ### Data Sources
 

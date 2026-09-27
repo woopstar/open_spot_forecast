@@ -74,7 +74,13 @@ def test_read_spot_prices_without_sensors_is_empty() -> None:
 
     spot = SensorReader(hass).read_spot_prices(None, "binary_sensor.missing")
 
-    assert spot == {"today": [], "tomorrow": [], "raw_today": [], "raw_tomorrow": []}
+    assert spot == {
+        "today": [],
+        "tomorrow": [],
+        "raw_today": [],
+        "raw_tomorrow": [],
+        "day": None,
+    }
 
 
 # --- ML price inputs ---------------------------------------------------------------

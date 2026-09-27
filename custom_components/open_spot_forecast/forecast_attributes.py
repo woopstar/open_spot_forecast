@@ -22,7 +22,7 @@ from typing import Any
 
 from homeassistant.helpers.json import json_bytes
 
-from .const import RECORDER_MAX_ATTRIBUTES_BYTES
+from .const import RECORDER_MAX_ATTRIBUTES_BYTES, SOURCE_ACTUAL
 from .price_output import HOUR_MINUTES
 from .time_slots import parse_utc
 
@@ -57,14 +57,16 @@ def compact_forecast(
 
     Returns:
         ``interval_minutes``, ``unit``, ``s`` (unix start seconds), ``t``
-        (prices) and ``c`` (confidence in percent, None if unknown).
+        (prices) and ``c`` (confidence in percent, None if unknown); with
+        confirmed prices (#40) also ``known_count``, the number of leading
+        entries that are confirmed prices.
     """
     rows = [
         (start, entry)
         for entry in entries
         if (start := parse_utc(entry["start"])) is not None
     ]
-    return {
+    compact: dict[str, Any] = {
         "interval_minutes": interval_minutes,
         "unit": unit,
         "s": [int(start.timestamp()) for start, _ in rows],
@@ -76,6 +78,17 @@ def compact_forecast(
             for _, entry in rows
         ],
     }
+    if any("source" in entry for _, entry in rows):
+        # Confirmed prices first (#40): the first known_count entries
+        compact["known_count"] = next(
+            (
+                index
+                for index, (_, entry) in enumerate(rows)
+                if entry.get("source") != SOURCE_ACTUAL
+            ),
+            len(rows),
+        )
+    return compact
 
 
 def attributes_size(attributes: dict[str, Any]) -> int:
@@ -105,3 +118,5 @@ def fit_compact(
         keep = max(0, count - drop)
         for name in COMPACT_ARRAYS:
             compact[name] = compact[name][:keep]
+        if "known_count" in compact:
+            compact["known_count"] = min(compact["known_count"], keep)

@@ -98,7 +98,13 @@ def test_spot_data_needs_a_rate_and_valid_prices() -> None:
 
     data = dayahead_spot_data(rows, lambda day: None if day > TODAY else 7.5, TODAY)
 
-    assert data == {"today": [], "tomorrow": [], "raw_today": [], "raw_tomorrow": []}
+    assert data == {
+        "today": [],
+        "tomorrow": [],
+        "raw_today": [],
+        "raw_tomorrow": [],
+        "day": TODAY,
+    }
 
 
 def test_prices_by_day_follow_local_days_incl_dst() -> None:

@@ -245,6 +245,13 @@ ATTRIBUTE_FORMATS = (ATTRIBUTE_FORMAT_DETAILED, ATTRIBUTE_FORMAT_COMPACT)
 DEFAULT_ATTRIBUTE_FORMAT = ATTRIBUTE_FORMAT_DETAILED
 # The recorder does not store a state's attributes above this size (JSON bytes)
 RECORDER_MAX_ATTRIBUTES_BYTES = 16384
+
+# Confirmed prices before the forecast (#40): the forecast attribute starts at
+# the current slot with the known spot prices, each entry marked by its source
+CONF_INCLUDE_KNOWN_PRICES = "include_known_prices"
+DEFAULT_INCLUDE_KNOWN_PRICES = False
+SOURCE_ACTUAL = "actual"
+SOURCE_PREDICTED = "predicted"
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
 # Live forecast accuracy per lead time (slot start - time the prediction was

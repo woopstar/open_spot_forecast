@@ -73,13 +73,15 @@
           "entsoe_api_key": "ENTSO-E API key (optional)",
           "surcharge": "Surcharge per unit (added before VAT)",
           "hourly_average": "Hourly average prices",
-          "attribute_format": "Forecast attribute format"
+          "attribute_format": "Forecast attribute format",
+          "include_known_prices": "Include confirmed prices in the forecast attribute"
         },
         "data_description": {
           "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged.",
           "surcharge": "Fixed amount in your currency per price unit, added to the spot price before VAT: total = (spot + surcharge) × (1 + VAT). Applies to the day-ahead prices and the forecast; Stromligning's prices already include it. Takes effect after the integration reloads.",
           "hourly_average": "Show the mean of each hour's four 15-minute prices, for contracts billed by the hour. Takes effect after the integration reloads.",
-          "attribute_format": "Detailed: one entry per interval with start, end, price, unit and confidence (up to 72 hours). Compact: parallel arrays of start times (s, unix seconds), prices (t) and confidences in percent (c), about six times smaller, so up to 168 hours fit Home Assistant's 16 KB attribute limit. Takes effect after the integration reloads."
+          "attribute_format": "Detailed: one entry per interval with start, end, price, unit and confidence (up to 72 hours). Compact: parallel arrays of start times (s, unix seconds), prices (t) and confidences in percent (c), about six times smaller, so up to 168 hours fit Home Assistant's 16 KB attribute limit. Takes effect after the integration reloads.",
+          "include_known_prices": "Start the forecast attribute at the current slot with the confirmed spot prices (source: actual), then the predictions (source: predicted), as one continuous series. In the compact format, known_count gives the number of confirmed entries. Takes effect after the integration reloads."
         }
       }
     }
@@ -146,6 +148,10 @@
         "hourly": {
           "name": "Hourly",
           "description": "Average the four 15-minute prices of each hour. Default: the entry's hourly average option."
+        },
+        "include_known": {
+          "name": "Include confirmed prices",
+          "description": "Start with the confirmed spot prices (source: actual) up to known_until, then the predictions (source: predicted). Default: the entry's option."
         }
       }
     }
