@@ -99,31 +99,32 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (21 features)
+## Feature Vector (22 features)
 
 | #   | Feature                | Source             | Description                                     |
 | --- | ---------------------- | ------------------ | ----------------------------------------------- |
 | 0   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                    |
 | 1   | `is_weekend`           | Time               | 1 if Saturday/Sunday                            |
-| 2   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)            |
-| 3   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)            |
-| 4   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before) |
-| 5   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)    |
-| 6   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)      |
-| 7   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot      |
-| 8   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot       |
-| 9   | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)       |
-| 10  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)   |
-| 11  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)   |
-| 12  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)    |
-| 13  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)   |
-| 14  | `wind_share`           | Derived            | (offshore + onshore) / consumption              |
-| 15  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)  |
-| 16  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1  |
-| 17  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                    |
-| 18  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)        |
-| 19  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                   |
-| 20  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)               |
+| 2   | `holiday`              | Calendar           | 1 on Sundays/public holidays; share of states   |
+| 3   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)            |
+| 4   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)            |
+| 5   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before) |
+| 6   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)    |
+| 7   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)      |
+| 8   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot      |
+| 9   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot       |
+| 10  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)       |
+| 11  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)   |
+| 12  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)   |
+| 13  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)    |
+| 14  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)   |
+| 15  | `wind_share`           | Derived            | (offshore + onshore) / consumption              |
+| 16  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)  |
+| 17  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1  |
+| 18  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                    |
+| 19  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)        |
+| 20  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                   |
+| 21  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)               |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`.
 
@@ -155,6 +156,24 @@ window and prediction the next week. A day without sunrise or sunset (polar
 day or night) has NaN for those two. The values depend only on the slot and
 the region, so they are cached across retrains.
 
+**Public holidays** (#26). On a public holiday offices and most industry
+are closed, so demand and the price behave like on a Sunday, while
+`day_of_week` says Thursday. `holiday` (`ml/public_holidays.py`) is 1 on
+Sundays and public holidays and 0 on other days, from the slot's local date.
+Sundays count so the model learns the effect from the Sundays in its window
+and can apply it to a weekday holiday: a 60-day window often has no weekday
+holiday at all. Where public holidays differ within the bidding zone, it is
+the share of the zone's subdivisions with a holiday that day
+(`HOLIDAY_SUBDIVISIONS` in `const.py`: Germany's 16 states, e.g. 9/16 on
+Reformation Day). Other regions use their national calendar; France's
+subdivisions in the package are overseas territories, outside the bidding
+zone. Christmas Eve and New Year's Eve are at least 0.5, as half days. The
+calendars come from the [`holidays`](https://pypi.org/project/holidays/)
+package, the one Home Assistant's `workday` and `holiday` integrations use
+(declared in `manifest.json` with a loose lower bound, so it resolves to
+Home Assistant's version). They are built once per country and year, only
+in the executor, where every feature row is built.
+
 **Zone weather** (#22). The local weather entity is one place, at 10 m,
 about 48 hours ahead and hourly. The zone features describe
 the whole bidding zone instead: Open-Meteo's 15-minute forecast at a few
@@ -174,9 +193,10 @@ training, prediction, hyperparameter search and the backtest, is built by
 into the model input by `build_feature_vector()`. The two phases differ only
 in where a slot's `SlotInputs` come from (see
 [Training vs Prediction Segmentation](#training-vs-prediction-segmentation)).
-Time features (0-4) come from `slot_time_features()` and sun features
-(5-8) from `sun_features()` with the region's `zone_centre()`; derived
-features (13, 14, 16) are computed from the slot's own inputs.
+Time features (0, 1, 3-5) come from `slot_time_features()`, `holiday` (2)
+from `public_holiday()` with the region's calendar and sun features (6-9)
+from `sun_features()` with the region's `zone_centre()`; derived features
+(14, 15, 17) are computed from the slot's own inputs.
 
 **Missing inputs are NaN.** An input that is unknown for a slot (no zone
 weather stored for it, Nordpool prognoses only exist for today and
@@ -231,6 +251,7 @@ prediction:
 | `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                        |
 | Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min       | `openmeteo_weather`: zone features, both phases        |
 | Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min       | `openmeteo_weather` days before yesterday (training)   |
+| `holidays` package (#26)                            | Public holidays     | Daily        | `holiday` feature, both phases                         |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -284,7 +305,7 @@ The zone weather is one stored table for both phases:
   fetched for it.
 
 The local weather entity is no longer a model input (see
-[Feature Vector](#feature-vector-21-features)). Its snapshots
+[Feature Vector](#feature-vector-22-features)). Its snapshots
 (`weather_history`) only score its forecast: the confidence's
 forecast-error penalty compares the forecast recorded with a prediction
 with the snapshot taken in the slot. They do not trigger a retrain.
@@ -461,7 +482,7 @@ solar_scale = EMA(actual_power / solcast_estimate)
 
 Updated every prediction run (`_update_solar_scale`) and persisted. Since
 #17 it is **not applied to the price model**: the model no longer has a site
-solar feature (see [Feature Vector](#feature-vector-21-features)), and a
+solar feature (see [Feature Vector](#feature-vector-22-features)), and a
 factor applied to prediction rows only would make them differ from training
 rows again.
 
@@ -553,7 +574,7 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **Zone weather from Open-Meteo's archive.** The zone features (15-20) come
+- **Zone weather from Open-Meteo's archive.** The zone features (16-21) come
   from Open-Meteo's historical forecast API (`historical-forecast-api`, 90
   days per request, cached in `.cache/backtest/`) at the region's
   `WEATHER_POINTS`, for training and target slots alike (`--weather none`
@@ -561,7 +582,7 @@ pipeline:
   target slot days ahead gets weather about as good as a same-day forecast:
   the zone rows are **optimistic at 2-3 days ahead**, where the live
   forecast is less accurate.
-- **No Nordpool history.** Features 9-14 have no source for a year of
+- **No Nordpool history.** Features 10-15 have no source for a year of
   history (`nordpool_prognoses` keeps the 30-day training window plus 2
   days), so they are NaN in every row.
 - **Raw model output.** Per-slot bias correction (which needs live
@@ -574,9 +595,13 @@ pipeline:
 pip install -r requirements_backtest.txt   # optional LightGBM row
 ./scripts/quality.sh backtest --region DK1  # last 365 origins, 180-day window
 python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --window-days 30
+python -m scripts.backtest --region DK1 --window-days 60 --days holidays
 ```
 
-`--region` accepts every OSF region. Run the backtest before and after every
+`--region` accepts every OSF region. `--days holidays` scores only the
+target days that are public holidays and not Sundays (and only runs the
+origins that forecast one), to measure a change on the days the `holiday`
+feature is for. Run the backtest before and after every
 model or feature change, and put both tables in the PR.
 
 ### Zone weather (#22)
@@ -636,7 +661,7 @@ forecasts have an archive: the whole training window's zone weather is
 available on the first day, from the same kind of source the model
 predicts from, where measured weather would have to accumulate first.
 The local weather entity's features were removed for the same reason (see
-[Feature Vector](#feature-vector-21-features)); the backtest never had them
+[Feature Vector](#feature-vector-22-features)); the backtest never had them
 (no history), so its numbers do not change.
 
 ### Sun position and 15-minute time (#25)
@@ -677,6 +702,46 @@ changes one thing from the `after` set):
 - `hour` and `evening_peak` change nothing (a tree splits them exactly like
   `morning_peak`) and are not features. `sun_azimuth` and `morning_peak`
   only tie here; they stay as the issue's features, at negligible cost.
+
+### Public holidays (#26)
+
+DK1, 365 daily origins from 2025-09-24 to 2026-09-23, retrained daily, EUR
+ct/kWh, with the zone weather and the #25 features. `before` has no
+`holiday` feature. Recorded 2026-09-27 with `lightgbm==4.7.0`.
+
+**Holiday target days** (`--days holidays`: the 10 public holidays in the
+period that are not Sundays, including 24/12 and 31/12; 22 origins):
+
+| Window | Model                | before 1d MAE | after 1d MAE | before 2d / 3d MAE | after 2d / 3d MAE |
+| ------ | -------------------- | ------------: | -----------: | -----------------: | ----------------: |
+| 60 d   | current (NumPy GBM)  |          2.97 |     **2.92** |        3.69 / 4.05 |       3.59 / 4.02 |
+| 60 d   | lightgbm (reference) |          2.99 |         2.77 |        3.72 / 3.97 |       3.52 / 3.94 |
+| 180 d  | current (NumPy GBM)  |          2.72 |     **2.65** |        3.21 / 3.46 |       3.17 / 3.40 |
+| 180 d  | lightgbm (reference) |          2.89 |         2.74 |        3.51 / 3.77 |       3.46 / 3.75 |
+
+The naive baseline is 3.86 on these days. **All days** (NumPy GBM): 60
+days 2.29 / 2.46 / 2.52 before and after (1d RMSE 3.47 → 3.46), 180 days
+2.32 → 2.31 at 1d and 2.43 / 2.49 at 2d / 3d before and after.
+
+Variants on the holiday days (NumPy GBM, 60 days, 1d / 2d / 3d MAE):
+
+| Variant                       | 1d MAE | 2d MAE | 3d MAE |
+| ----------------------------- | -----: | -----: | -----: |
+| no `holiday` feature          |   2.97 |   3.69 |   4.05 |
+| after (24/12 and 31/12 = 0.5) |   2.92 |   3.59 |   4.02 |
+| 24/12 and 31/12 = 0           |   2.92 |   3.66 |   4.08 |
+| 24/12 and 31/12 = 1           |   2.88 |   3.58 |   4.02 |
+| Sundays are 0 (holidays only) |   2.88 |   3.71 |   4.06 |
+| `holiday` as the first column |   2.93 |   3.59 |   4.02 |
+
+- The feature lowers the error on holidays in every setting, most with the
+  longer window, which holds more holidays to learn from, and for LightGBM
+  (0.22 at 1d with 60 days). It leaves the other days unchanged.
+- Ten days make a small sample: the variants are within a few hundredths
+  of each other. Counting Sundays helps at 2d / 3d, as the design intends,
+  and the half-day value of 24/12 and 31/12 is not decided by these two
+  days (in Denmark they are close to full holidays, 1 scores best; in
+  Germany they are half days), so it stays at the issue's 0.5.
 
 ### Baseline
 

@@ -64,6 +64,7 @@ from custom_components.open_spot_forecast.ml.features import (
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
+from custom_components.open_spot_forecast.ml.public_holidays import public_holiday
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 
 SLOT_SECONDS = 15 * 60
@@ -518,6 +519,8 @@ class BacktestConfig:
     window_days: int = 180
     horizon_days: int = 3
     step_days: int = 1
+    # Only these target days are scored (e.g. holidays, #26); None scores all
+    score_days: frozenset[date] | None = None
 
     def origins(self) -> Iterator[date]:
         """Yield each forecast origin (the first forecast day)."""
@@ -573,6 +576,18 @@ def target_slots(origin: date, config: BacktestConfig) -> tuple[np.ndarray, np.n
     return starts, horizon
 
 
+def holiday_days(region: str, first: date, last: date) -> frozenset[date]:
+    """Return the days from ``first`` to ``last`` with a holiday that is not a Sunday.
+
+    Sundays are holidays for the model (``public_holiday``), but they are
+    ordinary Sundays for scoring.
+    """
+    days = (first + timedelta(days=n) for n in range((last - first).days + 1))
+    return frozenset(
+        day for day in days if day.weekday() != 6 and public_holiday(day, region)
+    )
+
+
 def run_backtest(
     series: PriceSeries,
     models: Sequence[Forecaster],
@@ -592,6 +607,11 @@ def run_backtest(
         },
     )
     for origin in config.origins():
+        if config.score_days is not None and not any(
+            origin + timedelta(days=day) in config.score_days
+            for day in range(config.horizon_days)
+        ):
+            continue
         history = history_for(series, origin, config)
         if len(history) < MIN_HISTORY_SLOTS:
             continue
@@ -606,6 +626,10 @@ def run_backtest(
                     f"{model.name} returned {predicted.shape}, expected {targets.shape}"
                 )
             for day, score in enumerate(result.scores[model.name], start=1):
+                if config.score_days is not None and (
+                    origin + timedelta(days=day - 1) not in config.score_days
+                ):
+                    continue
                 in_day = horizon == day
                 score.add_day(actual[in_day], predicted[in_day])
         result.origins += 1
@@ -623,7 +647,12 @@ def format_report(result: BacktestResult, region: str) -> str:
         f"Rolling backtest, {region}: origins {config.first_origin} to "
         f"{config.last_origin} ({result.origins} scored), "
         f"{config.window_days}-day window, retrained every {config.step_days} day(s). "
-        "MAE/RMSE in EUR ct/kWh.",
+        + (
+            f"Scored on {len(config.score_days)} holiday target days only. "
+            if config.score_days is not None
+            else ""
+        )
+        + "MAE/RMSE in EUR ct/kWh.",
         "",
         "| " + " | ".join(header) + " |",
         "| --- |" + " ---: |" * (len(header) - 1),
@@ -675,6 +704,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="openmeteo",
         help="zone weather inputs: Open-Meteo's archived forecasts, or none",
     )
+    parser.add_argument(
+        "--days",
+        choices=("all", "holidays"),
+        default="all",
+        help="score every target day, or only public holidays that are not Sundays",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -698,6 +733,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         last_origin=last,
         window_days=args.window_days,
         step_days=args.step_days,
+        score_days=holiday_days(args.region, first, last + timedelta(days=2))
+        if args.days == "holidays"
+        else None,
     )
     names = [name.strip() for name in args.models.split(",") if name.strip()]
     data_first = first - timedelta(days=config.window_days + 1)
