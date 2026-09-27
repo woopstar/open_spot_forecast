@@ -55,6 +55,7 @@ class PredictorBase:
     max_history_days: int
     storage: LearningStorage
     lead_time_accuracy: dict[str, dict[str, float | int]]
+    evaluation: list[dict[str, Any]]
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
@@ -85,6 +86,14 @@ class PredictorBase:
 
     def record_lead_time_accuracy(
         self, predictions: list[dict[str, Any]], actual_price: float
+    ) -> None:
+        raise NotImplementedError
+
+    def record_evaluation(
+        self,
+        slot_start: datetime,
+        predictions: list[dict[str, Any]],
+        actual_price: float,
     ) -> None:
         raise NotImplementedError
 

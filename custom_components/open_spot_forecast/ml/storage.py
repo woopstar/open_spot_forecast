@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant
 
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
 from .bias_storage import migrate_bias_to_additive
+from .evaluation_storage import EvaluationStorageMixin
 from .history_storage import HistoryStorageMixin
 from .prediction_storage import PredictionStorageMixin
 from .price_storage import migrate_price_history_to_rows
@@ -36,6 +37,7 @@ class LearningStorage(
     SeriesStorageMixin,
     LearningStateStorageMixin,
     LeadTimeAccuracyStorageMixin,
+    EvaluationStorageMixin,
 ):
     """Handles persistence of learning data to a SQLite database.
 
@@ -383,6 +385,7 @@ class LearningStorage(
 
         migrate_bias_to_additive(conn)
         self._create_lead_time_accuracy_schema(conn)
+        self._create_evaluation_schema(conn)
         migrate_to_spot_prices(conn)
         migrate_weather_to_utc(conn)
         migrate_price_history_to_rows(conn)
@@ -444,6 +447,7 @@ class LearningStorage(
                     DROP TABLE IF EXISTS spot_prices;
                     DROP TABLE IF EXISTS volatility;
                     DROP TABLE IF EXISTS lead_time_accuracy;
+                    DROP TABLE IF EXISTS evaluation;
                     DROP TABLE IF EXISTS meta;
                     """
                 )

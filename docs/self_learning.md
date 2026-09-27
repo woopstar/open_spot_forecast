@@ -121,6 +121,41 @@ in the unit the model learns: raw spot price excl. VAT (currency/kWh).
 Attributes: `samples`, `bias` (mean signed error; positive = overpredicting)
 and `window_days`.
 
+## Predicted vs Actual (#36)
+
+Once a slot is scored its predictions are deleted, so the forecast sensor
+never shows a slot whose price is known. To keep the comparison, the matched
+prediction made closest to 24 hours before the slot (`evaluation_prediction()`
+in `ml/lead_time.py`; ties go to the later one, negative lead times are
+skipped) is stored next to the actual price in the `evaluation` table, by the
+live loop and by the startup catch-up alike. Slots older than 7 days are not
+kept. The predictor caches the series (`evaluation`), reloaded at startup.
+
+It is exposed by the diagnostic `Forecast evaluation` sensor
+(`evaluation_sensor.py`): its state is the mean absolute error over the last
+48 hours, and its attributes hold the series as compact arrays, `s` (slot
+start, unix seconds), `t` (predicted) and `a` (actual), plus `samples`, `bias`
+(mean signed error; positive = too high), `lead_hours` and `window_hours`,
+about 5 KB. Prices are converted like every exposed price (unit, surcharge,
+VAT). The `get_forecast` action returns all kept slots with
+`evaluation: true`. An ApexCharts card over the sensor:
+
+```yaml
+type: custom:apexcharts-card
+graph_span: 48h
+series:
+  - entity: sensor.open_spot_forecast_dk1_forecast_evaluation
+    name: Predicted (day ahead)
+    data_generator: |
+      const e = entity.attributes;
+      return e.s.map((s, i) => [s * 1000, e.t[i]]);
+  - entity: sensor.open_spot_forecast_dk1_forecast_evaluation
+    name: Actual
+    data_generator: |
+      const e = entity.attributes;
+      return e.s.map((s, i) => [s * 1000, e.a[i]]);
+```
+
 ## Metrics Available
 
 Via `sensor.open_spot_forecast_dk1_learning_metrics`:

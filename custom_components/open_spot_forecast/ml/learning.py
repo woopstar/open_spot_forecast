@@ -262,7 +262,8 @@ class LearningMixin(PredictorBase):
         2. Calculates the error (predicted vs actual)
         3. Updates the additive bias offset for this 15-min slot
         4. Adapts the model based on recent errors
-        5. Records each error in its lead-time bucket
+        5. Records each error in its lead-time bucket, and keeps the
+           day-ahead prediction next to the actual price (#36)
 
         Args:
             timestamp: ISO format timestamp of the actual price
@@ -379,6 +380,7 @@ class LearningMixin(PredictorBase):
                 self.storage.remove_prediction(p["id"])
 
             self.record_lead_time_accuracy(matching_predictions, actual_price)
+            self.record_evaluation(dt, matching_predictions, actual_price)
 
             # --- Update per-slot volatility (EMA of MAE) ---
             mae = float(np.mean(metrics["abs_errors"]))
@@ -555,6 +557,7 @@ class LearningMixin(PredictorBase):
         self.error_metrics = {}
         self.bias_correction = {}
         self.lead_time_accuracy = {}
+        self.evaluation = []
 
         # Clear storage file
         await self.storage.async_clear_storage()

@@ -34,6 +34,7 @@ from .const import (
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .evaluation_sensor import ForecastEvaluationSensor
 from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
@@ -145,6 +146,9 @@ async def async_setup_entry(
             build_lead_time_accuracy_sensors(
                 hass, entry, api_data, currency, output.precision
             )
+        )
+        sensors.append(
+            ForecastEvaluationSensor(hass, entry, api_data, currency, output)
         )
 
     async_add_entities(sensors, True)

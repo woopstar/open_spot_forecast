@@ -111,6 +111,9 @@
       },
       "forecast_rmse_day_4_plus": {
         "name": "Prognose-RMSE dag 4+"
+      },
+      "forecast_evaluation": {
+        "name": "Prognoseevaluering"
       }
     }
   },
@@ -152,6 +155,10 @@
         "include_known": {
           "name": "Medtag kendte priser",
           "description": "Start med de kendte spotpriser (source: actual) frem til known_until og derefter prognoserne (source: predicted). Standard: postens indstilling."
+        },
+        "evaluation": {
+          "name": "Evaluering",
+          "description": "Returnér også, for de seneste 7 dages intervaller, prognosen lavet cirka et døgn i forvejen sammen med den faktiske pris (evaluation: start, end, predicted, actual, lead_hours)."
         }
       }
     }

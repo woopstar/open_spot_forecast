@@ -12,6 +12,9 @@ from custom_components.open_spot_forecast.accuracy_sensor import (
     LeadTimeAccuracySensor,
 )
 from custom_components.open_spot_forecast.const import DOMAIN
+from custom_components.open_spot_forecast.evaluation_sensor import (
+    ForecastEvaluationSensor,
+)
 from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
@@ -80,7 +83,10 @@ ALL_SENSOR_CLASSES = [
 
 @pytest.mark.asyncio
 async def test_async_setup_entry_adds_accuracy_sensors_with_ml():
-    """With ML enabled, the ten sensors are followed by eight accuracy sensors."""
+    """With ML enabled, the ten sensors are followed by the diagnostic ones.
+
+    Eight accuracy sensors, then the forecast evaluation sensor (#36).
+    """
     hass = Mock()
     entry = MagicMock()
     entry.entry_id = "test"
@@ -99,10 +105,11 @@ async def test_async_setup_entry_adds_accuracy_sensors_with_ml():
     async_add_entities.assert_called_once()
     sensors, update = async_add_entities.call_args[0]
     assert update is True
-    assert len(sensors) == 18
+    assert len(sensors) == 19
     assert isinstance(sensors[0], SpotPriceSensor)
     assert isinstance(sensors[9], LearningMetricsSensor)
-    assert all(isinstance(s, LeadTimeAccuracySensor) for s in sensors[10:])
+    assert all(isinstance(s, LeadTimeAccuracySensor) for s in sensors[10:18])
+    assert isinstance(sensors[18], ForecastEvaluationSensor)
 
 
 @pytest.mark.asyncio
