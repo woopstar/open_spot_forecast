@@ -74,6 +74,37 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 └──────────────────────────────────────────────────────────────────┘
 ```
 
+## Price Output
+
+Every price an entity exposes is computed in one place, `PriceOutput`
+(`price_output.py`, #39), from the options read by `PriceSettings.from_entry()`
+(options first, then the entry's initial data):
+
+| Option           | Default | Effect                                                                    |
+| ---------------- | ------- | ------------------------------------------------------------------------- |
+| `vat`            | 0.25    | VAT rate as a fraction                                                    |
+| `surcharge`      | 0       | Fixed amount per unit (currency per `price_type`) added before VAT        |
+| `price_type`     | kWh     | Unit of every exposed price: kWh, MWh or Wh                               |
+| `precision`      | 3       | Decimals every exposed price is rounded to                                |
+| `hourly_average` | false   | Mean of each local hour's four 15-min prices, for hourly-billed contracts |
+
+- **Spot-based prices** (the day-ahead source's prices and the ML forecast):
+  `total = (spot + surcharge) × (1 + VAT)`, in the configured unit
+  (`apply_price_components()`). `api_data["prices_today"/"prices_tomorrow"]`
+  hold the day-ahead source's raw spot prices; the sensors convert them.
+- **All-in prices** (Stromligning's consumer prices, which already include
+  tariffs, VAT and the supplier's surcharge): only converted to the unit.
+- **`hourly_average`**: the current price is the current local hour's mean;
+  today's/tomorrow's price lists hold one value per local hour (23/24/25 on
+  DST days) and min/max/mean are taken over those; the forecast attribute has
+  one entry per hour (`start`/`end` of the hour, mean price and confidence),
+  and the `prediction_hours` window counts hours. Hours are grouped on the UTC
+  timeline, so the repeated hour of the fall-back day is two entries.
+
+Statistics are taken over the raw series, then converted: the conversion is
+affine and increasing, so this equals converting first. The options flow has
+no update listener: option changes apply after the integration reloads.
+
 ## Data Flow
 
 ```

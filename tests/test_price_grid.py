@@ -14,6 +14,7 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.price_series import (
     align_to_grid,
     known_prices,
@@ -161,7 +162,7 @@ def test_price_sensor_ignores_missing_slots() -> None:
     """Min/max/mean sensors are computed over the known prices only."""
     sensor = TodayMinSensor.__new__(TodayMinSensor)
     sensor.api_data = {"stromligning_data": {"today": [None, 2.0, 1.5, None]}}
-    sensor.precision = 2
+    sensor.output = PriceOutput(precision=2)
 
     assert sensor.native_value == pytest.approx(1.5)
 

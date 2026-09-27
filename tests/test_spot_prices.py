@@ -17,6 +17,7 @@ from custom_components.open_spot_forecast.ml.spot_migration import (
     SPOT_PRICE_SCHEMA_VERSION,
 )
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     MLPredictionSensor,
     SpotPriceSensor,
@@ -145,9 +146,7 @@ def test_known_spot_price_gets_vat_exactly_once() -> None:
         MagicMock(entry_id="test"),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        "kWh",
+        PriceOutput(vat=VAT, precision=PRECISION),
     )
 
     attrs = sensor.extra_state_attributes
@@ -245,9 +244,7 @@ def test_current_price_sensor_is_labelled_all_in() -> None:
         {"stromligning_data": {"current_price": 2.45, "today": [2.45]}},
         "DK1",
         "DKK",
-        VAT,
-        PRECISION,
-        "kWh",
+        PriceOutput(vat=VAT, precision=PRECISION),
     )
 
     attrs = sensor.extra_state_attributes

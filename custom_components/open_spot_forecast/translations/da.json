@@ -70,10 +70,14 @@
           "vat": "Moms",
           "precision": "Decimal Præcision",
           "training_days": "Træningsdage (prishistorik, som modellen lærer af)",
-          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)"
+          "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)",
+          "surcharge": "Tillæg pr. enhed (lægges til før moms)",
+          "hourly_average": "Timegennemsnitspriser"
         },
         "data_description": {
-          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig."
+          "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig.",
+          "surcharge": "Fast beløb i din valuta pr. prisenhed, der lægges til spotprisen før moms: total = (spot + tillæg) × (1 + moms). Gælder day-ahead-priserne og prognosen; Strømlignings priser indeholder det allerede. Træder i kraft, når integrationen genindlæses.",
+          "hourly_average": "Vis gennemsnittet af hver times fire 15-minutters priser, til aftaler der afregnes pr. time. Træder i kraft, når integrationen genindlæses."
         }
       }
     }

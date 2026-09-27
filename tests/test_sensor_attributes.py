@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock
 
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
     MLPredictionSensor,
@@ -17,7 +18,7 @@ def _entry() -> MagicMock:
 
 def _spot_price_sensor(api_data: dict) -> SpotPriceSensor:
     return SpotPriceSensor(
-        MagicMock(), _entry(), api_data, "DK1", "DKK", 0.25, 2, "kWh"
+        MagicMock(), _entry(), api_data, "DK1", "DKK", PriceOutput(precision=2)
     )
 
 
@@ -46,7 +47,12 @@ def test_spot_price_attributes_omit_raw_arrays():
 
 def _ml_sensor(api_data: dict, prediction_hours: int = 48) -> MLPredictionSensor:
     return MLPredictionSensor(
-        MagicMock(), _entry(), api_data, "DKK", 0.25, 2, "kWh", prediction_hours
+        MagicMock(),
+        _entry(),
+        api_data,
+        "DKK",
+        PriceOutput(precision=2),
+        prediction_hours,
     )
 
 

@@ -29,7 +29,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `__init__.py`        | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                     |
 | `updater.py`         | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline; `SensorEntities` (configured entity ids) |
 | `history_updater.py` | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                               |
-| `price_source.py`    | `PriceSettings` (price source, currency, VAT, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source                        |
+| `price_source.py`    | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source              |
+| `price_output.py`    | `PriceOutput` — the one transformation of exposed prices: unit, `(spot + surcharge) × (1 + VAT)`, rounding, hourly averages (#39)                          |
 | `attribution.py`     | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                         |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
@@ -90,13 +91,16 @@ All external entity reads go through `SensorReader` in `sensor_reader.py`. Never
 **The ML model's prices are the raw day-ahead spot price excl. VAT and tariffs** (#16),
 from `read_spot_prices()` (Stromligning's `spotprice_ex_vat` sensors) via `ml_price_inputs()`:
 training target, self-learning actual and prediction. Stromligning's all-in consumer price
-is display-only; never feed it to the model. VAT is added once, in `MLPredictionSensor`
-(`_with_vat`); never add tariffs or VAT in `ml/`.
+is display-only; never feed it to the model. Every exposed price goes through
+`PriceOutput` (`price_output.py`, #39) once: `(spot + surcharge) × (1 + VAT)` in the configured
+unit, optionally averaged per local hour (`convert()`, `day_prices()`, `forecast()`), read by
+`PriceSettings.from_entry()`; Stromligning's all-in prices are `convert(..., all_in=True)`. Never
+multiply by `(1 + vat)` inline, and never add tariffs or VAT in `ml/`.
 
 With the `dayahead` price source (#27) the model's prices are the stored day-ahead auction
 prices (`dayahead_prices`, EUR/MWh) converted by `dayahead_spot_data()` / `dayahead_prices_by_day()`
 (`spot_prices.py`) with the day's ECB rate: the same currency/kWh excl. VAT series. The displayed
-prices are these with VAT (`with_vat()`); Stromligning is not read. Every HTTP client uses
+prices are these via `PriceOutput` (`api_data["prices_today"]` holds the raw spot); Stromligning is not read. Every HTTP client uses
 `api/http.py` `async_get`; never add another retry loop.
 
 A day's prices are one value per 15-min slot from local midnight (92/96/100), `None` for a

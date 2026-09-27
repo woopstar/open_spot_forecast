@@ -21,6 +21,7 @@ from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.learning import percent_error
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
 
 SLOTS_PER_DAY = 96
@@ -222,9 +223,7 @@ def test_negative_prices_survive_model_bias_correction_and_sensor(
         MagicMock(entry_id="test"),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        4,
-        "kWh",
+        PriceOutput(vat=VAT, precision=4),
     )
     attribute_prices = [
         p["price"] for p in sensor.extra_state_attributes["predictions"]

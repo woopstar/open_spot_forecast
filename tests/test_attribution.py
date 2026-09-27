@@ -17,6 +17,7 @@ from custom_components.open_spot_forecast.binary_sensor import (
     MLModelTrainedSensor,
     TomorrowAvailableSensor,
 )
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
     MLPredictionSensor,
@@ -92,13 +93,13 @@ def test_entities_show_the_attribution() -> None:
     entry.entry_id = "test"
     api_data = _dayahead(ml_predictor=Mock(), zone_weather=True)
     price_entities = [
-        SpotPriceSensor(hass, entry, api_data, "DK1", "DKK", 0.25, 3, "kWh"),
-        TodayMinSensor(hass, entry, api_data, "DKK", 0.25, 3, "kWh"),
-        TomorrowMeanSensor(hass, entry, api_data, "DKK", 0.25, 3, "kWh"),
+        SpotPriceSensor(hass, entry, api_data, "DK1", "DKK", PriceOutput()),
+        TodayMinSensor(hass, entry, api_data, "DKK", PriceOutput()),
+        TomorrowMeanSensor(hass, entry, api_data, "DKK", PriceOutput()),
         TomorrowAvailableSensor(hass, entry, api_data),
     ]
     model_entities = [
-        MLPredictionSensor(hass, entry, api_data, "DKK", 0.25, 3, "kWh"),
+        MLPredictionSensor(hass, entry, api_data, "DKK", PriceOutput()),
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
         MLModelTrainedSensor(hass, entry, api_data),

@@ -22,6 +22,7 @@ from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
+    CONF_HOURLY_AVERAGE,
     CONF_PRECISION,
     CONF_PREDICTION_HOURS,
     CONF_PRICE_SOURCE,
@@ -33,12 +34,14 @@ from .const import (
     CONF_SPOT_PRICE_TOMORROW_SENSOR,
     CONF_STROMLIGNING_SENSOR,
     CONF_STROMLIGNING_TOMORROW_SENSOR,
+    CONF_SURCHARGE,
     CONF_TEMPERATURE_SENSOR,
     CONF_TRAINING_DAYS,
     CONF_VAT,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_CURRENCY,
+    DEFAULT_HOURLY_AVERAGE,
     DEFAULT_PRECISION,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_SOURCE,
@@ -46,12 +49,14 @@ from .const import (
     DEFAULT_REGION,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
+    DEFAULT_SURCHARGE,
     DEFAULT_TRAINING_DAYS,
     DEFAULT_VAT,
     DOMAIN,
     PREDICTION_HOURS_OPTIONS,
     PRICE_SOURCE_STROMLIGNING,
     PRICE_SOURCES,
+    PRICE_TYPES,
     REGIONS,
     STROMLIGNING_REGIONS,
     TRAINING_DAYS_OPTIONS,
@@ -113,7 +118,6 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Build the form for step 1: only regions with a price source
         regions_list = price_regions()
         currencies = sorted({str(r["currency"]) for r in REGIONS.values()})
-        price_types = ["kWh", "MWh", "Wh"]
 
         data_schema = vol.Schema(
             {
@@ -126,7 +130,7 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     int
                 ),
                 vol.Required(CONF_PRICE_TYPE, default=DEFAULT_PRICE_TYPE): vol.In(
-                    price_types
+                    list(PRICE_TYPES)
                 ),
                 vol.Required(
                     CONF_PRICE_SOURCE, default=DEFAULT_PRICE_SOURCE
@@ -395,6 +399,19 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         self.config_entry.data.get(CONF_PRECISION, DEFAULT_PRECISION),
                     ),
                 ): vol.Coerce(int),
+                # Price output (#39): total = (spot + surcharge) × (1 + VAT)
+                vol.Optional(
+                    CONF_SURCHARGE,
+                    default=self.config_entry.options.get(
+                        CONF_SURCHARGE, DEFAULT_SURCHARGE
+                    ),
+                ): vol.Coerce(float),
+                vol.Optional(
+                    CONF_HOURLY_AVERAGE,
+                    default=self.config_entry.options.get(
+                        CONF_HOURLY_AVERAGE, DEFAULT_HOURLY_AVERAGE
+                    ),
+                ): bool,
             }
         )
 

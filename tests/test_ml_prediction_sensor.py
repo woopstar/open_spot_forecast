@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     MLPredictionSensor,
     current_prediction,
@@ -59,9 +60,7 @@ def _sensor(predictions: list[dict[str, Any]]) -> MLPredictionSensor:
         MagicMock(entry_id="test"),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        4,
-        "kWh",
+        PriceOutput(vat=VAT, precision=4),
     )
 
 

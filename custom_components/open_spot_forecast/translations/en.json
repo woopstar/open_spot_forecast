@@ -70,10 +70,14 @@
           "vat": "VAT Rate",
           "precision": "Decimal Precision",
           "training_days": "Training days (price history the model learns from)",
-          "entsoe_api_key": "ENTSO-E API key (optional)"
+          "entsoe_api_key": "ENTSO-E API key (optional)",
+          "surcharge": "Surcharge per unit (added before VAT)",
+          "hourly_average": "Hourly average prices"
         },
         "data_description": {
-          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged."
+          "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged.",
+          "surcharge": "Fixed amount in your currency per price unit, added to the spot price before VAT: total = (spot + surcharge) × (1 + VAT). Applies to the day-ahead prices and the forecast; Stromligning's prices already include it. Takes effect after the integration reloads.",
+          "hourly_average": "Show the mean of each hour's four 15-minute prices, for contracts billed by the hour. Takes effect after the integration reloads."
         }
       }
     }

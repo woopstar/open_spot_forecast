@@ -181,7 +181,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 sensors,
                 reader,
                 predictor if ml else None,
-                PriceSettings(price_source, "DKK", 0.25, entsoe_key),
+                PriceSettings(price_source, "DKK", entsoe_api_key=entsoe_key),
                 predictor.storage if ml else Mock(),
             )
             return Harness(
@@ -802,7 +802,7 @@ async def test_without_ml_there_is_no_history_to_keep(
 
 
 @pytest.mark.asyncio
-async def test_dayahead_prices_are_shown_with_vat_and_are_the_models(
+async def test_dayahead_prices_are_the_models_raw_spot_prices(
     make: Callable[..., Harness],
 ) -> None:
     harness = make(price_source="dayahead")
@@ -811,7 +811,8 @@ async def test_dayahead_prices_are_shown_with_vat_and_are_the_models(
 
     api_data = harness.api_data
     assert api_data["spot_data"] == _dayahead_spot()
-    assert api_data["prices_today"] == [pytest.approx(0.5)] * 96
+    # Raw spot prices: the sensors add the surcharge and VAT (#39)
+    assert api_data["prices_today"] == [pytest.approx(0.4)] * 96
     assert api_data["prices_tomorrow"] == []
     assert api_data["price_source"] == "dayahead"
     # Stromligning is not read, even with its sensor configured
@@ -848,7 +849,7 @@ async def test_the_dayahead_source_needs_its_storage(
         _sensors(),
         harness.reader,
         None,
-        PriceSettings("dayahead", "DKK", 0.25),
+        PriceSettings("dayahead", "DKK"),
         None,
     )
 

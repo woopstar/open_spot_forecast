@@ -12,6 +12,7 @@ from custom_components.open_spot_forecast.accuracy_sensor import (
     LeadTimeAccuracySensor,
 )
 from custom_components.open_spot_forecast.const import DOMAIN
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import (
     LearningMetricsSensor,
     MLPredictionSensor,
@@ -30,6 +31,7 @@ CPH = ZoneInfo("Europe/Copenhagen")
 VAT = 0.25
 PRECISION = 3
 PRICE_TYPE = "kWh"
+OUTPUT = PriceOutput(vat=VAT, precision=PRECISION, price_type=PRICE_TYPE)
 
 
 def _hass() -> Mock:
@@ -53,10 +55,8 @@ def _make_sensor(cls, api_data=None):
     if cls in (PredictionConfidenceSensor, LearningMetricsSensor):
         return cls(_hass(), _entry(), api_data or {})
     if cls is SpotPriceSensor:
-        return cls(
-            _hass(), _entry(), api_data or {}, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-        )
-    return cls(_hass(), _entry(), api_data or {}, "DKK", VAT, PRECISION, PRICE_TYPE)
+        return cls(_hass(), _entry(), api_data or {}, "DK1", "DKK", OUTPUT)
+    return cls(_hass(), _entry(), api_data or {}, "DKK", OUTPUT)
 
 
 ALL_SENSOR_CLASSES = [
@@ -125,9 +125,11 @@ async def test_async_setup_entry_uses_defaults_when_config_missing():
     assert len(sensors) == 10
     assert sensors[0].region == "DK1"
     assert sensors[0].currency == "DKK"
-    assert sensors[0].vat == 0.25
-    assert sensors[0].precision == 3
-    assert sensors[0].price_type == "kWh"
+    assert sensors[0].output == PriceOutput()
+    assert sensors[0].output.vat == pytest.approx(0.25)
+    assert sensors[0].output.precision == 3
+    assert sensors[0].output.price_type == "kWh"
+    assert sensors[0].native_unit_of_measurement == "DKK/kWh"
 
 
 # --------------------------------------------------------------------------- #
@@ -172,15 +174,16 @@ async def test_learning_metrics_handle_update_invalidates_cache():
 def test_spot_price_native_value_stromligning():
     """Stromligning current price is used directly (already incl. VAT)."""
     api_data = {"stromligning_data": {"current_price": 100.0}}
-    sensor = SpotPriceSensor(
-        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
     assert sensor.native_value == pytest.approx(100.0)
 
 
 @pytest.mark.usefixtures("copenhagen_time_zone")
 def test_spot_price_native_value_dayahead() -> None:
-    """The day-ahead source shows the current slot's spot price with VAT (#27)."""
+    """The day-ahead source shows the current slot's spot price with VAT (#27).
+
+    ``prices_today`` holds the raw spot prices; VAT is added by the sensor.
+    """
     # 10:20 local is slot 41 of the day
     now = datetime(2026, 9, 24, 10, 20, tzinfo=CPH)
     prices: list[float | None] = [float(slot) for slot in range(96)]
@@ -191,12 +194,10 @@ def test_spot_price_native_value_dayahead() -> None:
         # Stromligning data of an earlier configuration is not shown
         "stromligning_data": {"current_price": 100.0},
     }
-    sensor = SpotPriceSensor(
-        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
 
     with patch("homeassistant.util.dt.now", return_value=now):
-        assert sensor.native_value == pytest.approx(41.0)
+        assert sensor.native_value == pytest.approx(41.0 * (1 + VAT))
         sensor.api_data["prices_today"] = prices[:40]
         assert sensor.native_value is None
     with patch("homeassistant.util.dt.now", return_value=now - timedelta(minutes=15)):
@@ -206,9 +207,7 @@ def test_spot_price_native_value_dayahead() -> None:
 
 def test_spot_price_native_value_none():
     """No data yields None."""
-    sensor = SpotPriceSensor(
-        _hass(), _entry(), {}, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = SpotPriceSensor(_hass(), _entry(), {}, "DK1", "DKK", OUTPUT)
     assert sensor.native_value is None
 
 
@@ -219,15 +218,14 @@ def test_spot_price_attributes_dayahead() -> None:
         "prices_today": [1.0, 2.0],
         "prices_tomorrow": [3.0, 4.0],
     }
-    sensor = SpotPriceSensor(
-        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
 
     attrs = sensor.extra_state_attributes
 
-    assert attrs["today_prices"] == [1.0, 2.0]
-    assert attrs["tomorrow_prices"] == [3.0, 4.0]
+    assert attrs["today_prices"] == pytest.approx([1.25, 2.5])
+    assert attrs["tomorrow_prices"] == pytest.approx([3.75, 5.0])
     assert attrs["price_source"] == "dayahead"
+    assert attrs["surcharge"] == pytest.approx(0.0)
     assert attrs["includes_vat"] is True
     assert attrs["includes_tariffs"] is False
 
@@ -238,9 +236,7 @@ def test_spot_price_attributes_stromligning():
         "stromligning_data": {"today": [1.0, 2.0], "tomorrow": [3.0]},
         "last_update": "2026-09-22T00:00:00",
     }
-    sensor = SpotPriceSensor(
-        _hass(), _entry(), api_data, "DK1", "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
 
     attrs = sensor.extra_state_attributes
 
@@ -289,33 +285,31 @@ def test_price_stat_native_value_stromligning(cls, list_key, reducer):
         _entry(),
         {"stromligning_data": {list_key: prices}},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
     assert sensor.native_value == pytest.approx(round(reducer(prices), PRECISION))
 
 
 @pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
 def test_price_stat_native_value_dayahead(cls, list_key, reducer):
-    """Day-ahead prices (with VAT, missing slots skipped) drive the aggregate."""
+    """Day-ahead spot prices (missing slots skipped) drive the aggregate, with VAT."""
     prices = [10.0, None, 30.0]
     sensor = cls(
         _hass(),
         _entry(),
         {"price_source": "dayahead", f"prices_{list_key}": prices},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
-    assert sensor.native_value == pytest.approx(round(reducer([10.0, 30.0]), PRECISION))
+    assert sensor.native_value == pytest.approx(
+        round(reducer([10.0, 30.0]) * (1 + VAT), PRECISION)
+    )
 
 
 @pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
 def test_price_stat_native_value_none(cls, list_key, reducer):
     """No data yields None."""
-    sensor = cls(_hass(), _entry(), {}, "DKK", VAT, PRECISION, PRICE_TYPE)
+    sensor = cls(_hass(), _entry(), {}, "DKK", OUTPUT)
     assert sensor.native_value is None
 
 
@@ -327,9 +321,7 @@ def test_price_stat_native_value_empty_stromligning(cls, list_key, reducer):
         _entry(),
         {"stromligning_data": {list_key: []}},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
     assert sensor.native_value is None
 
@@ -359,9 +351,7 @@ def test_ml_prediction_native_value_future():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value == pytest.approx(100.0 * (1 + VAT))
@@ -377,9 +367,7 @@ def test_ml_prediction_native_value_is_none_when_every_prediction_is_past():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value is None
@@ -397,9 +385,7 @@ def test_ml_prediction_native_value_skips_an_invalid_timestamp():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value == pytest.approx(65.0 * (1 + VAT))
@@ -416,9 +402,7 @@ def test_ml_prediction_native_value_missing_start_is_skipped():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value is None
@@ -434,9 +418,7 @@ def test_ml_prediction_native_value_price_none():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value is None
@@ -451,9 +433,7 @@ def test_ml_prediction_native_value_no_predictions():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     assert sensor.native_value is None
@@ -461,9 +441,7 @@ def test_ml_prediction_native_value_no_predictions():
 
 def test_ml_prediction_native_value_no_predictor():
     """No predictor yields None."""
-    sensor = MLPredictionSensor(
-        _hass(), _entry(), {}, "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = MLPredictionSensor(_hass(), _entry(), {}, "DKK", OUTPUT)
     assert sensor.native_value is None
 
 
@@ -488,9 +466,7 @@ def test_ml_prediction_extra_attributes_full():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     attrs = sensor.extra_state_attributes
@@ -523,9 +499,7 @@ def test_ml_prediction_extra_attributes_empty_stats():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     attrs = sensor.extra_state_attributes
@@ -550,9 +524,7 @@ def test_ml_prediction_extra_attributes_skips_missing_price():
         _entry(),
         {"ml_predictor": predictor},
         "DKK",
-        VAT,
-        PRECISION,
-        PRICE_TYPE,
+        OUTPUT,
     )
 
     attrs = sensor.extra_state_attributes
@@ -563,9 +535,7 @@ def test_ml_prediction_extra_attributes_skips_missing_price():
 
 def test_ml_prediction_extra_attributes_no_predictor():
     """No predictor yields empty attributes."""
-    sensor = MLPredictionSensor(
-        _hass(), _entry(), {}, "DKK", VAT, PRECISION, PRICE_TYPE
-    )
+    sensor = MLPredictionSensor(_hass(), _entry(), {}, "DKK", OUTPUT)
     assert sensor.extra_state_attributes == {}
 
 

@@ -17,12 +17,16 @@ tariff change would look like market behaviour to the model and like a model
 error to the bias correction. The spot price is what the market sets.
 
 **VAT is applied once, at output.** The `Price Forecast (ML)` sensor shows the
-predicted spot price with the configured VAT added, in its state and in every
-price attribute (`predictions[].price`, `forecast_min/max/mean`). It does
-**not** include tariffs, fees or taxes; adding them is #39. Its attributes say
-so: `includes_vat: true`, `includes_tariffs: false`, `vat`. The
-`Current Spot Price` sensor shows Stromligning's consumer price
-(`includes_vat: true`, `includes_tariffs: true`), despite its name.
+predicted spot price as `(spot + surcharge) × (1 + VAT)` (#39), in its state
+and in every price attribute (`predictions[].price`, `forecast_min/max/mean`).
+The surcharge is an option (default 0); tariffs and taxes are not added
+separately, so put your average tariffs in the surcharge if you want them in
+the forecast. Its attributes say so: `includes_vat: true`,
+`includes_tariffs: false`, `vat`, `surcharge`. The `Current Spot Price` sensor
+shows Stromligning's consumer price (`includes_vat: true`,
+`includes_tariffs: true`), despite its name: it already contains the
+supplier's surcharge, so the surcharge option is not added to it. See
+[Architecture → Price Output](architecture.md#price-output).
 
 Error metrics (learning metrics, forecast MAE/RMSE sensors, bias offsets) are
 in the model's unit: raw spot price excl. VAT, in currency/kWh.
