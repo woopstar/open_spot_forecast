@@ -12,10 +12,10 @@ import pytest
 from custom_components.open_spot_forecast.api.http import HttpResponse
 from custom_components.open_spot_forecast.ml.series_storage import DAYAHEAD_PRICES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.price_source import (
     DayAheadPrices,
     PriceSettings,
-    with_vat,
 )
 from custom_components.open_spot_forecast.spot_prices import (
     dayahead_prices_by_day,
@@ -60,7 +60,7 @@ def test_settings_prefer_options_and_hide_the_key() -> None:
 
     assert settings.dayahead
     assert settings.currency == "DKK"
-    assert settings.vat == pytest.approx(0.0)
+    assert settings.output.vat == pytest.approx(0.0)
     assert settings.entsoe_api_key == KEY
     assert KEY not in repr(settings)
 
@@ -70,11 +70,7 @@ def test_settings_default_to_stromligning_without_a_key() -> None:
 
     assert not settings.dayahead
     assert settings.entsoe_api_key is None
-    assert settings.vat == pytest.approx(0.25)
-
-
-def test_with_vat_keeps_missing_slots() -> None:
-    assert with_vat([1.0, None], 0.25) == [pytest.approx(1.25), None]
+    assert settings.output == PriceOutput()
 
 
 # --- Converting stored prices --------------------------------------------------------
@@ -171,7 +167,7 @@ def prices(storage: LearningStorage) -> Iterator[DayAheadPrices]:
         patch("homeassistant.util.dt.utcnow", return_value=NOW),
     ):
         yield DayAheadPrices(
-            hass, storage, "DK1", PriceSettings("dayahead", "DKK", 0.25, KEY)
+            hass, storage, "DK1", PriceSettings("dayahead", "DKK", entsoe_api_key=KEY)
         )
 
 

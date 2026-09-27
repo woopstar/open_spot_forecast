@@ -19,26 +19,19 @@ from homeassistant.util import dt as dt_util, slugify as util_slugify
 from .accuracy_sensor import build_lead_time_accuracy_sensors
 from .attribution import ModelAttributionMixin, PriceAttributionMixin
 from .const import (
-    CONF_CURRENCY,
-    CONF_PRECISION,
     CONF_PREDICTION_HOURS,
-    CONF_PRICE_TYPE,
     CONF_REGION,
-    CONF_VAT,
-    DEFAULT_CURRENCY,
-    DEFAULT_PRECISION,
     DEFAULT_PREDICTION_HOURS,
-    DEFAULT_PRICE_TYPE,
     DEFAULT_REGION,
-    DEFAULT_VAT,
     DOMAIN,
     PRICE_SOURCE_DAYAHEAD,
-    SLOTS_PER_HOUR,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
-from .time_slots import SLOT_MINUTES, parse_utc, slot_index_in_day
+from .price_source import PriceSettings
+from .time_slots import SLOT_MINUTES, parse_utc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -76,16 +69,24 @@ def current_prediction(
     return first_future
 
 
-def displayed_prices(api_data: dict[str, Any], day: str) -> list[float]:
-    """Return the known prices the price sensors show for ``today``/``tomorrow``.
+def source_day_prices(
+    api_data: dict[str, Any], day: str
+) -> tuple[list[float | None], bool]:
+    """Return a day's prices as the price source delivers them.
 
-    Stromligning's all-in consumer prices, or the day-ahead spot prices with
-    VAT (#27).
+    Args:
+        api_data: Integration data.
+        day: ``today`` or ``tomorrow``.
+
+    Returns:
+        One price per 15-min slot from local midnight (None if missing), and
+        whether they are all-in: Stromligning's consumer prices already
+        include tariffs and VAT; the day-ahead spot prices (#27) do not.
     """
     if api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
-        return known_prices(api_data.get(f"prices_{day}") or [])
+        return list(api_data.get(f"prices_{day}") or []), False
     stromligning_data = api_data.get("stromligning_data") or {}
-    return known_prices(stromligning_data.get(day) or [])
+    return list(stromligning_data.get(day) or []), True
 
 
 async def async_setup_entry(
@@ -97,41 +98,30 @@ async def async_setup_entry(
     api_data = hass.data[DOMAIN][entry.entry_id]
 
     region = entry.data.get(CONF_REGION, DEFAULT_REGION)
-    currency = entry.data.get(CONF_CURRENCY, DEFAULT_CURRENCY)
-    vat = entry.options.get(CONF_VAT, DEFAULT_VAT)
-    precision = entry.options.get(CONF_PRECISION, DEFAULT_PRECISION)
-    price_type = entry.options.get(CONF_PRICE_TYPE, DEFAULT_PRICE_TYPE)
+    settings = PriceSettings.from_entry(entry)
+    currency, output = settings.currency, settings.output
     prediction_hours = entry.options.get(
         CONF_PREDICTION_HOURS,
         entry.data.get(CONF_PREDICTION_HOURS, DEFAULT_PREDICTION_HOURS),
     )
 
     sensors = [
-        SpotPriceSensor(
-            hass, entry, api_data, region, currency, vat, precision, price_type
-        ),
-        TodayMinSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        TodayMaxSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        TodayMeanSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        TomorrowMinSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        TomorrowMaxSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        TomorrowMeanSensor(hass, entry, api_data, currency, vat, precision, price_type),
-        MLPredictionSensor(
-            hass,
-            entry,
-            api_data,
-            currency,
-            vat,
-            precision,
-            price_type,
-            prediction_hours,
-        ),
+        SpotPriceSensor(hass, entry, api_data, region, currency, output),
+        TodayMinSensor(hass, entry, api_data, currency, output),
+        TodayMaxSensor(hass, entry, api_data, currency, output),
+        TodayMeanSensor(hass, entry, api_data, currency, output),
+        TomorrowMinSensor(hass, entry, api_data, currency, output),
+        TomorrowMaxSensor(hass, entry, api_data, currency, output),
+        TomorrowMeanSensor(hass, entry, api_data, currency, output),
+        MLPredictionSensor(hass, entry, api_data, currency, output, prediction_hours),
         PredictionConfidenceSensor(hass, entry, api_data),
         LearningMetricsSensor(hass, entry, api_data),
     ]
     if api_data.get("ml_predictor") is not None:
         sensors.extend(
-            build_lead_time_accuracy_sensors(hass, entry, api_data, currency, precision)
+            build_lead_time_accuracy_sensors(
+                hass, entry, api_data, currency, output.precision
+            )
         )
 
     async_add_entities(sensors, True)
@@ -152,9 +142,7 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
         api_data: dict,
         region: str,
         currency: str,
-        vat: float,
-        precision: int,
-        price_type: str,
+        output: PriceOutput,
     ):
         """Initialize the sensor."""
         self.hass = hass
@@ -162,14 +150,12 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
         self.api_data = api_data
         self.region = region
         self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
+        self.output = output
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_current_price")
         self._attr_name = "Current Spot Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
+        self._attr_native_unit_of_measurement = output.unit(currency)
+        self._attr_suggested_display_precision = output.precision
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
@@ -193,18 +179,19 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
         """Return the current price.
 
         Stromligning's all-in consumer price, or the day-ahead spot price of
-        the current slot with VAT (#27).
+        the current slot with the surcharge and VAT (#27, #39). With
+        ``hourly_average`` it is the current local hour's mean.
         """
-        if self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
-            prices = self.api_data.get("prices_today") or []
-            index = slot_index_in_day(dt_util.now())
-            price = prices[index] if index < len(prices) else None
-            return None if price is None else float(round(price, self.precision))
-        stromligning_data = self.api_data.get("stromligning_data")
-        if stromligning_data and stromligning_data.get("current_price") is not None:
-            # Stromligning already includes tariffs and VAT
-            return float(round(stromligning_data["current_price"], self.precision))
-        return None
+        stromligning_data = self.api_data.get("stromligning_data") or {}
+        dayahead = self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD
+        if not dayahead and not self.output.hourly_average:
+            # Stromligning's state already includes tariffs and VAT
+            current = stromligning_data.get("current_price")
+            return (
+                None if current is None else self.output.convert(current, all_in=True)
+            )
+        prices, all_in = source_day_prices(self.api_data, "today")
+        return self.output.price_at(prices, dt_util.now(), all_in=all_in)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -212,276 +199,143 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
         attrs = {
             "region": self.region,
             "currency": self.currency,
-            "vat": self.vat,
+            "vat": self.output.vat,
+            "hourly_average": self.output.hourly_average,
             "last_update": self.api_data.get("last_update"),
         }
 
-        # Include Stromligning 15-min prices if available. We deliberately omit
-        # the raw dict arrays (prices_15min / raw_today / raw_tomorrow) — they
-        # are large and push the attribute payload past HA's 16 KB limit.
-        stromligning_data = self.api_data.get("stromligning_data")
+        # Today's and tomorrow's prices per slot (per hour with
+        # hourly_average). The raw dict arrays (prices_15min / raw_today /
+        # raw_tomorrow) are omitted: they push the payload past HA's 16 KB limit
+        today, all_in = source_day_prices(self.api_data, "today")
+        tomorrow, _ = source_day_prices(self.api_data, "tomorrow")
         if self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
-            attrs["today_prices"] = self.api_data.get("prices_today", [])
-            attrs["tomorrow_prices"] = self.api_data.get("prices_tomorrow", [])
             attrs["price_source"] = PRICE_SOURCE_DAYAHEAD
-            # The day-ahead spot price with VAT; tariffs are not included
+            # The day-ahead spot price with surcharge and VAT; no tariffs
+            attrs["surcharge"] = self.output.surcharge
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = False
-        elif stromligning_data:
-            attrs["today_prices"] = stromligning_data.get("today", [])
-            attrs["tomorrow_prices"] = stromligning_data.get("tomorrow", [])
+        elif self.api_data.get("stromligning_data"):
             attrs["price_source"] = "stromligning"
             # The state is Stromligning's all-in consumer price
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = True
-
+        else:
+            return attrs
+        attrs["today_prices"] = self.output.day_prices(today, all_in=all_in)
+        attrs["tomorrow_prices"] = self.output.day_prices(tomorrow, all_in=all_in)
         return attrs
 
 
-class TodayMinSensor(PriceAttributionMixin, SensorEntity):
+class DayPriceStatSensor(PriceAttributionMixin, SensorEntity):
+    """Today's or tomorrow's minimum, maximum or mean price.
+
+    The statistic is taken over the day's known prices per slot (per hour
+    with ``hourly_average``), then converted like every exposed price.
+    """
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.MONETARY
+    # "today" or "tomorrow", and "min", "max" or "mean"
+    _day: str
+    _stat: str
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        api_data: dict,
+        currency: str,
+        output: PriceOutput,
+    ):
+        self.hass = hass
+        self.entry = entry
+        self.api_data = api_data
+        self.currency = currency
+        self.output = output
+
+        self._attr_unique_id = util_slugify(
+            f"{DOMAIN}_{entry.entry_id}_{self._day}_{self._stat}"
+        )
+        self._attr_name = f"{self._day.capitalize()} {self._stat.capitalize()} Price"
+        self._attr_native_unit_of_measurement = output.unit(currency)
+        self._attr_suggested_display_precision = output.precision
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, entry.entry_id)},
+        }
+
+    async def async_added_to_hass(self) -> None:
+        async_dispatcher_connect(
+            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        )
+
+    async def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        prices, all_in = source_day_prices(self.api_data, self._day)
+        known = known_prices(self.output.day_series(prices))
+        if not known:
+            return None
+        if self._stat == "min":
+            value = min(known)
+        elif self._stat == "max":
+            value = max(known)
+        else:
+            value = sum(known) / len(known)
+        return self.output.convert(value, all_in=all_in)
+
+
+class TodayMinSensor(DayPriceStatSensor):
     """Sensor for today's minimum price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "today", "min"
     _attr_icon = "mdi:trending-down"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
 
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_min")
-        self._attr_name = "Today Min Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "today")
-        return float(round(min(prices), self.precision)) if prices else None
-
-
-class TodayMaxSensor(PriceAttributionMixin, SensorEntity):
+class TodayMaxSensor(DayPriceStatSensor):
     """Sensor for today's maximum price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "today", "max"
     _attr_icon = "mdi:trending-up"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
 
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_max")
-        self._attr_name = "Today Max Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "today")
-        return float(round(max(prices), self.precision)) if prices else None
-
-
-class TodayMeanSensor(PriceAttributionMixin, SensorEntity):
+class TodayMeanSensor(DayPriceStatSensor):
     """Sensor for today's mean price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "today", "mean"
     _attr_icon = "mdi:chart-line"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
 
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_today_mean")
-        self._attr_name = "Today Mean Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "today")
-        return (
-            float(round(sum(prices) / len(prices), self.precision)) if prices else None
-        )
-
-
-class TomorrowMinSensor(PriceAttributionMixin, SensorEntity):
+class TomorrowMinSensor(DayPriceStatSensor):
     """Sensor for tomorrow's minimum price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "tomorrow", "min"
     _attr_icon = "mdi:trending-down"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
 
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_min")
-        self._attr_name = "Tomorrow Min Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "tomorrow")
-        return float(round(min(prices), self.precision)) if prices else None
-
-
-class TomorrowMaxSensor(PriceAttributionMixin, SensorEntity):
+class TomorrowMaxSensor(DayPriceStatSensor):
     """Sensor for tomorrow's maximum price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "tomorrow", "max"
     _attr_icon = "mdi:trending-up"
 
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
 
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_max")
-        self._attr_name = "Tomorrow Max Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "tomorrow")
-        return float(round(max(prices), self.precision)) if prices else None
-
-
-class TomorrowMeanSensor(PriceAttributionMixin, SensorEntity):
+class TomorrowMeanSensor(DayPriceStatSensor):
     """Sensor for tomorrow's mean price."""
 
-    _attr_has_entity_name = True
-    _attr_device_class = SensorDeviceClass.MONETARY
+    _day, _stat = "tomorrow", "mean"
     _attr_icon = "mdi:chart-line"
-
-    def __init__(self, hass, entry, api_data, currency, vat, precision, price_type):
-        self.hass = hass
-        self.entry = entry
-        self.api_data = api_data
-        self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
-
-        self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_tomorrow_mean")
-        self._attr_name = "Tomorrow Mean Price"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
-
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
-
-    async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
-        )
-
-    async def _handle_update(self) -> None:
-        self.async_write_ha_state()
-
-    @property
-    def native_value(self) -> float | None:
-        prices = displayed_prices(self.api_data, "tomorrow")
-        return (
-            float(round(sum(prices) / len(prices), self.precision)) if prices else None
-        )
 
 
 class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     """Sensor for ML-based price predictions (replaces Carnot).
 
-    The model predicts the raw spot price excl. VAT and tariffs (#16). VAT is
-    applied here, exactly once, to the state and to every price attribute;
-    tariffs are not included.
+    The model predicts the raw spot price excl. VAT and tariffs (#16). The
+    surcharge and VAT are applied here, exactly once, by ``PriceOutput`` to
+    the state and to every price attribute (#39); tariffs are not included.
     """
 
     _attr_has_entity_name = True
@@ -490,31 +344,29 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
 
     def __init__(
         self,
-        hass,
-        entry,
-        api_data,
-        currency,
-        vat,
-        precision,
-        price_type,
-        prediction_hours=DEFAULT_PREDICTION_HOURS,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        api_data: dict,
+        currency: str,
+        output: PriceOutput,
+        prediction_hours: int = DEFAULT_PREDICTION_HOURS,
     ):
         self.hass = hass
         self.entry = entry
         self.api_data = api_data
         self.currency = currency
-        self.vat = vat
-        self.precision = precision
-        self.price_type = price_type
+        self.output = output
 
         # Cap the predictions exposed as attributes to the configured hourly
         # window (12-hour steps, up to 72 hours) to stay under HA's 16 KB limit.
-        self._max_predictions = int(prediction_hours) * SLOTS_PER_HOUR
+        self._max_predictions = (
+            int(prediction_hours) * HOUR_MINUTES // output.interval_minutes
+        )
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
-        self._attr_native_unit_of_measurement = f"{currency}/{price_type}"
-        self._attr_suggested_display_precision = precision
+        self._attr_native_unit_of_measurement = output.unit(currency)
+        self._attr_suggested_display_precision = output.precision
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, entry.entry_id)},
@@ -528,66 +380,57 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     async def _handle_update(self) -> None:
         self.async_write_ha_state()
 
+    def _forecast(self) -> list[dict[str, Any]]:
+        """Return the whole forecast as exposed (see ``PriceOutput.forecast``)."""
+        ml_predictor = self.api_data.get("ml_predictor")
+        if not ml_predictor or not ml_predictor.predictions:
+            return []
+        return self.output.forecast(ml_predictor.predictions)
+
     @property
     def native_value(self) -> float | None:
-        """Return the predicted price (VAT included) for the current slot.
+        """Return the forecast price of the current slot (or hour).
 
         Falls back to the first future slot when the predictions start later.
         """
-        prediction = self._state_prediction()
-        if prediction is None:
-            return None
-        price = prediction.get("price")
-        return self._with_vat(price) if price is not None else None
-
-    def _state_prediction(self) -> dict[str, Any] | None:
-        """Return the prediction the state shows (see ``current_prediction``)."""
-        ml_predictor = self.api_data.get("ml_predictor")
-        if not ml_predictor or not ml_predictor.predictions:
-            return None
-        return current_prediction(ml_predictor.predictions, dt_util.utcnow())
-
-    def _with_vat(self, spot_price: float) -> float:
-        """Return a predicted spot price (currency/kWh excl. VAT) with VAT added."""
-        return float(round(spot_price * (1 + self.vat), self.precision))
+        entry = current_prediction(self._forecast(), dt_util.utcnow())
+        return entry["price"] if entry is not None else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         ml_predictor = self.api_data.get("ml_predictor")
         attrs: dict[str, Any] = {}
         if ml_predictor:
-            # Convert predictions to include unit of measurement. Only surface
-            # the configured hourly window to stay under HA's 16 KB attribute limit.
-            predictions_with_unit = []
-            for pred in ml_predictor.predictions[: self._max_predictions]:
-                price = pred.get("price")
-                if price is not None:
-                    predictions_with_unit.append(
-                        {
-                            "start": pred.get("start"),
-                            "end": pred.get("end"),
-                            "price": self._with_vat(price),
-                            "unit": f"{self.currency}/{self.price_type}",
-                            "confidence": pred.get("confidence"),
-                        }
-                    )
-            attrs["predictions"] = predictions_with_unit
+            forecast = self._forecast()
+            unit = self.output.unit(self.currency)
+            # Only surface the configured hourly window to stay under HA's
+            # 16 KB attribute limit
+            attrs["predictions"] = [
+                {**entry, "unit": unit} for entry in forecast[: self._max_predictions]
+            ]
             # The slot whose prediction is the state
-            state_prediction = self._state_prediction()
-            attrs["state_slot_start"] = (
-                state_prediction.get("start") if state_prediction else None
-            )
-            # Every price above and below: spot price + VAT, no tariffs
+            state_entry = current_prediction(forecast, dt_util.utcnow())
+            attrs["state_slot_start"] = state_entry["start"] if state_entry else None
+            # Every price above and below: (spot + surcharge) + VAT, no tariffs
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = False
-            attrs["vat"] = self.vat
+            attrs["vat"] = self.output.vat
+            attrs["surcharge"] = self.output.surcharge
+            attrs["hourly_average"] = self.output.hourly_average
             stats = ml_predictor.get_prediction_stats()
             if stats:
-                # Predictions are already in currency/kWh: only VAT is added
-                attrs["forecast_min"] = self._with_vat(stats.get("min_price", 0))
-                attrs["forecast_max"] = self._with_vat(stats.get("max_price", 0))
-                attrs["forecast_mean"] = self._with_vat(stats.get("mean_price", 0))
-                attrs["unit"] = f"{self.currency}/{self.price_type}"
+                # Over the whole forecast, per slot (or hour), converted once
+                prices = [
+                    entry["price"]
+                    for entry in self.output.forecast_series(ml_predictor.predictions)
+                ]
+                if prices:
+                    attrs["forecast_min"] = self.output.convert(min(prices))
+                    attrs["forecast_max"] = self.output.convert(max(prices))
+                    attrs["forecast_mean"] = self.output.convert(
+                        sum(prices) / len(prices)
+                    )
+                attrs["unit"] = unit
                 attrs["mean_confidence"] = stats.get("mean_confidence")
                 attrs["total_predictions"] = stats.get("total_predictions")
                 attrs["is_ml_model"] = stats.get("is_ml_model")

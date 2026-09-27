@@ -51,7 +51,7 @@ from .const import (
 from .history_updater import HistoryUpdaterMixin
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
-from .price_source import DayAheadPrices, PriceSettings, with_vat
+from .price_source import DayAheadPrices, PriceSettings
 from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
 from .time_slots import (
@@ -274,10 +274,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
     async def async_read_prices(self) -> bool:
         """Read today's and tomorrow's prices from the configured source.
 
-        The day-ahead source fetches what is missing, converts the prices
-        into the configured currency and shows them with VAT; its raw spot
-        prices are the model's. Without today's prices the previous ones are
-        kept.
+        The day-ahead source fetches what is missing and converts the prices
+        into the configured currency; its raw spot prices are the model's, and
+        the sensors show them with the surcharge and VAT. Without today's
+        prices the previous ones are kept.
 
         Returns:
             Whether today's prices were read.
@@ -291,10 +291,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
             return False
         if not spot_data["today"]:
             return False
-        vat = self.settings.vat
         self.api_data["spot_data"] = spot_data
-        self.api_data["prices_today"] = with_vat(spot_data["today"], vat)
-        self.api_data["prices_tomorrow"] = with_vat(spot_data["tomorrow"], vat)
+        # Raw spot prices: the sensors add the surcharge and VAT (#39)
+        self.api_data["prices_today"] = spot_data["today"]
+        self.api_data["prices_tomorrow"] = spot_data["tomorrow"]
         self.api_data["price_source"] = PRICE_SOURCE_DAYAHEAD
         self.api_data["price_license"] = self.dayahead.license_info
         return True

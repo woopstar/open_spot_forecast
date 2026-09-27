@@ -35,8 +35,10 @@ and continuously improves accuracy via per-slot bias correction.
 - **Real consumer prices** — Stromligning integration provides prices with
   tariffs, fees, and VAT (what you actually pay) for display
 - **Spot price forecast** — the model learns the raw day-ahead spot price
-  (Stromligning's spot price sensors) and the forecast adds VAT once; tariffs
-  are not included
+  (Stromligning's spot price sensors) and the forecast adds your surcharge and
+  VAT once: `(spot + surcharge) × (1 + VAT)`; tariffs are not included
+- **Hourly prices** — optionally averages each hour's four 15-minute prices,
+  for contracts billed by the hour
 
 ### Self-Learning
 

@@ -13,6 +13,11 @@ CONF_PREDICTION_HOURS = "prediction_hours"
 # Days of price history the model trains on (#24); history older than this
 # (plus a margin) is pruned, and missing days are backfilled
 CONF_TRAINING_DAYS = "training_days"
+# Price output (#39): a fixed surcharge per unit added to the spot price before
+# VAT, and the mean of each local hour's four 15-min prices for contracts
+# billed by the hour
+CONF_SURCHARGE = "surcharge"
+CONF_HOURLY_AVERAGE = "hourly_average"
 
 # Weather sensor configuration keys
 CONF_WIND_SPEED_SENSOR = "wind_speed_sensor"
@@ -52,6 +57,9 @@ DEFAULT_CURRENCY = "DKK"
 DEFAULT_VAT = 0.25
 DEFAULT_PRECISION = 3
 DEFAULT_PRICE_TYPE = "kWh"
+PRICE_TYPES = ("kWh", "MWh", "Wh")
+DEFAULT_SURCHARGE = 0.0
+DEFAULT_HOURLY_AVERAGE = False
 DEFAULT_PREDICTION_HOURS = 48
 # The backtest's best window with the zone weather (docs/ml_documentation.md)
 DEFAULT_TRAINING_DAYS = 60
