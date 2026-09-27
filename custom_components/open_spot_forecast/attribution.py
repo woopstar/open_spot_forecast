@@ -13,6 +13,8 @@ are configured and used:
 * **Market prognoses**: Nord Pool.
 * **Load forecast** (#30): the ENTSO-E Transparency Platform's week-ahead
   load forecast, when an ENTSO-E key is configured.
+* **Gas price** (#28): Instrat's gas day-ahead index (CC BY-NC 4.0), in
+  the regions that use it.
 * **Neighbour prices** (#29): energy-charts.info's day-ahead prices of the
   neighbouring zones, when the cross-border model is on.
 
@@ -30,6 +32,7 @@ OPEN_METEO_ATTRIBUTION = "Weather: Open-Meteo.com (CC BY 4.0)"
 NORD_POOL_ATTRIBUTION = "Prognoses: Nord Pool"
 ENTSOE_LOAD_ATTRIBUTION = "Load forecast: ENTSO-E Transparency Platform"
 CROSS_BORDER_ATTRIBUTION = "Neighbour prices: energy-charts.info"
+GAS_PRICE_ATTRIBUTION = "Gas price: Instrat (CC BY-NC 4.0)"
 _SEPARATOR = " · "
 
 
@@ -76,6 +79,8 @@ def model_attribution(api_data: dict[str, Any]) -> str | None:
     parts.append(NORD_POOL_ATTRIBUTION)
     if api_data.get("entsoe_load"):
         parts.append(ENTSOE_LOAD_ATTRIBUTION)
+    if api_data.get("gas_price"):
+        parts.append(GAS_PRICE_ATTRIBUTION)
     if api_data.get("cross_border"):
         parts.append(CROSS_BORDER_ATTRIBUTION)
     return _SEPARATOR.join(part for part in parts if part)

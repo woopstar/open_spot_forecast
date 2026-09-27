@@ -69,6 +69,14 @@ OPENMETEO_WEATHER = SeriesSpec(
     key_column="point",
 )
 
+# The daily natural-gas price, one row per UTC day (#28)
+GAS_PRICES = SeriesSpec(
+    name="gas_prices",
+    table="gas_prices",
+    columns=("price",),
+    step_minutes=24 * 60,
+)
+
 # ENTSO-E's week-ahead load forecast as a 15-min curve, MW (#30)
 ENTSOE_LOAD = SeriesSpec(
     name="entsoe_load",

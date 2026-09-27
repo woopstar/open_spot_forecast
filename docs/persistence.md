@@ -18,6 +18,7 @@ All learning data is stored in a single SQLite database:
 | `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
 | `openmeteo_weather`  | `(timestamp, point)`        | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
 | `entsoe_load`        | `timestamp` (UTC slot key)  | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                |
+| `gas_prices`         | `timestamp` (UTC day)       | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                        |
 | `neighbour_prices`   | `(timestamp, zone)`         | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)      |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
 | `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
@@ -34,7 +35,7 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
-`lead_time_accuracy`, `evaluation`, `entsoe_load` and `neighbour_prices` are created with `CREATE
+`lead_time_accuracy`, `evaluation`, `entsoe_load`, `gas_prices` and `neighbour_prices` are created with `CREATE
 TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
 whenever it is written or reloaded; about 700 rows). Rows
@@ -160,7 +161,9 @@ source fetches only what it is missing:
   its own in the shared `neighbour_prices` table (keyed by zone), and each
   neighbour's Open-Meteo points go into `openmeteo_weather` under a spec
   named `openmeteo_<zone>`: the tables are shared, the source state
-  (`source_state_<name>`) is per zone. `load_series` can ask a keyed table
+  (`source_state_<name>`) is per zone. `gas_prices` is `GAS_PRICES` (#28,
+  one row per UTC day: a daily grid, aligned to UTC midnight like the
+  15-minute one). `load_series` can ask a keyed table
   for some keys only.
 - A grid point counts as stored when its row has a value in every column
   (and, for a keyed table, every expected key has such a row). Nordpool rows
@@ -195,7 +198,9 @@ History is kept for the training window (**Training days**, default 60,
 2 days. Once a day (at midnight) older `weather_history` snapshots,
 `price_history` days, `nordpool_prognoses` rows, `openmeteo_weather` rows,
 `entsoe_load` rows, `dayahead_prices` rows, the cross-border model's
-`neighbour_prices` rows (#29) and remembered holes are deleted. Without the ML model only `dayahead_prices` is
+`neighbour_prices` rows (#29) and remembered holes are deleted. `gas_prices`
+keeps 14 more days (`GAS_LOOKBACK_DAYS`, #28): the training window's first
+day uses the latest price published before it. Without the ML model only `dayahead_prices` is
 stored, and only the margin is kept. Before #32 only `weather_history` was pruned, to a fixed 30 days,
 whenever the snapshot count was a multiple of 100.
 

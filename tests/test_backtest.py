@@ -901,3 +901,68 @@ def test_neighbours_are_loaded_from_the_cache(tmp_path: Path) -> None:
     assert list(cross.prices) == ["DK1", "DE", "SE4"]
     assert all(weather is not None for weather in cross.weather.values())
     assert all(weather is None for weather in without.weather.values())
+
+
+# --- Gas price (#28) ----------------------------------------------------------------
+
+
+def _gas_rows(first: date, days: int, price: float = 300.0) -> list[dict[str, Any]]:
+    return [
+        {
+            "timestamp": f"{first + timedelta(days=day)}T00:00:00Z",
+            "price": price + 5 * (day % 9),
+        }
+        for day in range(days)
+    ]
+
+
+def test_future_gas_prices_cannot_change_the_forecast() -> None:
+    """Target days get the latest price published before the horizon cutoff."""
+    origin = date(2026, 6, 15)
+    series = _noisy_series(date(2026, 5, 20), 30)
+    config = _config(origin, window_days=21)
+    targets, _ = target_slots(origin, config)
+    history = history_for(series, origin, config)
+    clean = _gas_rows(date(2026, 5, 1), 60)
+
+    forecasts = []
+    for poison in (None, 1e6):
+        rows = [
+            row | {"price": poison}
+            if poison is not None and row["timestamp"][:10] >= str(origin)
+            else row
+            for row in clean
+        ]
+        forecasts.append(CurrentModel(TZ, gas=rows).forecast(history, targets))
+
+    np.testing.assert_array_equal(forecasts[0], forecasts[1])
+    train, target = backtest._feature_rows(history, targets, TZ, gas=clean)
+    column = list(backtest.FEATURE_NAMES).index("gas_price")
+    # Every target slot gets the last price before the origin (2026-06-14)
+    assert np.all(target[:, column] == clean[44]["price"])
+    assert not np.isnan(train[:, column]).any()
+
+
+def test_gas_prices_are_loaded_per_month_and_cached(tmp_path: Path) -> None:
+    calls: list[str] = []
+
+    def fetch(url: str) -> list[dict[str, Any]]:
+        calls.append(url)
+        return [{"date": "2026-06-10T00:00:00Z", "price": 310.0}]
+
+    rows = backtest.load_gas_prices(
+        date(2026, 5, 20), date(2026, 6, 5), tmp_path, fetch, today=date(2026, 9, 1)
+    )
+    again = backtest.load_gas_prices(
+        date(2026, 5, 20), date(2026, 6, 5), tmp_path, fetch, today=date(2026, 9, 1)
+    )
+
+    assert len(calls) == 2  # May and June, then from the cache
+    assert "energy-api.instrat.pl" in calls[0]
+    assert rows == again
+    assert rows[0] == {"timestamp": "2026-06-10T00:00:00Z", "price": 310.0}
+
+
+def test_the_gas_flag_is_parsed() -> None:
+    assert backtest.parse_args(["--gas"]).gas is True
+    assert backtest.parse_args([]).gas is False

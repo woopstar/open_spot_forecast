@@ -6,8 +6,9 @@ training window first (from the day-ahead APIs, whatever the displayed price
 source, #24), then for every stored
 price day the zone weather (Open-Meteo's archived forecasts, #23), the
 Nordpool prognoses, with an ENTSO-E key the week-ahead load forecast
-(#30) and, with the cross-border model, the neighbours' prices and zone
-weather (#29); if anything was added, the forecast is refreshed, so
+(#30), where it helps the gas price (#28) and, with the cross-border model,
+the neighbours' prices and zone weather (#29); if anything was added, the
+forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
 so an interrupted backfill resumes where it stopped. Once a day, history older than the training window plus
 ``HISTORY_MARGIN_DAYS`` is deleted.
@@ -26,11 +27,13 @@ from homeassistant.util import dt as dt_util
 from .api.dayahead_prices import NeighbourPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .const import WEATHER_POINTS
+from .ml.gas_price import GAS_LOOKBACK_DAYS
 from .time_slots import local_midnight
 
 if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
     from .api.entsoe_load import EntsoeLoadSource
+    from .api.gas_prices import GasPriceSource
     from .api.time_series_source import TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
@@ -75,6 +78,7 @@ class HistoryUpdaterMixin:
     nordpool: NordpoolPrognosisSource | None
     weather: OpenMeteoWeatherSource | None
     load: EntsoeLoadSource | None
+    gas: GasPriceSource | None
     # The cross-border model's neighbour sources (#29); empty when it is off
     neighbour_prices: list[NeighbourPriceSource]
     neighbour_weather: list[OpenMeteoWeatherSource]
@@ -83,6 +87,12 @@ class HistoryUpdaterMixin:
 
     async def refresh_forecast(self) -> None:
         """Re-read the prices and re-run the forecast (``ForecastUpdater``)."""
+        raise NotImplementedError
+
+    async def _refresh(
+        self, source: TimeSeriesSource, start: datetime, end: datetime, label: str
+    ) -> list[dict[str, Any]] | None:
+        """Update a source and return its stored rows (``ForecastUpdater``)."""
         raise NotImplementedError
 
     def _first_price_day(self) -> date | None:
@@ -142,9 +152,10 @@ class HistoryUpdaterMixin:
         """Fetch the history the model trains on that is still missing.
 
         Day-ahead price days first, then for the stored price days the zone
-        weather, the Nordpool prognoses, the ENTSO-E load forecast and the
-        cross-border model's neighbour prices and weather (#29). If anything
-        was added the forecast is refreshed, so the model retrains on it.
+        weather, the Nordpool prognoses, the ENTSO-E load forecast, the gas
+        price (#28) and the cross-border model's neighbour prices and weather
+        (#29). If anything was added the forecast is refreshed, so the model
+        retrains on it.
         """
         ml_predictor = self.ml_predictor
         if ml_predictor is None or self.nordpool is None:
@@ -155,12 +166,34 @@ class HistoryUpdaterMixin:
             weather = await self._backfill_source(self.weather, first, "Open-Meteo")
             prognoses = await self._backfill_source(self.nordpool, first, "Nordpool")
             load = await self._backfill_source(self.load, first, "ENTSO-E load")
-            changed = changed or weather or prognoses or load
+            # A slot uses the gas price known before its day (#28)
+            gas = await self._backfill_source(
+                self.gas, first - timedelta(days=GAS_LOOKBACK_DAYS), "Gas price"
+            )
+            changed = changed or weather or prognoses or load or gas
             for source in [*self.neighbour_prices, *self.neighbour_weather]:
                 if await self._backfill_source(source, first, source.spec.name):
                     changed = True
         if changed:
             await self.refresh_forecast()
+
+    async def update_gas_price(self, weather_data: dict[str, Any]) -> None:
+        """Refresh the recent gas prices and attach them for the prediction (#28).
+
+        Every slot uses the latest price published before its day, so the
+        last ``GAS_LOOKBACK_DAYS`` are attached as ``weather_data["gas_price"]``.
+        """
+        if self.gas is None:
+            return
+        today = dt_util.now().date()
+        rows = await self._refresh(
+            self.gas,
+            local_midnight(today - timedelta(days=GAS_LOOKBACK_DAYS)),
+            local_midnight(today + timedelta(days=1)),
+            "gas price",
+        )
+        if rows:
+            weather_data["gas_price"] = rows
 
     async def update_neighbours(self, forecast_end: datetime) -> None:
         """Refresh the neighbours' recent prices and weather forecast (#29).
@@ -220,6 +253,8 @@ class HistoryUpdaterMixin:
                 zone = await self.weather.async_prune(cutoff)
             if self.load is not None:
                 load = await self.load.async_prune(cutoff)
+            if self.gas is not None:
+                await self.gas.async_prune(cutoff - timedelta(days=GAS_LOOKBACK_DAYS))
             for source in [*self.neighbour_prices, *self.neighbour_weather]:
                 await source.async_prune(cutoff)
         except Exception as err:

@@ -13,7 +13,8 @@ from ..price_series import is_invalid_price_series
 from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
-from .series_storage import ENTSOE_LOAD, OPENMETEO_WEATHER
+from .gas_price import GAS_LOOKBACK_DAYS, GasPriceIndex
+from .series_storage import ENTSOE_LOAD, GAS_PRICES, OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
 from .zone_weather import ZoneWeatherIndex, zone_points
 
@@ -125,7 +126,7 @@ class LearningMixin(PredictorBase):
 
         Every row comes from ``build_feature_row``, the function prediction
         rows come from, with the slot's stored zone weather forecast,
-        Nordpool prognoses and ENTSO-E load forecast as inputs
+        Nordpool prognoses, ENTSO-E load forecast and gas price as inputs
         (``TrainingInputs``). Inputs that were
         not stored for a slot stay unknown (NaN for the model).
 
@@ -145,6 +146,11 @@ class LearningMixin(PredictorBase):
                 zone_points(self.region),
             ),
             self.storage.load_series(ENTSOE_LOAD, *span),
+            GasPriceIndex(
+                self.storage.load_series(
+                    GAS_PRICES, span[0] - timedelta(days=GAS_LOOKBACK_DAYS), span[1]
+                )
+            ),
         )
 
         for entry in self.price_history:
