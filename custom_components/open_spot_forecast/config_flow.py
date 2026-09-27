@@ -21,6 +21,7 @@ from homeassistant.helpers.selector import (
 from .const import (
     ATTRIBUTE_FORMATS,
     CONF_ATTRIBUTE_FORMAT,
+    CONF_CROSS_BORDER,
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
@@ -44,6 +45,7 @@ from .const import (
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_ATTRIBUTE_FORMAT,
+    DEFAULT_CROSS_BORDER,
     DEFAULT_CURRENCY,
     DEFAULT_HOURLY_AVERAGE,
     DEFAULT_INCLUDE_KNOWN_PRICES,
@@ -58,6 +60,7 @@ from .const import (
     DEFAULT_TRAINING_DAYS,
     DEFAULT_VAT,
     DOMAIN,
+    NEIGHBOURS,
     PREDICTION_HOURS_OPTIONS,
     PRICE_SOURCE_STROMLIGNING,
     PRICE_SOURCES,
@@ -336,6 +339,19 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): vol.In(TRAINING_DAYS_OPTIONS),
+                # Two-stage cross-border model (#29), for regions with neighbours
+                **(
+                    {
+                        vol.Optional(
+                            CONF_CROSS_BORDER,
+                            default=self.config_entry.options.get(
+                                CONF_CROSS_BORDER, DEFAULT_CROSS_BORDER
+                            ),
+                        ): bool
+                    }
+                    if self.config_entry.data.get(CONF_REGION) in NEIGHBOURS
+                    else {}
+                ),
                 # Added after setup too: enables ENTSO-E's load forecast (#30)
                 vol.Optional(
                     CONF_ENTSOE_API_KEY,

@@ -157,6 +157,7 @@ def make() -> Iterator[Callable[..., Harness]]:
             reader.read_spot_prices.return_value = _stromligning(SPOT_TODAY, [])
             reader.read_weather_sensors.return_value = {"temperature": 12.0}
             predictor = Mock()
+            predictor.cross_border = None
             predictor.save_learning_data = AsyncMock()
             predictor.predictions = [{"price": 0.5}]
             predictor.learn_from_actual_price.return_value = False

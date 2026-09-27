@@ -237,6 +237,7 @@ async def test_setup_polls_until_tomorrow_is_complete_and_cancels_on_unload(
     reader.read_spot_prices.return_value = reading(full_day[:23])
     reader.read_weather_sensors.return_value = {"temperature": 12.0}
     ml_predictor = Mock()
+    ml_predictor.cross_border = None
     ml_predictor._load_learning_data = AsyncMock()
     ml_predictor.save_learning_data = AsyncMock()
     ml_predictor.predictions = []

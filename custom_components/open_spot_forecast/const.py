@@ -224,6 +224,18 @@ HOLIDAY_SUBDIVISIONS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Two-stage cross-border model (#29): day-ahead markets are coupled, so a
+# region's model can take the price forecasts of the zones its interconnectors
+# reach (DK1: Germany, the Netherlands (COBRA), NO2 (Skagerrak), SE3
+# (Konti-Skan) and DK2 (Great Belt); DK2: DK1, Germany (Kontek) and SE4
+# (Øresund)). Off by default: it trains extra models for every neighbour
+CONF_CROSS_BORDER = "cross_border"
+DEFAULT_CROSS_BORDER = False
+NEIGHBOURS: dict[str, tuple[str, ...]] = {
+    "DK1": ("DE", "NL", "NO2", "SE3", "DK2"),
+    "DK2": ("DK1", "DE", "SE4"),
+}
+
 # Regions whose model uses ENTSO-E's week-ahead load forecast (#30) when an
 # ENTSO-E API key is configured. EpexPredictor's backtests found it hurts in
 # Germany and the Netherlands, so it stays off there

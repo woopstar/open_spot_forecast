@@ -170,6 +170,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }
     ml_predictor = Mock()
+    ml_predictor.cross_border = None
     ml_predictor._load_learning_data = AsyncMock()
     ml_predictor.save_learning_data = AsyncMock()
     ml_predictor.predictions = []

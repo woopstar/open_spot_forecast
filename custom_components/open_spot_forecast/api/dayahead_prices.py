@@ -29,7 +29,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ..const import ENERGY_CHARTS_API, REGIONS
-from ..ml.series_storage import DAYAHEAD_PRICES
+from ..ml.series_storage import DAYAHEAD_PRICES, neighbour_prices
 from ..time_series import TimeRange, day_chunks, missing_ranges
 from .entsoe import (
     async_entsoe_get,
@@ -248,3 +248,34 @@ class DayAheadPriceSource(TimeSeriesSource):
         except ValueError as err:
             _LOGGER.warning("Unusable ENTSO-E response: %s", err)
             return None
+
+
+class NeighbourPriceSource(DayAheadPriceSource):
+    """Day-ahead prices of a neighbouring zone, for the cross-border model (#29).
+
+    Stored raw (EUR/MWh) in ``neighbour_prices``, keyed by zone, with a
+    source state per zone.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        storage: LearningStorage,
+        zone: str,
+        entsoe_api_key: str | None = None,
+    ) -> None:
+        """Initialize the source for a neighbouring zone in ``REGIONS``."""
+        super().__init__(hass, storage, zone, entsoe_api_key)
+        self.spec = neighbour_prices(zone)
+        self.key = zone
+
+    def keys(self) -> list[str]:
+        """Return the zone: every slot needs a row for it."""
+        return [self.key]
+
+    async def _fetch(
+        self, start: datetime, end: datetime
+    ) -> list[dict[str, Any]] | None:
+        """Fetch the zone's prices and key them by zone."""
+        rows = await super()._fetch(start, end)
+        return None if rows is None else [row | {"zone": self.key} for row in rows]

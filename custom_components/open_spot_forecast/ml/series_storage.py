@@ -69,7 +69,6 @@ OPENMETEO_WEATHER = SeriesSpec(
     key_column="point",
 )
 
-
 # ENTSO-E's week-ahead load forecast as a 15-min curve, MW (#30)
 ENTSOE_LOAD = SeriesSpec(
     name="entsoe_load",
@@ -77,6 +76,21 @@ ENTSOE_LOAD = SeriesSpec(
     columns=("load",),
     step_minutes=15,
 )
+
+
+def neighbour_prices(zone: str) -> SeriesSpec:
+    """Return the ``neighbour_prices`` spec of one neighbouring zone (#29).
+
+    One table holds every neighbour's day-ahead prices (EUR/MWh, raw), keyed
+    by zone; each zone has its own source state (``name``).
+    """
+    return SeriesSpec(
+        name=f"neighbour_prices_{zone}",
+        table="neighbour_prices",
+        columns=("price",),
+        step_minutes=15,
+        key_column="zone",
+    )
 
 
 def _utc_key(moment: datetime) -> str:
@@ -161,21 +175,33 @@ class SeriesStorageMixin(StorageMixinBase):
         return changed
 
     def load_series(
-        self, spec: SeriesSpec, start: datetime, end: datetime
+        self,
+        spec: SeriesSpec,
+        start: datetime,
+        end: datetime,
+        keys: Sequence[str] = (),
     ) -> list[dict[str, Any]]:
-        """Return the rows in ``[start, end)``, oldest first (blocking)."""
+        """Return the rows in ``[start, end)``, oldest first (blocking).
+
+        Args:
+            spec: The table.
+            start: Range start.
+            end: Range end (exclusive).
+            keys: For a keyed table, only these keys' rows; all if empty.
+        """
         key = [spec.key_column] if spec.key_column else []
         names = ["timestamp", *key, *spec.columns]
+        params: list[Any] = [_utc_key(start), _utc_key(end)]
+        where = _in_range_sql()
+        if spec.key_column and keys:
+            where += f" AND {spec.key_column} IN ({', '.join('?' for _ in keys)})"
+            params.extend(keys)
         sql = (
             f"SELECT {', '.join(names)} FROM {spec.table} "  # noqa: S608
-            f"WHERE {_in_range_sql()} ORDER BY julianday(timestamp)"
+            f"WHERE {where} ORDER BY julianday(timestamp)"
         )
         with self._lock:
-            rows = (
-                self._ensure_conn()
-                .execute(sql, (_utc_key(start), _utc_key(end)))
-                .fetchall()
-            )
+            rows = self._ensure_conn().execute(sql, params).fetchall()
         return [dict(zip(names, row, strict=True)) for row in rows]
 
     def prune_series(self, spec: SeriesSpec, before: datetime) -> int:

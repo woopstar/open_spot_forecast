@@ -99,7 +99,8 @@ def test_holdout_metrics_use_chronological_split(
         r for r in caplog.records if r.getMessage().startswith("ML model trained")
     )
     assert isinstance(record.args, tuple)
-    mae, rmse = record.args[:2]
+    # The first argument is the training time
+    mae, rmse = record.args[1:3]
     shift = SHIFTED_LEVEL - BASE_LEVEL
     assert mae == pytest.approx(shift, abs=5.0)
     assert rmse == pytest.approx(shift, abs=5.0)

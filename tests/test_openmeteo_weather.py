@@ -300,3 +300,16 @@ async def test_days_before_yesterday_come_from_the_archive(
     assert OpenMeteoWeatherSource.archive_before(NOW) == datetime(
         2026, 9, 23, tzinfo=UTC
     )
+
+
+def test_a_neighbours_points_keep_their_own_source_state(
+    storage: LearningStorage,
+) -> None:
+    """The cross-border model's neighbours (#29) share the weather table."""
+    neighbour = OpenMeteoWeatherSource(Mock(), storage, "DE", neighbour=True)
+    own = OpenMeteoWeatherSource(Mock(), storage, "DK1")
+
+    assert neighbour.spec.name == "openmeteo_DE"
+    assert own.spec.name == OPENMETEO_WEATHER.name
+    assert neighbour.spec.table == own.spec.table
+    assert len(neighbour.keys()) == 6

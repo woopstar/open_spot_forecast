@@ -110,3 +110,18 @@ def test_prune_and_source_state(storage: LearningStorage) -> None:
     assert storage.load_source_state("nordpool") is None
     storage.save_source_state("nordpool", "[]")
     assert storage.load_source_state("nordpool") == "[]"
+
+
+def test_a_keyed_load_can_ask_for_some_keys_only(storage: LearningStorage) -> None:
+    storage.upsert_series(
+        KEYED,
+        [
+            {"timestamp": T0.isoformat(), "point": point, "value": 1.0}
+            for point in ("a", "b", "c")
+        ],
+    )
+
+    rows = storage.load_series(KEYED, T0, T0 + HOUR, ("a", "c"))
+
+    assert [row["point"] for row in rows] == ["a", "c"]
+    assert len(storage.load_series(KEYED, T0, T0 + HOUR)) == 3

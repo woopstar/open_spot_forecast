@@ -2,6 +2,7 @@
 
 import contextlib
 import logging
+import time
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -13,7 +14,7 @@ from homeassistant.util import dt as dt_util
 from ..price_series import known_prices
 from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
-from .features import build_feature_vector, optional_float
+from .features import FEATURE_NAMES, build_feature_vector, optional_float
 from .gbm import NumpyGradientBoosting
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +66,23 @@ class ModelMixin(PredictorBase):
     referenced via self are provided by the owning class.
     """
 
+    def _model_inputs(self, features: list[dict], train: bool = False) -> np.ndarray:
+        """Return the price model's input rows for feature dicts.
+
+        The ``build_feature_vector`` columns and, with the cross-border model
+        (#29), one stage-1 price column per neighbour: out of sample for
+        training rows (``train`` refits stage 1), forecasts otherwise.
+        """
+        X = np.array(
+            [build_feature_vector(feature) for feature in features], dtype=float
+        ).reshape(len(features), len(FEATURE_NAMES))
+        cross = self.cross_border
+        if cross is None:
+            return X
+        starts = [datetime.fromisoformat(feature["start"]) for feature in features]
+        columns = cross.fit(starts) if train else cross.predict(starts)
+        return np.column_stack([X, columns])
+
     def _train_models(self) -> None:
         """Train the price model on all stored price history.
 
@@ -73,6 +91,7 @@ class ModelMixin(PredictorBase):
         Today's prices must already be in price_history (see
         RetrainMixin.record_training_prices).
         """
+        began = time.monotonic()
         try:
             # Get ALL historical prices and features (multi-day training)
             all_prices, all_features = self.get_all_historical_prices()
@@ -90,17 +109,8 @@ class ModelMixin(PredictorBase):
                 len(self.price_history),
             )
 
-            # Prepare training data
-            X_list: list[list[float]] = []
-            y_list: list[float] = []
-
-            for i, feature in enumerate(all_features):
-                feature_vector = build_feature_vector(feature)
-                X_list.append(feature_vector)
-                y_list.append(all_prices[i])
-
-            X = np.array(X_list)
-            y = np.array(y_list)
+            X = self._model_inputs(all_features, train=True)
+            y = np.array(all_prices, dtype=float)
 
             # Chronological train/test split (80/20), used only to measure
             # holdout error with a copy of the model on the oldest 80 %
@@ -121,7 +131,9 @@ class ModelMixin(PredictorBase):
             self.price_model.fit(X, y)
 
             _LOGGER.info(
-                "ML model trained: holdout MAE=%.2f, RMSE=%.2f, samples=%d, days=%d",
+                "ML model trained in %.1f s: holdout MAE=%.2f, RMSE=%.2f, "
+                "samples=%d, days=%d",
+                time.monotonic() - began,
                 mae,
                 rmse,
                 len(all_prices),
@@ -210,15 +222,8 @@ class ModelMixin(PredictorBase):
         if len(all_prices) < 168:  # min 7 days * 24 hours
             return None
 
-        X_list: list[list[float]] = []
-        y_list: list[float] = []
-        for i, feature in enumerate(all_features):
-            feature_vector = build_feature_vector(feature)
-            X_list.append(feature_vector)
-            y_list.append(all_prices[i])
-
-        X = np.array(X_list)
-        y = np.array(y_list)
+        X = self._model_inputs(all_features, train=True)
+        y = np.array(all_prices, dtype=float)
 
         # 80/20 train/validation split
         split_idx = int(0.8 * len(X))
@@ -315,15 +320,13 @@ class ModelMixin(PredictorBase):
             )
 
         # One batch call: walking every tree once per slot costs ~100x more
-        feature_vectors = [build_feature_vector(feature) for feature in features]
+        feature_vectors = self._model_inputs(features)
         raw_prices = (
-            self.price_model.predict(np.array(feature_vectors))
-            if feature_vectors
-            else np.empty(0)
+            self.price_model.predict(feature_vectors) if features else np.empty(0)
         )
 
         for idx, feature in enumerate(features):
-            feature_vector = feature_vectors[idx]
+            feature_vector = feature_vectors[idx].tolist()
 
             # Log first few feature vectors
             if idx < 3:

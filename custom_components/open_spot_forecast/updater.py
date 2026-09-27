@@ -48,7 +48,7 @@ from .const import (
     UPDATE_SIGNAL_FORECAST,
     WEATHER_POINTS,
 )
-from .history_updater import HistoryUpdaterMixin
+from .history_updater import HistoryUpdaterMixin, neighbour_sources
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
 from .price_source import DayAheadPrices, PriceSettings
@@ -188,6 +188,11 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if ml_predictor and key and self.region in ENTSOE_LOAD_REGIONS
             else None
         )
+        # The neighbours' prices and zone weather: the cross-border model's
+        # stage 1 (#29), only when the option is on
+        self.neighbour_prices, self.neighbour_weather = neighbour_sources(
+            hass, ml_predictor, key
+        )
         self.dayahead = (
             DayAheadPrices(hass, storage, self.region, self.settings)
             if self.settings.dayahead and storage is not None
@@ -208,6 +213,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         api_data["history_prices"] = self.history_prices is not None
         api_data["zone_weather"] = self.weather is not None
         api_data["entsoe_load"] = self.load is not None
+        api_data["cross_border"] = bool(self.neighbour_prices)
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
@@ -356,6 +362,9 @@ class ForecastUpdater(HistoryUpdaterMixin):
         )
         await self._update_ahead(
             self.load, weather_data, "load_forecast", "ENTSO-E load forecast"
+        )
+        await self.update_neighbours(
+            local_midnight(dt_util.now().date() + timedelta(days=FORECAST_DAYS + 1))
         )
 
         ml_predictor = self.ml_predictor

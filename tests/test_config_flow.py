@@ -286,3 +286,25 @@ async def test_the_entsoe_key_can_be_added_in_the_options(
     assert flow.async_create_entry.call_args.kwargs["data"] == {
         CONF_ENTSOE_API_KEY: "new-key"
     }
+
+
+@pytest.mark.asyncio
+async def test_the_cross_border_model_is_an_option_for_regions_with_neighbours() -> (
+    None
+):
+    """Off by default (#29); only DK1 and DK2 have neighbours configured."""
+    flow = _options_flow()
+    await flow.async_step_init()
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    key = next(k for k in schema if str(k) == "cross_border")
+    assert key.default() is False
+
+    flow.config_entry.options = {"cross_border": True}
+    await flow.async_step_init()
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    assert next(k for k in schema if str(k) == "cross_border").default() is True
+
+    flow.config_entry.data = {CONF_REGION: "SE3"}
+    await flow.async_step_init()
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    assert "cross_border" not in {str(k) for k in schema}

@@ -11,11 +11,15 @@ import pytest
 
 from custom_components.open_spot_forecast.api.dayahead_prices import (
     DayAheadPriceSource,
+    NeighbourPriceSource,
     parse_energy_charts,
     parse_entsoe,
 )
 from custom_components.open_spot_forecast.api.http import HttpResponse
-from custom_components.open_spot_forecast.ml.series_storage import DAYAHEAD_PRICES
+from custom_components.open_spot_forecast.ml.series_storage import (
+    DAYAHEAD_PRICES,
+    neighbour_prices,
+)
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 
 MODULE = "custom_components.open_spot_forecast.api.dayahead_prices"
@@ -384,3 +388,37 @@ async def test_an_interrupted_backfill_resumes_with_the_missing_days(
     assert len(starts) == 3
     assert starts[2] == starts[1]
     assert len(storage.load_series(DAYAHEAD_PRICES, start, DAY_END)) == 60 * 96
+
+
+@pytest.mark.asyncio
+async def test_a_neighbours_prices_are_stored_by_zone(
+    storage: LearningStorage, apis: FakeApis
+) -> None:
+    """The cross-border model's neighbours (#29) share one keyed table."""
+
+    async def run_inline(func: Callable[..., Any], *args: Any) -> Any:
+        return func(*args)
+
+    hass = Mock()
+    hass.async_add_executor_job = run_inline
+    germany = NeighbourPriceSource(hass, storage, "DE")
+    norway = NeighbourPriceSource(hass, storage, "NO2")
+
+    assert await germany.async_update(DAY_START, DAY_END) is True
+    assert await norway.async_update(DAY_START, DAY_END) is True
+
+    assert [call[1]["bzn"] for call in apis.calls] == ["DE-LU", "NO2"]
+    rows = storage.load_series(neighbour_prices("DE"), DAY_START, DAY_END, ("DE",))
+    assert len(rows) == 96
+    assert {row["zone"] for row in rows} == {"DE"}
+    # Not the region's own prices
+    assert storage.load_series(DAYAHEAD_PRICES, DAY_START, DAY_END) == []
+    # Each zone is complete on its own: no second request
+    assert await germany.async_update(DAY_START, DAY_END) is False
+    assert len(apis.calls) == 2
+    # A failed request stores nothing
+    apis.energy_charts = lambda _params: None
+    assert (
+        await NeighbourPriceSource(hass, storage, "NL").async_update(DAY_START, DAY_END)
+        is False
+    )

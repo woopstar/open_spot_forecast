@@ -70,6 +70,7 @@
           "vat": "Moms",
           "precision": "Decimal Præcision",
           "training_days": "Træningsdage (prishistorik, som modellen lærer af)",
+          "cross_border": "Grænseoverskridende model (nabozonernes priser)",
           "entsoe_api_key": "ENTSO-E API-nøgle (valgfri)",
           "surcharge": "Tillæg pr. enhed (lægges til før moms)",
           "hourly_average": "Timegennemsnitspriser",
@@ -81,7 +82,8 @@
           "surcharge": "Fast beløb i din valuta pr. prisenhed, der lægges til spotprisen før moms: total = (spot + tillæg) × (1 + moms). Gælder day-ahead-priserne og prognosen; Strømlignings priser indeholder det allerede. Træder i kraft, når integrationen genindlæses.",
           "hourly_average": "Vis gennemsnittet af hver times fire 15-minutters priser, til aftaler der afregnes pr. time. Træder i kraft, når integrationen genindlæses.",
           "attribute_format": "Detaljeret: én post pr. interval med start, slut, pris, enhed og sikkerhed (op til 72 timer). Kompakt: parallelle lister med starttider (s, unix-sekunder), priser (t) og sikkerhed i procent (c), cirka seks gange mindre, så op til 168 timer kan være inden for Home Assistants grænse på 16 KB for attributter. Træder i kraft, når integrationen genindlæses.",
-          "include_known_prices": "Lad prognoseattributten starte ved det aktuelle interval med de kendte spotpriser (source: actual) og derefter prognoserne (source: predicted) som én sammenhængende serie. I det kompakte format angiver known_count antallet af kendte poster. Træder i kraft, når integrationen genindlæses."
+          "include_known_prices": "Lad prognoseattributten starte ved det aktuelle interval med de kendte spotpriser (source: actual) og derefter prognoserne (source: predicted) som én sammenhængende serie. I det kompakte format angiver known_count antallet af kendte poster. Træder i kraft, når integrationen genindlæses.",
+          "cross_border": "Model i to trin: lærer nabobudzonernes priser ud fra deres vejr og giver prognoserne videre til denne zones model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Sænker prognosefejlen med omkring en sjettedel i backtesten, men træner to ekstra modeller pr. nabozone og gemmer deres priser og vejr: hver træning tager flere gange længere tid (flere titals sekunder på en Raspberry Pi 4). Træder i kraft, når integrationen genindlæses."
         }
       }
     }

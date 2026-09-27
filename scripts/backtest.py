@@ -59,9 +59,16 @@ from custom_components.open_spot_forecast.api.openmeteo_weather import (
 from custom_components.open_spot_forecast.const import (
     ENERGY_CHARTS_API,
     ENTSOE_API,
+    NEIGHBOURS,
     OPEN_METEO_ARCHIVE_API,
     REGIONS,
     WEATHER_POINTS,
+)
+from custom_components.open_spot_forecast.ml.cross_border import (
+    Stage1Model,
+    cross_price_name,
+    local_day_fold,
+    neighbour_feature_rows,
 )
 from custom_components.open_spot_forecast.ml.features import (
     FEATURE_NAMES,
@@ -377,6 +384,29 @@ def load_open_meteo_weather(
     return ZoneWeatherIndex(rows)
 
 
+def load_cross_border(
+    region: str,
+    first: date,
+    last: date,
+    cache_dir: Path,
+    with_weather: bool = True,
+) -> CrossBorderInputs:
+    """Load the neighbouring zones' prices and zone weather (#29)."""
+    prices: dict[str, PriceSeries] = {}
+    weather: dict[str, ZoneWeatherIndex | None] = {}
+    for zone in NEIGHBOURS[region]:
+        print(f"Loading neighbour {zone} ...", file=sys.stderr)
+        prices[zone] = load_energy_charts_prices(zone, first, last, cache_dir)
+        weather[zone] = (
+            load_open_meteo_weather(
+                zone, first - timedelta(days=1), last + timedelta(days=1), cache_dir
+            )
+            if with_weather
+            else None
+        )
+    return CrossBorderInputs(ZoneInfo(str(REGIONS[region]["tz"])), prices, weather)
+
+
 # --- Models --------------------------------------------------------------------
 
 
@@ -407,6 +437,79 @@ def feature_matrix(
     return np.array(rows, dtype=float).reshape(len(rows), len(FEATURE_NAMES))
 
 
+@dataclass
+class CrossBorderInputs:
+    """Neighbouring zones' prices and weather for the two-stage model (#29).
+
+    Stage 1 is the integration's ``Stage1Model`` per neighbour, fitted on
+    that zone's prices from the same window as the region's history and cut
+    at the same horizon cutoff: training slots get the out-of-sample price,
+    target slots the fold models' mean, as in ``CrossBorderModels``.
+    """
+
+    tz: tzinfo
+    prices: Mapping[str, PriceSeries]
+    weather: Mapping[str, ZoneWeatherIndex | None]
+    _rows: dict[str, dict[int, np.ndarray]] = field(default_factory=dict, init=False)
+    # The last origin's columns, shared by the NumPy and LightGBM rows
+    _last: tuple[tuple[int, int], tuple[np.ndarray, np.ndarray]] | None = field(
+        default=None, init=False
+    )
+
+    @property
+    def names(self) -> list[str]:
+        """Return the stage-2 column names, in neighbour order."""
+        return [cross_price_name(zone) for zone in self.prices]
+
+    def _feature_rows(self, zone: str, starts: np.ndarray) -> np.ndarray:
+        """Return the zone's stage-1 rows for slot starts (cached: no prices)."""
+        cache = self._rows.setdefault(zone, {})
+        missing = [start for start in starts.tolist() if start not in cache]
+        if missing:
+            moments = [datetime.fromtimestamp(start, self.tz) for start in missing]
+            rows = neighbour_feature_rows(zone, moments, self.weather.get(zone))
+            cache.update(zip(missing, rows, strict=True))
+        return np.array([cache[start] for start in starts.tolist()]).reshape(
+            len(starts), len(FEATURE_NAMES)
+        )
+
+    def _folds(self, starts: np.ndarray) -> np.ndarray:
+        return np.array(
+            [
+                local_day_fold(datetime.fromtimestamp(s, self.tz))
+                for s in starts.tolist()
+            ]
+        )
+
+    def columns(
+        self, history: PriceSeries, targets: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the stage-1 columns of the training and the target slots.
+
+        Only neighbour prices from the history's first slot up to the horizon
+        cutoff (the first target slot) are used.
+        """
+        key = (int(history.starts.min()), int(targets.min()))
+        if self._last is not None and self._last[0] == key:
+            return self._last[1]
+        train = np.full((len(history), len(self.prices)), math.nan)
+        target = np.full((len(targets), len(self.prices)), math.nan)
+        for index, (zone, series) in enumerate(self.prices.items()):
+            visible = series.between(*key)
+            model = Stage1Model()
+            model.fit(
+                self._feature_rows(zone, visible.starts),
+                visible.prices,
+                self._folds(visible.starts),
+            )
+            train[:, index] = model.predict_out_of_sample(
+                self._feature_rows(zone, history.starts), self._folds(history.starts)
+            )
+            target[:, index] = model.predict(self._feature_rows(zone, targets))
+        self._last = (key, (train, target))
+        return train, target
+
+
 def _feature_rows(
     history: PriceSeries,
     targets: np.ndarray,
@@ -414,11 +517,19 @@ def _feature_rows(
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
     load: Mapping[int, float] | None = None,
+    cross: CrossBorderInputs | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (training rows, target rows) for the slot times and inputs."""
-    return (
-        feature_matrix(history.starts, tz, zone, region, load),
-        feature_matrix(targets, tz, zone, region, load),
+    """Return (training rows, target rows) for the slot times and inputs.
+
+    With ``cross`` the stage-1 price columns (#29) follow the features.
+    """
+    train = feature_matrix(history.starts, tz, zone, region, load)
+    target = feature_matrix(targets, tz, zone, region, load)
+    if cross is None:
+        return train, target
+    train_columns, target_columns = cross.columns(history, targets)
+    return np.column_stack([train, train_columns]), np.column_stack(
+        [target, target_columns]
     )
 
 
@@ -463,11 +574,12 @@ class CurrentModel:
     zone: ZoneWeatherIndex | None = None
     region: str | None = None
     load: Mapping[int, float] | None = None
+    cross: CrossBorderInputs | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region, self.load
+            history, targets, self.tz, self.zone, self.region, self.load, self.cross
         )
         model = self.model_factory()
         model.fit(train_rows, history.prices)
@@ -487,17 +599,17 @@ class LightGbmReference:
     zone: ZoneWeatherIndex | None = None
     region: str | None = None
     load: Mapping[int, float] | None = None
+    cross: CrossBorderInputs | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
         import lightgbm  # optional dev-only dependency (requirements_backtest.txt)
 
         train_rows, target_rows = _feature_rows(
-            history, targets, self.tz, self.zone, self.region, self.load
+            history, targets, self.tz, self.zone, self.region, self.load, self.cross
         )
-        dataset = lightgbm.Dataset(
-            train_rows, label=history.prices, feature_name=list(FEATURE_NAMES)
-        )
+        names = [*FEATURE_NAMES, *(self.cross.names if self.cross else ())]
+        dataset = lightgbm.Dataset(train_rows, label=history.prices, feature_name=names)
         booster = lightgbm.train(
             LIGHTGBM_PARAMS, dataset, num_boost_round=LIGHTGBM_ROUNDS
         )
@@ -515,22 +627,43 @@ def build_models(
     zone: ZoneWeatherIndex | None = None,
     region: str | None = None,
     load: Mapping[int, float] | None = None,
+    cross: CrossBorderInputs | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
-    """Instantiate the requested models; return them plus {skipped name: reason}."""
+    """Instantiate the requested models; return them plus {skipped name: reason}.
+
+    With ``cross`` the GBM rows are two-stage cross-border models (#29).
+    """
     models: list[Forecaster] = []
     skipped: dict[str, str] = {}
+    stages = ", two-stage" if cross else ""
     for name in names:
         if name == "naive":
             models.append(NaiveLastWeek(tz))
         elif name == "current":
-            models.append(CurrentModel(tz, zone=zone, region=region, load=load))
+            models.append(
+                CurrentModel(
+                    tz,
+                    name=f"current (NumPy GBM{stages})",
+                    zone=zone,
+                    region=region,
+                    load=load,
+                    cross=cross,
+                )
+            )
         elif name == "lightgbm":
             if _lightgbm_available():
                 models.append(
-                    LightGbmReference(tz, zone=zone, region=region, load=load)
+                    LightGbmReference(
+                        tz,
+                        name=f"lightgbm (reference{stages})",
+                        zone=zone,
+                        region=region,
+                        load=load,
+                        cross=cross,
+                    )
                 )
             else:
-                skipped[LightGbmReference.name] = (
+                skipped[f"lightgbm (reference{stages})"] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
                 )
         else:
@@ -807,6 +940,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="ENTSO-E's week-ahead load forecast (#30); needs ENTSOE_API_KEY",
     )
     parser.add_argument(
+        "--cross-border",
+        action="store_true",
+        help="two-stage model with the neighbouring zones' prices (#29)",
+    )
+    parser.add_argument(
         "--days",
         choices=("all", "holidays"),
         default="all",
@@ -819,6 +957,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--window-days must be >= 7, --step-days and --horizon-days >= 1")
     if args.load == "entsoe" and not os.environ.get("ENTSOE_API_KEY"):
         parser.error("--load entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
+    if args.cross_border and args.region not in NEIGHBOURS:
+        parser.error(f"--cross-border needs a region in {', '.join(NEIGHBOURS)}")
     return args
 
 
@@ -866,7 +1006,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.cache_dir,
             os.environ["ENTSOE_API_KEY"],
         )
-    models, skipped = build_models(names, tz, zone, args.region, load)
+    cross = None
+    if args.cross_border:
+        cross = load_cross_border(
+            args.region,
+            data_first,
+            data_last,
+            args.cache_dir,
+            with_weather=args.weather == "openmeteo",
+        )
+    models, skipped = build_models(names, tz, zone, args.region, load, cross)
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(
