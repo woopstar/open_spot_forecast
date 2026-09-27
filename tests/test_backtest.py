@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from email.message import Message
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -30,6 +31,7 @@ from scripts.backtest import (
     build_models,
     format_report,
     history_for,
+    holiday_days,
     load_energy_charts_prices,
     local_midnight,
     mae,
@@ -68,7 +70,7 @@ def _noisy_series(first: date, days: int, seed: int = 7) -> PriceSeries:
     return PriceSeries(series.starts, series.prices + rng.normal(0, 2, len(series)))
 
 
-def _config(origin: date, last: date | None = None, **kwargs: int) -> BacktestConfig:
+def _config(origin: date, last: date | None = None, **kwargs: Any) -> BacktestConfig:
     """Return a backtest config with a short training window."""
     kwargs.setdefault("window_days", 14)
     return BacktestConfig(
@@ -323,6 +325,36 @@ def test_run_backtest_skips_origins_without_actuals():
     config = _config(date(2026, 6, 15), date(2026, 6, 20))
 
     assert run_backtest(series, [NaiveLastWeek(TZ)], config).origins == 0
+
+
+def test_holiday_days_are_the_holidays_that_are_not_sundays():
+    """Easter 2026 in DK1: Thursday, Friday and Monday; not Easter Sunday."""
+    days = holiday_days("DK1", date(2026, 3, 30), date(2026, 4, 12))
+
+    assert sorted(days) == [date(2026, 4, 2), date(2026, 4, 3), date(2026, 4, 6)]
+
+
+def test_run_backtest_scores_only_the_given_days():
+    """Only target days in score_days are scored, and only their origins run."""
+    series = _series(date(2026, 5, 1), 50, _weekly)
+    recorder = _Recorder(NaiveLastWeek(TZ))
+    config = _config(
+        date(2026, 5, 20),
+        date(2026, 6, 10),
+        score_days=frozenset({date(2026, 5, 28)}),
+    )
+
+    result = run_backtest(series, [recorder], config)
+
+    # 26, 27 and 28 May each forecast 28 May, at 3, 2 and 1 day ahead
+    assert result.origins == 3
+    assert len(recorder.calls) == 3
+    assert [len(score.daily_mae) for score in result.scores[NaiveLastWeek.name]] == [
+        1,
+        1,
+        1,
+    ]
+    assert "Scored on 1 holiday target days only" in format_report(result, "DK1")
 
 
 def test_run_backtest_rejects_a_wrongly_shaped_forecast() -> None:

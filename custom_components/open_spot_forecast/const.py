@@ -68,7 +68,8 @@ UPDATE_SIGNAL_FORECAST = f"{DOMAIN}_signal_forecast_update"
 # DMI API - REMOVED (replaced by weather entity via weather.get_forecasts)
 
 # Supported regions. ``energy_charts`` is the bidding zone on energy-charts.info,
-# ``entsoe`` its EIC code on the ENTSO-E Transparency Platform (#27)
+# ``entsoe`` its EIC code on the ENTSO-E Transparency Platform (#27),
+# ``holidays`` its country in the ``holidays`` package (public-holiday feature, #26)
 REGIONS: dict[str, dict[str, str | float]] = {
     "DK1": {
         "currency": "DKK",
@@ -77,6 +78,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Copenhagen",
         "energy_charts": "DK1",
         "entsoe": "10YDK-1--------W",
+        "holidays": "DK",
     },
     "DK2": {
         "currency": "DKK",
@@ -85,6 +87,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Copenhagen",
         "energy_charts": "DK2",
         "entsoe": "10YDK-2--------M",
+        "holidays": "DK",
     },
     "SE3": {
         "currency": "SEK",
@@ -93,6 +96,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Stockholm",
         "energy_charts": "SE3",
         "entsoe": "10Y1001A1001A46L",
+        "holidays": "SE",
     },
     "SE4": {
         "currency": "SEK",
@@ -101,6 +105,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Stockholm",
         "energy_charts": "SE4",
         "entsoe": "10Y1001A1001A47J",
+        "holidays": "SE",
     },
     "NO2": {
         "currency": "NOK",
@@ -109,6 +114,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Oslo",
         "energy_charts": "NO2",
         "entsoe": "10YNO-2--------T",
+        "holidays": "NO",
     },
     "FI": {
         "currency": "EUR",
@@ -117,6 +123,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Helsinki",
         "energy_charts": "FI",
         "entsoe": "10YFI-1--------U",
+        "holidays": "FI",
     },
     "EE": {
         "currency": "EUR",
@@ -125,6 +132,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Tallinn",
         "energy_charts": "EE",
         "entsoe": "10Y1001A1001A39I",
+        "holidays": "EE",
     },
     "LT": {
         "currency": "EUR",
@@ -133,6 +141,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Vilnius",
         "energy_charts": "LT",
         "entsoe": "10YLT-1001A0008Q",
+        "holidays": "LT",
     },
     "LV": {
         "currency": "EUR",
@@ -141,6 +150,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Riga",
         "energy_charts": "LV",
         "entsoe": "10YLV-1001A00074",
+        "holidays": "LV",
     },
     "NL": {
         "currency": "EUR",
@@ -149,6 +159,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Amsterdam",
         "energy_charts": "NL",
         "entsoe": "10YNL----------L",
+        "holidays": "NL",
     },
     "BE": {
         "currency": "EUR",
@@ -157,6 +168,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Brussels",
         "energy_charts": "BE",
         "entsoe": "10YBE----------2",
+        "holidays": "BE",
     },
     "FR": {
         "currency": "EUR",
@@ -165,6 +177,7 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Paris",
         "energy_charts": "FR",
         "entsoe": "10YFR-RTE------C",
+        "holidays": "FR",
     },
     "DE": {
         "currency": "EUR",
@@ -173,7 +186,34 @@ REGIONS: dict[str, dict[str, str | float]] = {
         "tz": "Europe/Berlin",
         "energy_charts": "DE-LU",
         "entsoe": "10Y1001A1001A82H",
+        "holidays": "DE",
     },
+}
+
+# Countries whose public holidays differ by subdivision, and the subdivisions
+# of their bidding zone: the holiday feature is the share of them observing a
+# holiday (#26). Germany's 16 states; the package's "Augsburg" is a city.
+# Other regions use the national calendar (France's subdivisions in the
+# package are overseas territories, outside the bidding zone)
+HOLIDAY_SUBDIVISIONS: dict[str, tuple[str, ...]] = {
+    "DE": (
+        "BB",
+        "BE",
+        "BW",
+        "BY",
+        "HB",
+        "HE",
+        "HH",
+        "MV",
+        "NI",
+        "NW",
+        "RP",
+        "SH",
+        "SL",
+        "SN",
+        "ST",
+        "TH",
+    ),
 }
 
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past

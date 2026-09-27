@@ -290,6 +290,28 @@ async def test_run_forecast_reads_weather_stores_prognoses_predicts_and_saves(
 
 
 @pytest.mark.asyncio
+async def test_prediction_and_its_feature_rows_run_in_the_executor(
+    make: Callable[..., Harness],
+) -> None:
+    """predict builds every feature row (sun, holidays): never in the event loop."""
+    harness = make()
+    in_executor: list[Callable[..., Any]] = []
+
+    async def record(func: Callable[..., Any], *args: Any) -> Any:
+        in_executor.append(func)
+        return func(*args)
+
+    with (
+        patch.object(harness.updater.hass, "async_add_executor_job", record),
+        patch("homeassistant.util.dt.now", return_value=NOW),
+    ):
+        await harness.updater.run_forecast()
+
+    harness.predictor.predict.assert_called_once()
+    assert harness.predictor.predict in in_executor
+
+
+@pytest.mark.asyncio
 async def test_run_forecast_skips_a_non_solcast_forecast_and_empty_weather_forecast(
     make: Callable[..., Harness],
 ) -> None:

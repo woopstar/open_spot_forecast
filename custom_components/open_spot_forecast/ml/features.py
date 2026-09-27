@@ -21,6 +21,7 @@ from homeassistant.util import dt as dt_util
 
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
+from .public_holidays import public_holiday
 from .sun import SUN_FEATURES, sun_features, zone_centre
 
 if TYPE_CHECKING:
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 21-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 22-feature model input, in column order (docs/ml_documentation.md).
 # The local weather entity's values (wind_speed_mean, wind_power_estimate,
 # wind_direction, cloud_coverage, humidity, temperature) stay in the feature
 # dict, where prediction records its local forecast for the forecast-accuracy
@@ -37,6 +38,7 @@ _LOGGER = logging.getLogger(__name__)
 FEATURE_NAMES: tuple[str, ...] = (
     "day_of_week",
     "is_weekend",
+    "holiday",
     "slot_sin",
     "slot_cos",
     "morning_peak",
@@ -225,13 +227,13 @@ def build_feature_row(
         start: Timezone-aware slot start in the price region's local time.
         inputs: The slot's raw inputs.
         region: The price region (``REGIONS`` key), whose zone centre the
-            sun features describe; None or an unknown region leaves them
-            unknown.
+            sun features describe and whose calendar sets ``holiday``; None
+            or an unknown region leaves them unknown.
         interval_minutes: Slot length.
 
     Returns:
-        ``slot_time_features(start)``, the slot's ``sun_features`` and every
-        non-time feature.
+        ``slot_time_features(start)``, the slot's ``sun_features`` and
+        ``holiday``, and every non-time feature.
     """
     wind = inputs.wind_speed
     consumption = inputs.consumption
@@ -248,6 +250,7 @@ def build_feature_row(
         slot_time_features(start, interval_minutes)
         | sun_features(start, zone_centre(region), interval_minutes)
         | {
+            "holiday": public_holiday(start.date(), region),
             "wind_speed_mean": wind,
             "wind_power_estimate": wind_power_curve(wind) if wind is not None else None,
             "wind_direction": inputs.wind_direction,
