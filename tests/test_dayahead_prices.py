@@ -20,6 +20,7 @@ from custom_components.open_spot_forecast.ml.storage import LearningStorage
 
 MODULE = "custom_components.open_spot_forecast.api.dayahead_prices"
 SOURCE = "custom_components.open_spot_forecast.api.time_series_source"
+ENTSOE_MODULE = "custom_components.open_spot_forecast.api.entsoe"
 KEY = "entsoe-secret-token"
 # 2026-09-24 in Copenhagen (CEST): 22:00Z to 22:00Z
 DAY_START = datetime(2026, 9, 23, 22, tzinfo=UTC)
@@ -177,6 +178,8 @@ def apis() -> Iterator[FakeApis]:
     with (
         patch(f"{MODULE}.async_get", new=fake.get),
         patch(f"{MODULE}.async_get_clientsession"),
+        patch(f"{ENTSOE_MODULE}.async_get", new=fake.get),
+        patch(f"{ENTSOE_MODULE}.async_get_clientsession"),
         patch(f"{SOURCE}.asyncio.sleep", new=AsyncMock()),
         patch("homeassistant.util.dt.utcnow", return_value=NOW),
     ):

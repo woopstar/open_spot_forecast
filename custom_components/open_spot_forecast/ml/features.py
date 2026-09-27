@@ -11,6 +11,7 @@ it is never replaced by an invented value.
 
 import logging
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 22-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 23-feature model input, in column order (docs/ml_documentation.md).
 # The local weather entity's values (wind_speed_mean, wind_power_estimate,
 # wind_direction, cloud_coverage, humidity, temperature) stay in the feature
 # dict, where prediction records its local forecast for the forecast-accuracy
@@ -49,6 +50,7 @@ FEATURE_NAMES: tuple[str, ...] = (
     "wind_onshore",
     "net_demand",
     "wind_share",
+    "load_forecast",
     "zone_wind",
     "zone_wind_power",
     "zone_temperature",
@@ -77,7 +79,8 @@ class SlotInputs:
     sampling points for the slot (``ml/zone_weather.py``), from the same
     stored table of forecasts in both phases (archived ones for past days): mean wind at 80 m (m/s), mean turbine power
     curve (0-1), temperature (°C), global irradiance (W/m²), sea-level
-    pressure (hPa) and relative humidity (%).
+    pressure (hPa) and relative humidity (%). ``load_forecast`` is ENTSO-E's
+    week-ahead load forecast for the slot (MW, ``entsoe_load``, #30).
     """
 
     temperature: float | None = None
@@ -89,6 +92,7 @@ class SlotInputs:
     solar_generation: float | None = None
     wind_offshore: float | None = None
     wind_onshore: float | None = None
+    load_forecast: float | None = None
     zone_wind: float | None = None
     zone_wind_power: float | None = None
     zone_temperature: float | None = None
@@ -137,6 +141,22 @@ def utc_epoch(timestamp: Any, tz: tzinfo, step_seconds: int = 900) -> int | None
 def hour_epoch(timestamp: Any, tz: tzinfo) -> int | None:
     """Return the UTC epoch of the start of an ISO timestamp's hour."""
     return utc_epoch(timestamp, tz, HOUR_SECONDS)
+
+
+def slot_values(
+    rows: Iterable[dict[str, Any]] | None, column: str, tz: tzinfo
+) -> dict[int, float]:
+    """Index a stored 15-minute series by slot epoch (``floor_epoch``).
+
+    Rows without a finite value are left out; the first row of a slot wins.
+    """
+    values: dict[int, float] = {}
+    for row in rows or ():
+        key = utc_epoch(row.get("timestamp"), tz)
+        value = optional_float(row.get(column))
+        if key is not None and value is not None:
+            values.setdefault(key, value)
+    return values
 
 
 def wind_power_curve(wind_speed: float) -> float:
@@ -263,6 +283,7 @@ def build_feature_row(
             "wind_onshore": onshore,
             "net_demand": net_demand,
             "wind_share": wind_share,
+            "load_forecast": inputs.load_forecast,
         }
         | {name: getattr(inputs, name) for name in ZONE_FEATURES}
     )
@@ -349,6 +370,7 @@ class FeatureMixin(PredictorBase):
             key = utc_epoch(entry.get("deliveryStart", ""), tz, 1)
             if key is not None:
                 production_by_start.setdefault(key, entry)
+        load_by_slot = slot_values(weather_data.get("load_forecast"), "load", tz)
 
         combined = []
         for tf in time_features:
@@ -366,6 +388,7 @@ class FeatureMixin(PredictorBase):
                 solar_generation=optional_float(production.get("solar")),
                 wind_offshore=optional_float(production.get("wind_offshore")),
                 wind_onshore=optional_float(production.get("wind_onshore")),
+                load_forecast=load_by_slot.get(floor_epoch(start, tz)),
                 **(zone.for_slot(start) if zone else {}),
             )
             combined.append(build_feature_row(start, inputs, self.region))

@@ -81,6 +81,10 @@ def test_model_attribution_credits_every_source_the_model_learns_from() -> None:
     assert model_attribution({"ml_predictor": model, "zone_weather": False}) == (
         PROGNOSES
     )
+    # With an ENTSO-E key the model also learns from ENTSO-E's load forecast (#30)
+    assert model_attribution({"ml_predictor": model, "entsoe_load": True}) == (
+        f"{PROGNOSES} · Load forecast: ENTSO-E Transparency Platform"
+    )
 
 
 def test_entities_show_the_attribution() -> None:

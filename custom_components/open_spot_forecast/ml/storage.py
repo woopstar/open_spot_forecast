@@ -282,6 +282,11 @@ class LearningStorage(
                 PRIMARY KEY (timestamp, point)
             );
 
+            CREATE TABLE IF NOT EXISTS entsoe_load (
+                timestamp       TEXT    PRIMARY KEY,
+                load            REAL
+            );
+
             CREATE TABLE IF NOT EXISTS volatility (
                 slot    INTEGER PRIMARY KEY,
                 mae     REAL    NOT NULL

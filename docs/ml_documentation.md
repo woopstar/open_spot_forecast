@@ -2,7 +2,7 @@
 
 ## Model
 
-A single **Gradient Boosting** regressor predicts the spot price from 21
+A single **Gradient Boosting** regressor predicts the spot price from 23
 features. It is a histogram-based GBM in the style of LightGBM, implemented
 in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
 scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
@@ -99,32 +99,33 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (22 features)
+## Feature Vector (23 features)
 
-| #   | Feature                | Source             | Description                                     |
-| --- | ---------------------- | ------------------ | ----------------------------------------------- |
-| 0   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                    |
-| 1   | `is_weekend`           | Time               | 1 if Saturday/Sunday                            |
-| 2   | `holiday`              | Calendar           | 1 on Sundays/public holidays; share of states   |
-| 3   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)            |
-| 4   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)            |
-| 5   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before) |
-| 6   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)    |
-| 7   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)      |
-| 8   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot      |
-| 9   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot       |
-| 10  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)       |
-| 11  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)   |
-| 12  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)   |
-| 13  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)    |
-| 14  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)   |
-| 15  | `wind_share`           | Derived            | (offshore + onshore) / consumption              |
-| 16  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)  |
-| 17  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1  |
-| 18  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                    |
-| 19  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)        |
-| 20  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                   |
-| 21  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)               |
+| #   | Feature                | Source             | Description                                      |
+| --- | ---------------------- | ------------------ | ------------------------------------------------ |
+| 0   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                     |
+| 1   | `is_weekend`           | Time               | 1 if Saturday/Sunday                             |
+| 2   | `holiday`              | Calendar           | 1 on Sundays/public holidays; share of states    |
+| 3   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)             |
+| 4   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)             |
+| 5   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before)  |
+| 6   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)     |
+| 7   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)       |
+| 8   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot       |
+| 9   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot        |
+| 10  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)        |
+| 11  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)    |
+| 12  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)    |
+| 13  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)     |
+| 14  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)    |
+| 15  | `wind_share`           | Derived            | (offshore + onshore) / consumption               |
+| 16  | `load_forecast`        | ENTSO-E (API key)  | Week-ahead load forecast curve for the slot (MW) |
+| 17  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)   |
+| 18  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1   |
+| 19  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                     |
+| 20  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)         |
+| 21  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                    |
+| 22  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)                |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`.
 
@@ -174,6 +175,24 @@ package, the one Home Assistant's `workday` and `holiday` integrations use
 Home Assistant's version). They are built once per country and year, only
 in the executor, where every feature row is built.
 
+**Load forecast** (#30). Nordpool's consumption prognosis only exists for
+today and tomorrow, so days 3-7 of the forecast had no demand input at all.
+With an ENTSO-E API key (optional, in the config or options flow),
+`load_forecast` is ENTSO-E's **week-ahead total load forecast** for the
+bidding zone (`documentType` A65, `processType` A31): the forecast minimum
+and maximum load of each day of the coming week. As in EpexPredictor, the
+two values become a 15-minute curve (`load_curve()` in `api/entsoe_load.py`):
+the minimum at 03:00, the maximum at 11:30 and 19:00 and
+`(3 × max + min) / 4` at 14:30 local time, joined by a natural cubic spline
+(NumPy; no pandas or SciPy). It is a separate feature rather than filling
+`consumption_forecast` after Nordpool's horizon: the stored table
+(`entsoe_load`) holds the week-ahead forecasts ENTSO-E published for the
+training window's days too, so training and prediction see the same
+source, as #17 and #23 require. Without a key, and in DE and NL (where
+EpexPredictor's backtests found it hurts; `ENTSOE_LOAD_REGIONS` in
+`const.py`), it is NaN in every row. A week-ahead forecast published once
+a week may not reach day 7; those slots are NaN too.
+
 **Zone weather** (#22). The local weather entity is one place, at 10 m,
 about 48 hours ahead and hourly. The zone features describe
 the whole bidding zone instead: Open-Meteo's 15-minute forecast at a few
@@ -196,11 +215,11 @@ in where a slot's `SlotInputs` come from (see
 Time features (0, 1, 3-5) come from `slot_time_features()`, `holiday` (2)
 from `public_holiday()` with the region's calendar and sun features (6-9)
 from `sun_features()` with the region's `zone_centre()`; derived features
-(14, 15, 17) are computed from the slot's own inputs.
+(14, 15, 18) are computed from the slot's own inputs.
 
 **Missing inputs are NaN.** An input that is unknown for a slot (no zone
 weather stored for it, Nordpool prognoses only exist for today and
-tomorrow) is `None` in the feature dict
+tomorrow, no ENTSO-E key) is `None` in the feature dict
 and NaN in the model input, and so is every derived feature that needs it.
 The price model handles NaN natively (see [Model](#model)). Nothing is
 replaced by 0, 15 °C, 50 % humidity or the current observation. Rows whose
@@ -237,21 +256,22 @@ prediction:
 
 ## Data Sources
 
-| Source                                              | Type                | Resolution   | Used for                                               |
-| --------------------------------------------------- | ------------------- | ------------ | ------------------------------------------------------ |
-| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min       | Training target, self-learning actuals (excl. VAT)     |
-| `dayahead_prices` (SQLite, #27, #24)                | Raw spot price      | 15-min       | `dayahead` source; the training window's history (all) |
-| `weather.get_forecasts`                             | Weather forecast    | Hourly       | Recorded with predictions (forecast accuracy)          |
-| `weather.forecast_*` (state)                        | Current weather     | Every 15 min | `weather_history` snapshots (forecast accuracy)        |
-| `Nordpool Consumption API`                          | Demand forecast     | Hourly       | Market demand prognosis (MW), both phases              |
-| `Nordpool Production API`                           | Generation forecast | 15-min       | Solar, wind offshore/onshore (MW), both phases         |
-| `sensor.solcast_*`                                  | Solar forecast      | Daily total  | Solar scaling factor only (not a model input)          |
-| `sensor.power_inverter_*`                           | Actual solar        | Scalar       | Solar scaling factor only (not a model input)          |
-| `weather_history` (SQLite)                          | Actual weather      | 15-min       | Scores the local forecast (confidence); not training   |
-| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly       | Training inputs                                        |
-| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min       | `openmeteo_weather`: zone features, both phases        |
-| Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min       | `openmeteo_weather` days before yesterday (training)   |
-| `holidays` package (#26)                            | Public holidays     | Daily        | `holiday` feature, both phases                         |
+| Source                                              | Type                | Resolution    | Used for                                               |
+| --------------------------------------------------- | ------------------- | ------------- | ------------------------------------------------------ |
+| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min        | Training target, self-learning actuals (excl. VAT)     |
+| `dayahead_prices` (SQLite, #27, #24)                | Raw spot price      | 15-min        | `dayahead` source; the training window's history (all) |
+| `weather.get_forecasts`                             | Weather forecast    | Hourly        | Recorded with predictions (forecast accuracy)          |
+| `weather.forecast_*` (state)                        | Current weather     | Every 15 min  | `weather_history` snapshots (forecast accuracy)        |
+| `Nordpool Consumption API`                          | Demand forecast     | Hourly        | Market demand prognosis (MW), both phases              |
+| `Nordpool Production API`                           | Generation forecast | 15-min        | Solar, wind offshore/onshore (MW), both phases         |
+| `sensor.solcast_*`                                  | Solar forecast      | Daily total   | Solar scaling factor only (not a model input)          |
+| `sensor.power_inverter_*`                           | Actual solar        | Scalar        | Solar scaling factor only (not a model input)          |
+| `weather_history` (SQLite)                          | Actual weather      | 15-min        | Scores the local forecast (confidence); not training   |
+| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly        | Training inputs                                        |
+| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min        | `openmeteo_weather`: zone features, both phases        |
+| Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min        | `openmeteo_weather` days before yesterday (training)   |
+| ENTSO-E week-ahead load (A65/A31, API key, #30)     | Load forecast       | Daily min/max | `entsoe_load` curve: `load_forecast`, both phases      |
+| `holidays` package (#26)                            | Public holidays     | Daily         | `holiday` feature, both phases                         |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -293,6 +313,11 @@ error, rather than from measured weather it never sees at prediction.
 | **Training**   | `openmeteo_weather`: archived forecasts, and the last live one | `nordpool_prognoses` row for the hour |
 | **Prediction** | `openmeteo_weather`: the current live forecast                 | Live prognoses for the slot's hour    |
 
+The ENTSO-E load forecast (#30) works the same way: `entsoe_load` holds, for
+the training window's days, the week-ahead forecasts ENTSO-E published for
+them (backfilled with the rest of the history), and from yesterday on the
+latest forecast, re-fetched at every forecast run.
+
 The zone weather is one stored table for both phases:
 
 - Days before yesterday come from Open-Meteo's **archive of past forecasts**
@@ -305,7 +330,7 @@ The zone weather is one stored table for both phases:
   fetched for it.
 
 The local weather entity is no longer a model input (see
-[Feature Vector](#feature-vector-22-features)). Its snapshots
+[Feature Vector](#feature-vector-23-features)). Its snapshots
 (`weather_history`) only score its forecast: the confidence's
 forecast-error penalty compares the forecast recorded with a prediction
 with the snapshot taken in the slot. They do not trigger a retrain.
@@ -482,7 +507,7 @@ solar_scale = EMA(actual_power / solcast_estimate)
 
 Updated every prediction run (`_update_solar_scale`) and persisted. Since
 #17 it is **not applied to the price model**: the model no longer has a site
-solar feature (see [Feature Vector](#feature-vector-22-features)), and a
+solar feature (see [Feature Vector](#feature-vector-23-features)), and a
 factor applied to prediction rows only would make them differ from training
 rows again.
 
@@ -574,7 +599,7 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **Zone weather from Open-Meteo's archive.** The zone features (16-21) come
+- **Zone weather from Open-Meteo's archive.** The zone features (17-22) come
   from Open-Meteo's historical forecast API (`historical-forecast-api`, 90
   days per request, cached in `.cache/backtest/`) at the region's
   `WEATHER_POINTS`, for training and target slots alike (`--weather none`
@@ -585,6 +610,13 @@ pipeline:
 - **No Nordpool history.** Features 10-15 have no source for a year of
   history (`nordpool_prognoses` keeps the 30-day training window plus 2
   days), so they are NaN in every row.
+- **ENTSO-E load only with a key.** `--load entsoe` (token in the
+  `ENTSOE_API_KEY` environment variable, never cached or printed) adds
+  feature 16 from ENTSO-E's week-ahead forecasts, one request per month,
+  cached as daily min/max in `.cache/backtest/`; otherwise it is NaN. A
+  target day gets the forecast ENTSO-E keeps for it, which for the last
+  days of a week can be newer than the origin (optimistic, like the
+  weather archive).
 - **Raw model output.** Per-slot bias correction (which needs live
   self-learning state) and
   hyperparameters restored from HPO are not applied.
@@ -596,9 +628,11 @@ pip install -r requirements_backtest.txt   # optional LightGBM row
 ./scripts/quality.sh backtest --region DK1  # last 365 origins, 180-day window
 python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --window-days 30
 python -m scripts.backtest --region DK1 --window-days 60 --days holidays
+ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 ```
 
-`--region` accepts every OSF region. `--days holidays` scores only the
+`--region` accepts every OSF region. `--horizon-days` scores more forecast
+days per origin (default 3; 7 covers days 3-7 of the forecast). `--days holidays` scores only the
 target days that are public holidays and not Sundays (and only runs the
 origins that forecast one), to measure a change on the days the `holiday`
 feature is for. Run the backtest before and after every
@@ -661,7 +695,7 @@ forecasts have an archive: the whole training window's zone weather is
 available on the first day, from the same kind of source the model
 predicts from, where measured weather would have to accumulate first.
 The local weather entity's features were removed for the same reason (see
-[Feature Vector](#feature-vector-22-features)); the backtest never had them
+[Feature Vector](#feature-vector-23-features)); the backtest never had them
 (no history), so its numbers do not change.
 
 ### Sun position and 15-minute time (#25)
@@ -742,6 +776,23 @@ Variants on the holiday days (NumPy GBM, 60 days, 1d / 2d / 3d MAE):
   and the half-day value of 24/12 and 31/12 is not decided by these two
   days (in Denmark they are close to full holidays, 1 scores best; in
   Germany they are half days), so it stays at the issue's 0.5.
+
+### ENTSO-E load forecast (#30)
+
+**Not measured yet.** No ENTSO-E API key was available when #30 was
+implemented, so the load feature ships without a backtest; it only takes
+effect with a key. To measure it, run DK1 with the production window
+before and after:
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load none
+ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
+```
+
+and compare days 3-7, where Nordpool has no prognosis (the backtest has
+no Nordpool history at any horizon, so its 1d-2d rows overstate the gain).
+EpexPredictor enables it for DK and disables it for DE and NL; if it hurts
+a region here, remove that region from `ENTSOE_LOAD_REGIONS`.
 
 ### Baseline
 

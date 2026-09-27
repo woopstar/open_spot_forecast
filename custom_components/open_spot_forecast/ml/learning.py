@@ -13,7 +13,7 @@ from ..price_series import is_invalid_price_series
 from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
-from .series_storage import OPENMETEO_WEATHER
+from .series_storage import ENTSOE_LOAD, OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
 from .zone_weather import ZoneWeatherIndex, zone_points
 
@@ -124,8 +124,9 @@ class LearningMixin(PredictorBase):
         """Get all historical prices and their training feature rows.
 
         Every row comes from ``build_feature_row``, the function prediction
-        rows come from, with the slot's stored zone weather forecast and
-        Nordpool prognoses as inputs (``TrainingInputs``). Inputs that were
+        rows come from, with the slot's stored zone weather forecast,
+        Nordpool prognoses and ENTSO-E load forecast as inputs
+        (``TrainingInputs``). Inputs that were
         not stored for a slot stay unknown (NaN for the model).
 
         Returns:
@@ -135,13 +136,15 @@ class LearningMixin(PredictorBase):
         """
         all_prices = []
         all_features = []
+        span = self._history_span()
         inputs = TrainingInputs(
             self.storage.load_nordpool_history(),
             self.tz,
             ZoneWeatherIndex(
-                self.storage.load_series(OPENMETEO_WEATHER, *self._history_span()),
+                self.storage.load_series(OPENMETEO_WEATHER, *span),
                 zone_points(self.region),
             ),
+            self.storage.load_series(ENTSOE_LOAD, *span),
         )
 
         for entry in self.price_history:

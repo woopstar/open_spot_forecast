@@ -216,6 +216,11 @@ HOLIDAY_SUBDIVISIONS: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Regions whose model uses ENTSO-E's week-ahead load forecast (#30) when an
+# ENTSO-E API key is configured. EpexPredictor's backtests found it hurts in
+# Germany and the Netherlands, so it stays off there
+ENTSOE_LOAD_REGIONS = frozenset(REGIONS) - {"DE", "NL"}
+
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions
 # are surfaced as entity attributes. Configurable in 12-hour steps up to 72 hours.

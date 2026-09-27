@@ -4,8 +4,9 @@ Mixed into ``ForecastUpdater``. The history the model trains on is filled in
 the background at setup and after midnight: the missing price days of the
 training window first (from the day-ahead APIs, whatever the displayed price
 source, #24), then for every stored
-price day the zone weather (Open-Meteo's archived forecasts, #23) and the
-Nordpool prognoses; if anything was added, the forecast is refreshed, so
+price day the zone weather (Open-Meteo's archived forecasts, #23), the
+Nordpool prognoses and, with an ENTSO-E key, the week-ahead load forecast
+(#30); if anything was added, the forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
 so an interrupted backfill resumes where it stopped. Once a day, history older than the training window plus
 ``HISTORY_MARGIN_DAYS`` is deleted.
@@ -25,6 +26,7 @@ from .time_slots import local_midnight
 
 if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
+    from .api.entsoe_load import EntsoeLoadSource
     from .api.openmeteo_weather import OpenMeteoWeatherSource
     from .api.time_series_source import TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
@@ -45,6 +47,7 @@ class HistoryUpdaterMixin:
     ml_predictor: SpotPricePredictor | None
     nordpool: NordpoolPrognosisSource | None
     weather: OpenMeteoWeatherSource | None
+    load: EntsoeLoadSource | None
     dayahead: DayAheadPrices | None
     history_prices: DayAheadPrices | None
 
@@ -109,7 +112,7 @@ class HistoryUpdaterMixin:
         """Fetch the history the model trains on that is still missing.
 
         Day-ahead price days first, then for the stored price days the zone
-        weather and the Nordpool prognoses. If anything was added the
+        weather, the Nordpool prognoses and the ENTSO-E load forecast. If anything was added the
         forecast is refreshed, so the model retrains on it.
         """
         ml_predictor = self.ml_predictor
@@ -120,7 +123,8 @@ class HistoryUpdaterMixin:
         if first is not None:
             weather = await self._backfill_source(self.weather, first, "Open-Meteo")
             prognoses = await self._backfill_source(self.nordpool, first, "Nordpool")
-            changed = changed or weather or prognoses
+            load = await self._backfill_source(self.load, first, "ENTSO-E load")
+            changed = changed or weather or prognoses or load
         if changed:
             await self.refresh_forecast()
 
@@ -145,7 +149,7 @@ class HistoryUpdaterMixin:
             keep_days += ml_predictor.max_history_days
         cutoff_day = dt_util.now().date() - timedelta(days=keep_days)
         cutoff = local_midnight(cutoff_day)
-        weather = prices = prognoses = dayahead = zone = 0
+        weather = prices = prognoses = dayahead = zone = load = 0
         try:
             if self.history_prices is not None:
                 dayahead = await self.history_prices.async_prune(cutoff)
@@ -160,16 +164,20 @@ class HistoryUpdaterMixin:
                 prognoses = await self.nordpool.async_prune(cutoff)
             if self.weather is not None:
                 zone = await self.weather.async_prune(cutoff)
+            if self.load is not None:
+                load = await self.load.async_prune(cutoff)
         except Exception as err:
             _LOGGER.warning("Could not prune the stored history: %s", err)
             return
         _LOGGER.debug(
             "Pruned history before %s: %d weather snapshots, %d price days, "
-            "%d prognosis rows, %d day-ahead prices, %d zone weather rows",
+            "%d prognosis rows, %d day-ahead prices, %d zone weather rows, "
+            "%d load forecast rows",
             cutoff_day,
             weather,
             prices,
             prognoses,
             dayahead,
             zone,
+            load,
         )

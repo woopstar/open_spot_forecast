@@ -20,6 +20,7 @@ from custom_components.open_spot_forecast.ml.features import (
 )
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import (
+    ENTSOE_LOAD,
     NORDPOOL_PROGNOSES,
     OPENMETEO_WEATHER,
 )
@@ -43,6 +44,7 @@ ZONE = {
     "pressure": 1012.0,
     "humidity": 70.0,
 }
+LOAD = 3200.0
 NORDPOOL = {
     "consumption": 3000.0,
     "solar": 500.0,
@@ -96,6 +98,7 @@ def _store_history(predictor: SpotPricePredictor, start: datetime) -> None:
         NORDPOOL_PROGNOSES, [{"timestamp": _utc_iso(start)} | NORDPOOL]
     )
     predictor.storage.upsert_series(OPENMETEO_WEATHER, _zone_rows(start))
+    predictor.storage.upsert_series(ENTSOE_LOAD, _load_rows(start))
 
 
 def _zone_rows(start: datetime, **values: float) -> list[dict]:
@@ -104,6 +107,11 @@ def _zone_rows(start: datetime, **values: float) -> list[dict]:
         {"timestamp": _utc_iso(start), "point": point} | ZONE | values
         for point in zone_points("DK1")
     ]
+
+
+def _load_rows(start: datetime) -> list[dict]:
+    """ENTSO-E load forecast rows of the slot (#30)."""
+    return [{"timestamp": _utc_iso(start), "load": LOAD}]
 
 
 def _live_data(start: datetime) -> dict:
@@ -120,6 +128,7 @@ def _live_data(start: datetime) -> dict:
             }
         ],
         "zone_weather": _zone_rows(start),
+        "load_forecast": _load_rows(start),
         "consumption_prognosis": {_utc_iso(start): NORDPOOL["consumption"]},
         "production_prognosis": [
             {
@@ -162,6 +171,7 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     assert "temperature" not in FEATURE_NAMES
     assert row["net_demand"] == pytest.approx(3000 - 500 - 800 - 700)
     assert row["wind_share"] == pytest.approx(1500 / 3000)
+    assert row["load_forecast"] == pytest.approx(LOAD)
 
 
 def test_every_quarter_of_an_hour_uses_the_hours_prognosis(
@@ -251,6 +261,16 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
             zone = dict(zip(ZONE, rng.uniform(1, 30, len(ZONE)), strict=True))
             predictor.storage.upsert_series(
                 OPENMETEO_WEATHER, _zone_rows(start, **zone)
+            )
+            predictor.storage.upsert_series(
+                ENTSOE_LOAD,
+                [
+                    {
+                        "timestamp": _utc_iso(start + timedelta(minutes=15 * q)),
+                        "load": float(rng.uniform(2500, 4500)),
+                    }
+                    for q in range(4)
+                ],
             )
     predictor.price_history = entries
 

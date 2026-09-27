@@ -11,6 +11,8 @@ are configured and used:
   Stromligning's prices come from another integration, which credits them.
 * **Weather** (zone weather, #22): Open-Meteo.com, CC BY 4.0.
 * **Market prognoses**: Nord Pool.
+* **Load forecast** (#30): the ENTSO-E Transparency Platform's week-ahead
+  load forecast, when an ENTSO-E key is configured.
 
 Price entities credit the prices; the model's entities credit everything
 the model learns from.
@@ -24,6 +26,7 @@ from .const import PRICE_SOURCE_DAYAHEAD
 
 OPEN_METEO_ATTRIBUTION = "Weather: Open-Meteo.com (CC BY 4.0)"
 NORD_POOL_ATTRIBUTION = "Prognoses: Nord Pool"
+ENTSOE_LOAD_ATTRIBUTION = "Load forecast: ENTSO-E Transparency Platform"
 _SEPARATOR = " · "
 
 
@@ -57,7 +60,7 @@ def price_attribution(api_data: dict[str, Any]) -> str | None:
 
 
 def model_attribution(api_data: dict[str, Any]) -> str | None:
-    """Return the credit for the model's outputs: prices, weather, prognoses."""
+    """Return the credit for the model's outputs: prices, weather, prognoses, load."""
     if api_data.get("ml_predictor") is None:
         return None
     prices = price_attribution(api_data)
@@ -68,6 +71,8 @@ def model_attribution(api_data: dict[str, Any]) -> str | None:
     if api_data.get("zone_weather"):
         parts.append(OPEN_METEO_ATTRIBUTION)
     parts.append(NORD_POOL_ATTRIBUTION)
+    if api_data.get("entsoe_load"):
+        parts.append(ENTSOE_LOAD_ATTRIBUTION)
     return _SEPARATOR.join(part for part in parts if part)
 
 

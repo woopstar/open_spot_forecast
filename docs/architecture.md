@@ -22,6 +22,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 | energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors  |
 | ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                  |
 | Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)     |
+| ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)         |
 
 ## Component Architecture
 
@@ -108,18 +109,18 @@ known-data end → predict → save.
 
 ## Model: Single Price Predictor
 
-The system uses **one model** — a Gradient Boosting regressor that takes 22
+The system uses **one model** — a Gradient Boosting regressor that takes 23
 features and directly predicts the spot price. Wind, solar, and temperature
 are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
-[ML Documentation](ml_documentation.md#feature-vector-22-features)).
+[ML Documentation](ml_documentation.md#feature-vector-23-features)).
 
 ```
-Features (22):
+Features (23):
   [day_of_week, is_weekend, holiday, slot_sin, slot_cos, morning_peak,
    sun_elevation, sun_azimuth, since_sunrise, since_sunset,
    consumption_forecast, solar_generation, wind_offshore, wind_onshore,
-   net_demand, wind_share,
+   net_demand, wind_share, load_forecast,
    zone_wind, zone_wind_power, zone_temperature, zone_irradiance,
    zone_pressure, zone_humidity]
                     │
@@ -160,7 +161,8 @@ Entities credit the external sources of their values in Home Assistant's
 reports for the zone, and ENTSO-E when its fallback is configured; the
 model's entities (`ModelAttributionMixin`: forecast, confidence, learning
 metrics, accuracy, model trained) add Open-Meteo (CC BY 4.0) when the zone
-weather is used, and Nord Pool. The sources, their licences and the credit
+weather is used, Nord Pool, and ENTSO-E when its load forecast is used.
+The sources, their licences and the credit
 to EpexPredictor are listed in the
 [README](../README.md#data-sources-and-attribution).
 

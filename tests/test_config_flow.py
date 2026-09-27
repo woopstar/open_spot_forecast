@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+import voluptuous as vol
 
 from custom_components.open_spot_forecast.config_flow import (
     OpenSpotForecastConfigFlow,
@@ -251,3 +252,37 @@ def test_the_predictor_keeps_the_configured_window(tmp_path: Any) -> None:
         assert predictor.max_history_days == 90
     finally:
         predictor.storage.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("data", "options", "suggested"),
+    [
+        ({CONF_REGION: "DK1"}, {}, None),
+        ({CONF_REGION: "DK1", CONF_ENTSOE_API_KEY: "from-setup"}, {}, "from-setup"),
+        (
+            {CONF_REGION: "DK1", CONF_ENTSOE_API_KEY: "from-setup"},
+            {CONF_ENTSOE_API_KEY: "from-options"},
+            "from-options",
+        ),
+    ],
+)
+async def test_the_entsoe_key_can_be_added_in_the_options(
+    data: dict[str, Any], options: dict[str, Any], suggested: str | None
+) -> None:
+    """An installed entry can add or change its ENTSO-E key (#30), as a password."""
+    flow = _options_flow()
+    flow.config_entry.data = data
+    flow.config_entry.options = options
+    await flow.async_step_init()
+
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    key = next(k for k in schema if str(k) == CONF_ENTSOE_API_KEY)
+    assert isinstance(key, vol.Optional)
+    assert (key.description or {}).get("suggested_value") == suggested
+    assert schema[key].config["type"] == "password"
+
+    await flow.async_step_init({CONF_ENTSOE_API_KEY: "new-key"})
+    assert flow.async_create_entry.call_args.kwargs["data"] == {
+        CONF_ENTSOE_API_KEY: "new-key"
+    }
