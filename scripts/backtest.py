@@ -663,7 +663,7 @@ def build_models(
                     )
                 )
             else:
-                skipped[LightGbmReference.name] = (
+                skipped[f"lightgbm (reference{stages})"] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
                 )
         else:
