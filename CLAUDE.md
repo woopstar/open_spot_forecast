@@ -108,7 +108,7 @@ Rules:
 Quick checklist before opening an ML PR:
 
 - [ ] `docs/ml_documentation.md` read and understood
-- [ ] Feature vector stays at 17 canonical features
+- [ ] Feature vector stays at 21 canonical features
 - [ ] Slot granularity is 96 (15-min), never hourly (0-23)
 - [ ] Bias correction is an additive offset: `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset`
 - [ ] Predictions are never clamped at 0 (prices can be negative)

@@ -2,7 +2,7 @@
 
 ## Model
 
-A single **Gradient Boosting** regressor predicts the spot price from 17
+A single **Gradient Boosting** regressor predicts the spot price from 21
 features. It is a histogram-based GBM in the style of LightGBM, implemented
 in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
 scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
@@ -99,29 +99,61 @@ The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
 `hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
 until the next optimization.
 
-## Feature Vector (17 features)
+## Feature Vector (21 features)
 
-| #   | Feature                | Source             | Description                                    |
-| --- | ---------------------- | ------------------ | ---------------------------------------------- |
-| 0   | `hour`                 | Time               | Hour of day (0-23)                             |
-| 1   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                   |
-| 2   | `is_weekend`           | Time               | 1 if Saturday/Sunday                           |
-| 3   | `hour_sin`             | Time               | sin(2π × hour / 24)                            |
-| 4   | `hour_cos`             | Time               | cos(2π × hour / 24)                            |
-| 5   | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)      |
-| 6   | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)  |
-| 7   | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)  |
-| 8   | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)   |
-| 9   | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)  |
-| 10  | `wind_share`           | Derived            | (offshore + onshore) / consumption             |
-| 11  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s) |
-| 12  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1 |
-| 13  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                   |
-| 14  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)       |
-| 15  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                  |
-| 16  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)              |
+| #   | Feature                | Source             | Description                                     |
+| --- | ---------------------- | ------------------ | ----------------------------------------------- |
+| 0   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                    |
+| 1   | `is_weekend`           | Time               | 1 if Saturday/Sunday                            |
+| 2   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)            |
+| 3   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)            |
+| 4   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before) |
+| 5   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)    |
+| 6   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)      |
+| 7   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot      |
+| 8   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot       |
+| 9   | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)       |
+| 10  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)   |
+| 11  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)   |
+| 12  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)    |
+| 13  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)   |
+| 14  | `wind_share`           | Derived            | (offshore + onshore) / consumption              |
+| 15  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)  |
+| 16  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1  |
+| 17  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                    |
+| 18  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)        |
+| 19  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                   |
+| 20  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)               |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`.
+
+**Time of day and the sun** (#25). Since October 2025 the day-ahead market
+clears every 15 minutes, and prices often step within an hour, so the time
+features are per slot, not per hour: all four slots of an hour differ.
+They follow the local wall clock, so 17:00 has the same values in winter,
+in summer and on a DST day, and both passes of the repeated fall-back hour
+share them. `slot_sin`/`slot_cos` place the slot on the 24-hour circle
+(23:45 is next to 00:00); `morning_peak` is the time of day as a signed
+distance to the 08:00 demand peak, in local time (EpexPredictor computes its
+peak offsets in UTC, where they move by an hour at every DST change).
+EpexPredictor also has an offset to 19:00; in local time that is
+`morning_peak` shifted by 11 hours, which a tree model splits identically
+(the backtest numbers are the same to two decimals), so it is not a
+feature. Neither is `hour` any more: every hour boundary is a
+`morning_peak` split too.
+
+Solar production follows the sun rather than the clock, and sunrise moves by
+over four hours between June and December in Denmark. The sun features
+(`ml/sun.py`) describe the sun at the **zone centre**, the mean of the
+region's `WEATHER_POINTS`, at the slot's middle: its elevation and azimuth,
+and the seconds since that local day's sunrise and sunset (negative before
+them). They are computed with `astral`, the library behind Home Assistant's
+`sun.sun` entity, which ships with Home Assistant (no new dependency).
+`sun.sun` itself cannot be the input: it only holds the current position and
+the next events at the home location, while training needs every slot of the
+window and prediction the next week. A day without sunrise or sunset (polar
+day or night) has NaN for those two. The values depend only on the slot and
+the region, so they are cached across retrains.
 
 **Zone weather** (#22). The local weather entity is one place, at 10 m,
 about 48 hours ahead and hourly. The zone features describe
@@ -138,12 +170,13 @@ chose aggregates over per-point columns (see [Backtesting](#backtesting)).
 
 **One definition for training and prediction** (#17). Every row, for
 training, prediction, hyperparameter search and the backtest, is built by
-`build_feature_row(slot_start, SlotInputs)` in `ml/features.py` and turned
+`build_feature_row(slot_start, SlotInputs, region)` in `ml/features.py` and turned
 into the model input by `build_feature_vector()`. The two phases differ only
 in where a slot's `SlotInputs` come from (see
 [Training vs Prediction Segmentation](#training-vs-prediction-segmentation)).
-Time features (0-4) come from `slot_time_features()`; derived features
-(9, 10, 12) are computed from the slot's own inputs.
+Time features (0-4) come from `slot_time_features()` and sun features
+(5-8) from `sun_features()` with the region's `zone_centre()`; derived
+features (13, 14, 16) are computed from the slot's own inputs.
 
 **Missing inputs are NaN.** An input that is unknown for a slot (no zone
 weather stored for it, Nordpool prognoses only exist for today and
@@ -251,7 +284,7 @@ The zone weather is one stored table for both phases:
   fetched for it.
 
 The local weather entity is no longer a model input (see
-[Feature Vector](#feature-vector-17-features)). Its snapshots
+[Feature Vector](#feature-vector-21-features)). Its snapshots
 (`weather_history`) only score its forecast: the confidence's
 forecast-error penalty compares the forecast recorded with a prediction
 with the snapshot taken in the slot. They do not trigger a retrain.
@@ -348,15 +381,22 @@ network).
 | 180 d  |   2.53 |    3.78 |   2.64 |    3.90 |   2.70 |    3.98 |
 
 60 days is the best window at every horizon; 180 days (EpexPredictor's,
-the issue's proposal) is 0.13 ct/kWh worse at 1d. The model has no
-seasonal feature, so older days mostly add prices from another price
+the issue's proposal) is 0.13 ct/kWh worse at 1d. The model had no
+seasonal feature, so older days mostly added prices from another price
 level. Longer windows stay selectable.
+
+The sun features (#25) carry the season (day length, noon elevation) and
+narrowed the gap: with them, 60 days scores 2.29 / 2.46 / 2.52 and 180 days
+2.32 / 2.43 / 2.49 (1d / 2d / 3d MAE, see
+[Backtesting](#sun-position-and-15-minute-time-25)), so 180 days is now
+0.03 worse at 1d and 0.03 better at 2d and 3d. The default stays 60 days
+until a new window sweep says otherwise.
 
 **Footprint** (synthetic full history, DK1's four weather points): the
 database holds about 8 MB at 60 days and 20 MB at 180 days, and a training
 run (live fit plus holdout fit) takes 0.3 s and 0.8 s on one aarch64 core
 here; expect a few seconds on a Raspberry Pi 4. The rows in memory while
-training (17,280 × 17 at 180 days) are a few MB.
+training (17,280 × 21 at 180 days) are a few MB.
 
 ## Target: Raw Spot Price, VAT at Output
 
@@ -421,7 +461,7 @@ solar_scale = EMA(actual_power / solcast_estimate)
 
 Updated every prediction run (`_update_solar_scale`) and persisted. Since
 #17 it is **not applied to the price model**: the model no longer has a site
-solar feature (see [Feature Vector](#feature-vector-17-features)), and a
+solar feature (see [Feature Vector](#feature-vector-21-features)), and a
 factor applied to prediction rows only would make them differ from training
 rows again.
 
@@ -513,7 +553,7 @@ multi-day accuracy number. The method reimplements EpexPredictor's
 The `current` row measures the model and features, not the whole runtime
 pipeline:
 
-- **Zone weather from Open-Meteo's archive.** The zone features (11-16) come
+- **Zone weather from Open-Meteo's archive.** The zone features (15-20) come
   from Open-Meteo's historical forecast API (`historical-forecast-api`, 90
   days per request, cached in `.cache/backtest/`) at the region's
   `WEATHER_POINTS`, for training and target slots alike (`--weather none`
@@ -521,7 +561,7 @@ pipeline:
   target slot days ahead gets weather about as good as a same-day forecast:
   the zone rows are **optimistic at 2-3 days ahead**, where the live
   forecast is less accurate.
-- **No Nordpool history.** Features 5-10 have no source for a year of
+- **No Nordpool history.** Features 9-14 have no source for a year of
   history (`nordpool_prognoses` keeps the 30-day training window plus 2
   days), so they are NaN in every row.
 - **Raw model output.** Per-slot bias correction (which needs live
@@ -596,8 +636,47 @@ forecasts have an archive: the whole training window's zone weather is
 available on the first day, from the same kind of source the model
 predicts from, where measured weather would have to accumulate first.
 The local weather entity's features were removed for the same reason (see
-[Feature Vector](#feature-vector-17-features)); the backtest never had them
+[Feature Vector](#feature-vector-21-features)); the backtest never had them
 (no history), so its numbers do not change.
+
+### Sun position and 15-minute time (#25)
+
+DK1, 365 daily origins from 2025-09-24 to 2026-09-23, retrained daily, EUR
+ct/kWh, with the zone weather. `before` is main before #25 (`hour`,
+`hour_sin`, `hour_cos`); `after` has the 15-minute time and sun features.
+Recorded 2026-09-27 with `lightgbm==4.7.0`.
+
+| Window | Model                | before 1d MAE | after 1d MAE | before 2d / 3d MAE | after 2d / 3d MAE |
+| ------ | -------------------- | ------------: | -----------: | -----------------: | ----------------: |
+| 60 d   | current (NumPy GBM)  |          2.40 |     **2.29** |        2.57 / 2.62 |       2.46 / 2.52 |
+| 60 d   | lightgbm (reference) |          2.45 |         2.28 |        2.65 / 2.72 |       2.48 / 2.55 |
+| 180 d  | current (NumPy GBM)  |          2.53 |     **2.32** |        2.64 / 2.70 |       2.43 / 2.49 |
+
+RMSE falls alike (60 days, 1d: 3.62 → 3.47; 180 days: 3.78 → 3.51). The
+naive baseline is 3.93.
+
+Which features carry it (NumPy GBM, 60 days, 1d / 2d / 3d MAE; each row
+changes one thing from the `after` set):
+
+| Variant                                        | 1d MAE | 2d MAE | 3d MAE |
+| ---------------------------------------------- | -----: | -----: | -----: |
+| after (21 features)                            |   2.29 |   2.46 |   2.52 |
+| without the sun features (15-minute time only) |   2.37 |   2.53 |   2.58 |
+| without `since_sunrise` / `since_sunset`       |   2.30 |   2.47 |   2.53 |
+| without `sun_azimuth`                          |   2.29 |   2.46 |   2.52 |
+| without `morning_peak`                         |   2.29 |   2.46 |   2.52 |
+| with `hour` added back                         |   2.29 |   2.46 |   2.52 |
+| with `evening_peak` (seconds from 19:00)       |   2.29 |   2.46 |   2.52 |
+
+- **The sun does most of the work**: the 15-minute time alone gains 0.03 at
+  1d, the sun features another 0.08. Solar output, and the price with it,
+  follows sunrise and sun height, which move by hours over the year.
+- **The longer window gains most** (0.21 at 1d with 180 days): the sun
+  features tell the model the season, so older days no longer only add
+  prices from another level.
+- `hour` and `evening_peak` change nothing (a tree splits them exactly like
+  `morning_peak`) and are not features. `sun_azimuth` and `morning_peak`
+  only tie here; they stay as the issue's features, at negligible cost.
 
 ### Baseline
 

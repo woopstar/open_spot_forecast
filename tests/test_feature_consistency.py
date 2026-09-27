@@ -317,7 +317,7 @@ def test_history_loaders_round_trip(predictor: SpotPricePredictor) -> None:
 def test_derived_features_need_all_their_inputs(
     inputs: SlotInputs, net_demand: float | None, wind_share: float | None
 ) -> None:
-    row = build_feature_row(SLOT, inputs)
+    row = build_feature_row(SLOT, inputs, "DK1")
 
     assert row["net_demand"] == net_demand
     assert row["wind_share"] == (

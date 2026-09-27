@@ -21,24 +21,26 @@ from homeassistant.util import dt as dt_util
 
 from ..time_slots import first_prediction_slot
 from .base import PredictorBase
+from .sun import SUN_FEATURES, sun_features, zone_centre
 
 if TYPE_CHECKING:
     from .zone_weather import ZoneWeatherIndex
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 17-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 21-feature model input, in column order (docs/ml_documentation.md).
 # The local weather entity's values (wind_speed_mean, wind_power_estimate,
 # wind_direction, cloud_coverage, humidity, temperature) stay in the feature
 # dict, where prediction records its local forecast for the forecast-accuracy
 # score, but are not model inputs since #23: they have no archived forecasts,
 # so training could only use measured values, unlike prediction.
 FEATURE_NAMES: tuple[str, ...] = (
-    "hour",
     "day_of_week",
     "is_weekend",
-    "hour_sin",
-    "hour_cos",
+    "slot_sin",
+    "slot_cos",
+    "morning_peak",
+    *SUN_FEATURES,
     "consumption_forecast",
     "solar_generation",
     "wind_offshore",
@@ -57,6 +59,9 @@ FEATURE_NAMES: tuple[str, ...] = (
 ZONE_FEATURES: tuple[str, ...] = FEATURE_NAMES[-6:]
 
 HOUR_SECONDS = 3600
+DAY_MINUTES = 24 * 60
+# Local wall-clock time of the morning demand peak, in minutes after midnight
+MORNING_PEAK_MINUTE = 8 * 60
 
 
 @dataclass(frozen=True)
@@ -176,12 +181,18 @@ def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str,
 
     Returns:
         Feature dict with ``start``/``end`` ISO strings and the time-of-day
-        and day-of-week features used by the model.
+        and day-of-week features used by the model. The time of day is the
+        local wall-clock minute (#25), so the four slots of an hour differ
+        and a slot keeps its values across DST changes: ``slot_sin``/
+        ``slot_cos`` encode it on the 24-hour circle, ``morning_peak`` is the
+        seconds from 08:00. An offset to the 19:00 evening peak would be the
+        same value shifted by 11 hours, which a tree model splits identically.
     """
     end = (start.astimezone(UTC) + timedelta(minutes=interval_minutes)).astimezone(
         start.tzinfo
     )
     weekday = start.weekday()
+    minute_of_day = start.hour * 60 + start.minute
     return {
         "start": start.isoformat(),
         "end": end.isoformat(),
@@ -190,15 +201,19 @@ def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str,
         "day_of_week": weekday,
         "is_weekend": 1 if weekday >= 5 else 0,
         "month": start.month,
-        "hour_sin": float(np.sin(2 * np.pi * start.hour / 24)),
-        "hour_cos": float(np.cos(2 * np.pi * start.hour / 24)),
+        "slot_sin": float(np.sin(2 * np.pi * minute_of_day / DAY_MINUTES)),
+        "slot_cos": float(np.cos(2 * np.pi * minute_of_day / DAY_MINUTES)),
+        "morning_peak": (minute_of_day - MORNING_PEAK_MINUTE) * 60,
         "dow_sin": float(np.sin(2 * np.pi * weekday / 7)),
         "dow_cos": float(np.cos(2 * np.pi * weekday / 7)),
     }
 
 
 def build_feature_row(
-    start: datetime, inputs: SlotInputs, interval_minutes: int = 15
+    start: datetime,
+    inputs: SlotInputs,
+    region: str | None,
+    interval_minutes: int = 15,
 ) -> dict[str, Any]:
     """Return the feature dict of one slot: its time features plus its inputs.
 
@@ -209,10 +224,14 @@ def build_feature_row(
     Args:
         start: Timezone-aware slot start in the price region's local time.
         inputs: The slot's raw inputs.
+        region: The price region (``REGIONS`` key), whose zone centre the
+            sun features describe; None or an unknown region leaves them
+            unknown.
         interval_minutes: Slot length.
 
     Returns:
-        ``slot_time_features(start)`` plus every non-time feature.
+        ``slot_time_features(start)``, the slot's ``sun_features`` and every
+        non-time feature.
     """
     wind = inputs.wind_speed
     consumption = inputs.consumption
@@ -227,6 +246,7 @@ def build_feature_row(
 
     return (
         slot_time_features(start, interval_minutes)
+        | sun_features(start, zone_centre(region), interval_minutes)
         | {
             "wind_speed_mean": wind,
             "wind_power_estimate": wind_power_curve(wind) if wind is not None else None,
@@ -345,5 +365,5 @@ class FeatureMixin(PredictorBase):
                 wind_onshore=optional_float(production.get("wind_onshore")),
                 **(zone.for_slot(start) if zone else {}),
             )
-            combined.append(build_feature_row(start, inputs))
+            combined.append(build_feature_row(start, inputs, self.region))
         return combined
