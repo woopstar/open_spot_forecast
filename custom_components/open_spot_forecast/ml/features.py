@@ -64,6 +64,17 @@ FEATURE_NAMES: tuple[str, ...] = (
 # Open-Meteo zone weather features (#22), aggregated over the region's points
 ZONE_FEATURES: tuple[str, ...] = FEATURE_NAMES[-6:]
 
+# Nordpool prognosis features: only known for today and tomorrow (#91)
+NORDPOOL_FEATURES: tuple[str, ...] = (
+    "consumption_forecast",
+    "solar_generation",
+    "wind_offshore",
+    "wind_onshore",
+    "net_demand",
+    "wind_share",
+)
+_NORDPOOL_COLUMNS = [FEATURE_NAMES.index(name) for name in NORDPOOL_FEATURES]
+
 HOUR_SECONDS = 3600
 DAY_MINUTES = 24 * 60
 # Local wall-clock time of the morning demand peak, in minutes after midnight
@@ -196,6 +207,31 @@ def build_feature_vector(feature: dict[str, Any]) -> list[float]:
         ``len(FEATURE_NAMES)`` floats in ``FEATURE_NAMES`` order.
     """
     return [_to_float(feature.get(name)) for name in FEATURE_NAMES]
+
+
+def with_masked_nordpool(X: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Append a copy of every row with a Nordpool prognosis, prognosis unknown.
+
+    Nordpool publishes its prognoses for today and tomorrow only, so almost
+    every training row has them and almost no prediction row does (#91).
+    The copy has the ``NORDPOOL_FEATURES`` columns NaN and the same target,
+    so the price model learns the rows both with and without them. Rows
+    without any prognosis are not copied. Only the leading
+    ``FEATURE_NAMES`` columns are masked (stage-1 columns, #29, stay).
+
+    Args:
+        X: Training input rows, ``FEATURE_NAMES`` columns first.
+        y: Target of every row.
+
+    Returns:
+        ``(X, y)`` followed by the masked copies, in the original row order.
+    """
+    known = ~np.isnan(X[:, _NORDPOOL_COLUMNS]).all(axis=1)
+    if not known.any():
+        return X, y
+    masked = X[known].copy()
+    masked[:, _NORDPOOL_COLUMNS] = np.nan
+    return np.vstack([X, masked]), np.concatenate([y, y[known]])
 
 
 def slot_time_features(start: datetime, interval_minutes: int = 15) -> dict[str, Any]:

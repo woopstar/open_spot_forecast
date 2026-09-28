@@ -2,21 +2,28 @@
 
 import logging
 from collections.abc import Callable, Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pytest
 
 from custom_components.open_spot_forecast.ml import models
-from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
+from custom_components.open_spot_forecast.ml.features import (
+    FEATURE_NAMES,
+    NORDPOOL_FEATURES,
+    with_masked_nordpool,
+)
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import (
     MIN_SAMPLES_LEAF,
     create_price_model,
 )
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 
 SLOTS_PER_DAY = 96
 BASE_LEVEL = 50.0
@@ -106,6 +113,143 @@ def test_holdout_metrics_use_chronological_split(
     assert rmse == pytest.approx(shift, abs=5.0)
 
 
+# --- Nordpool-masked training copies (#91) ---------------------------------------
+
+NORDPOOL_COLUMNS = [FEATURE_NAMES.index(name) for name in NORDPOOL_FEATURES]
+
+
+def _store_prognoses(predictor: SpotPricePredictor, days: range) -> None:
+    """Store an hourly Nordpool prognosis for every local hour of fixture days."""
+    tz = ZoneInfo("Europe/Copenhagen")
+    rows = [
+        {
+            "timestamp": datetime(2026, 9, 14 + day, hour, tzinfo=tz)
+            .astimezone(UTC)
+            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "consumption": 3000.0 + hour,
+            "solar": 100.0,
+            "wind_offshore": 800.0,
+            "wind_onshore": 700.0,
+        }
+        for day in days
+        for hour in range(24)
+    ]
+    predictor.storage.upsert_series(NORDPOOL_PROGNOSES, rows)
+
+
+def _has_prognosis(X: np.ndarray) -> np.ndarray:
+    return ~np.isnan(X[:, NORDPOOL_COLUMNS]).all(axis=1)
+
+
+def test_masked_copies_mask_only_the_nordpool_columns() -> None:
+    """Rows with a prognosis get a copy with it NaN and the same target."""
+    X = np.arange(3 * (len(FEATURE_NAMES) + 1), dtype=float).reshape(3, -1)
+    X[1, NORDPOOL_COLUMNS] = np.nan  # a row without prognoses is not copied
+    y = np.array([1.0, 2.0, 3.0])
+
+    rows, targets = with_masked_nordpool(X, y)
+
+    assert rows.shape == (5, X.shape[1])
+    np.testing.assert_array_equal(rows[:3], X)
+    assert targets.tolist() == pytest.approx([1.0, 2.0, 3.0, 1.0, 3.0])
+    assert np.isnan(rows[3:, NORDPOOL_COLUMNS]).all()
+    others = [c for c in range(X.shape[1]) if c not in NORDPOOL_COLUMNS]
+    np.testing.assert_array_equal(rows[3:, others], X[[0, 2]][:, others])
+
+
+def test_masked_copies_skip_rows_without_prognoses() -> None:
+    X = np.full((2, len(FEATURE_NAMES)), np.nan)
+    y = np.array([1.0, 2.0])
+
+    rows, targets = with_masked_nordpool(X, y)
+
+    assert rows is X
+    assert targets is y
+
+
+def test_training_fits_masked_copies_on_each_side_of_the_split(
+    predictor: SpotPricePredictor,
+) -> None:
+    """The holdout copy never fits a masked copy of a holdout row.
+
+    Monday to Thursday are the fit side and Friday the holdout; with
+    prognoses on every day, each side has its own rows twice, and the live
+    model gets all five days twice.
+    """
+    _store_prognoses(predictor, range(5))
+    fits: list[tuple[np.ndarray, np.ndarray]] = []
+    predicted: list[np.ndarray] = []
+    real_fit = NumpyGradientBoosting.fit
+    real_predict = NumpyGradientBoosting.predict
+
+    def spy_fit(model: NumpyGradientBoosting, X: np.ndarray, y: np.ndarray) -> None:
+        fits.append((X, y))
+        real_fit(model, X, y)
+
+    def spy_predict(model: NumpyGradientBoosting, X: np.ndarray) -> np.ndarray:
+        predicted.append(X)
+        return real_predict(model, X)
+
+    with (
+        patch.object(NumpyGradientBoosting, "fit", spy_fit),
+        patch.object(NumpyGradientBoosting, "predict", spy_predict),
+    ):
+        _train(predictor)
+
+    (holdout_X, holdout_y), (live_X, live_y) = fits
+    fit_days, all_days = 4 * SLOTS_PER_DAY, 5 * SLOTS_PER_DAY
+    assert len(holdout_X) == len(holdout_y) == 2 * fit_days
+    assert len(live_X) == len(live_y) == 2 * all_days
+    # Both copies of a fit row have the fit side's (Monday-Thursday) targets
+    assert float(np.max(holdout_y)) < SHIFTED_LEVEL - 20
+    np.testing.assert_array_equal(holdout_y[:fit_days], holdout_y[fit_days:])
+    assert _has_prognosis(holdout_X[:fit_days]).all()
+    assert not _has_prognosis(holdout_X[fit_days:]).any()
+    # The holdout score covers Friday with and without its prognosis
+    (scored,) = predicted
+    assert len(scored) == 2 * SLOTS_PER_DAY
+    assert _has_prognosis(scored[:SLOTS_PER_DAY]).all()
+    assert not _has_prognosis(scored[SLOTS_PER_DAY:]).any()
+
+
+def test_prediction_rows_are_not_copied(predictor: SpotPricePredictor) -> None:
+    """Prediction keeps one row per slot, prognoses as given (#91)."""
+    _store_prognoses(predictor, range(5))
+    _train(predictor)
+    features = [
+        {"consumption_forecast": 3000.0, "wind_offshore": 800.0} for _ in range(96)
+    ]
+    batch = Mock(wraps=predictor.price_model.predict)
+
+    with patch.object(predictor.price_model, "predict", batch):
+        predictor._generate_predictions(features, 1, 15)
+
+    (rows,) = batch.call_args.args
+    assert rows.shape == (96, len(FEATURE_NAMES))
+    assert _has_prognosis(rows).all()
+
+
+def test_the_masked_model_predicts_without_prognoses(
+    predictor: SpotPricePredictor,
+) -> None:
+    """Without prognoses the model follows the other features, not a branch.
+
+    Every fixture day has prognoses, so without the masked copies a
+    prediction row without them would fall into whichever child had more
+    training rows at every Nordpool split.
+    """
+    _store_prognoses(predictor, range(5))
+    _train(predictor)
+    all_prices, all_features = predictor.get_all_historical_prices()
+    X = predictor._model_inputs(all_features)
+    X[:, NORDPOOL_COLUMNS] = np.nan
+
+    friday = predictor.price_model.predict(X[4 * SLOTS_PER_DAY :])
+
+    assert float(np.mean(friday)) == pytest.approx(SHIFTED_LEVEL, abs=5.0)
+    assert len(all_prices) == 5 * SLOTS_PER_DAY
+
+
 # --- Hyperparameter optimization (issue #14) -------------------------------------
 
 
@@ -134,6 +278,35 @@ def test_hpo_searches_max_depth_and_persists_best_params(
     meta = predictor.storage.load_meta_dict()
     assert meta["hpo_max_depth"] == str(best["max_depth"])
     assert meta["hpo_n_estimators"] == str(best["n_estimators"])
+
+
+def test_hpo_splits_before_adding_masked_copies(
+    predictor: SpotPricePredictor, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HPO fits on the oldest rows and their copies, never on a later row."""
+    monkeypatch.setattr(models, "HPO_N_ESTIMATORS", (5,))
+    monkeypatch.setattr(models, "HPO_LEARNING_RATES", (0.1,))
+    monkeypatch.setattr(models, "HPO_MAX_DEPTHS", (2,))
+    profile = 10 * np.sin(2 * np.pi * np.arange(SLOTS_PER_DAY) / SLOTS_PER_DAY)
+    predictor.price_history = [
+        {"date": f"2026-09-{14 + day}", "prices": (day + profile).tolist()}
+        for day in range(10)
+    ]
+    _store_prognoses(predictor, range(10))
+    fits: list[np.ndarray] = []
+    real_fit = NumpyGradientBoosting.fit
+
+    def spy_fit(model: NumpyGradientBoosting, X: np.ndarray, y: np.ndarray) -> None:
+        fits.append(y)
+        real_fit(model, X, y)
+
+    with patch.object(NumpyGradientBoosting, "fit", spy_fit):
+        assert predictor._optimize_hyperparameters() is not None
+
+    (y,) = fits
+    assert len(y) == 2 * 8 * SLOTS_PER_DAY
+    # Day 8 and 9 (levels 8 and 9) are validation only
+    assert float(np.max(y)) < 8 + 10
 
 
 def test_hpo_skipped_without_a_week_of_history(predictor: SpotPricePredictor) -> None:

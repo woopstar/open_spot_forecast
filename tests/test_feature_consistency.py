@@ -12,6 +12,7 @@ import pytest
 
 from custom_components.open_spot_forecast.ml.features import (
     FEATURE_NAMES,
+    NORDPOOL_FEATURES,
     SlotInputs,
     build_feature_row,
     build_feature_vector,
@@ -61,14 +62,6 @@ WEATHER_FEATURES = (
     "cloud_coverage",
     "humidity",
     "temperature",
-)
-NORDPOOL_FEATURES = (
-    "consumption_forecast",
-    "solar_generation",
-    "wind_offshore",
-    "wind_onshore",
-    "net_demand",
-    "wind_share",
 )
 
 

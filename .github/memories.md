@@ -199,6 +199,11 @@ predictions, and `weather_history` snapshots score it and never trigger a retrai
 `openmeteo_weather` rows in both phases, aggregated over the region's `WEATHER_POINTS` by
 `ZoneWeatherIndex` (`ml/zone_weather.py`); never aggregate it inline. Unknown inputs are `None` → NaN; never fill in
 0/15 °C/50 % or the current observation, and never copy prediction values into training rows.
+Nordpool prognoses (`NORDPOOL_FEATURES`, 10-15) exist for today and tomorrow only, so almost no
+prediction row has them (#91): training fits every row plus its Nordpool-masked copy
+(`with_masked_nordpool()` in `ml/features.py`), added **after** the chronological 80/20 split,
+per side (`_train_models`, `_optimize_hyperparameters`). Prediction rows are never copied.
+`scripts/backtest.py --nordpool-db .cache/live/<export>.db` measures it on a live DB export.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
 | #   | Feature                | Source       |

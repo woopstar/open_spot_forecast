@@ -396,6 +396,21 @@ the stored rows; prediction reads today's and tomorrow's stored rows at the
 same resolution: the hour's consumption and the production at the hour's
 start, for all four slots of the hour.
 
+**Availability differs between the phases** (#91). Almost every training
+row has a stored prognosis (the backfill covers the whole window, about
+98 % of the rows of a 30- or 60-day window), but almost no prediction row
+does: prognoses exist for today and tomorrow only, and a forecast starts
+where the known prices end (`first_prediction_slot`). Once tomorrow's
+prices are published (~13:00) the first predicted slot is the day after
+tomorrow, so no predicted slot has one; before that, only tomorrow can
+have one, if Nordpool has already published it. Training therefore adds
+a **masked copy** of every row with a prognosis: the six Nordpool features
+(`NORDPOOL_FEATURES`: 10-15) NaN, the same target price
+(`with_masked_nordpool()` in `ml/features.py`). The model learns both
+branches: without prognoses it matches a model without the features, and
+it keeps most of the gain on day 1 of a morning forecast that has them
+(see [Backtesting](#nordpool-prognoses-at-prediction-91)).
+
 Derived features:
 
 ```
@@ -409,10 +424,10 @@ Training and prediction both use **forecasts** (#23): the model learns the
 price from the same kind of weather input it is later given, with a similar
 error, rather than from measured weather it never sees at prediction.
 
-| Phase          | Zone weather (#22, #23)                                        | Nordpool source                       |
-| -------------- | -------------------------------------------------------------- | ------------------------------------- |
-| **Training**   | `openmeteo_weather`: archived forecasts, and the last live one | `nordpool_prognoses` row for the hour |
-| **Prediction** | `openmeteo_weather`: the current live forecast                 | Live prognoses for the slot's hour    |
+| Phase          | Zone weather (#22, #23)                                        | Nordpool source                                                |
+| -------------- | -------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Training**   | `openmeteo_weather`: archived forecasts, and the last live one | `nordpool_prognoses` row for the hour, and a masked copy (#91) |
+| **Prediction** | `openmeteo_weather`: the current live forecast                 | Live prognoses for the slot's hour (today and tomorrow only)   |
 
 The gas price (#28) is stored per day in `gas_prices` (backfilled with the
 training window plus 14 days, refreshed at every forecast run); both phases
@@ -493,7 +508,12 @@ uses the rows twice:
    [Backtesting](#backtesting)) also fits on its whole window.
 
 The split is chronological, never shuffled, so the holdout rows are always
-later than the rows the copy was fitted on, as in a real forecast. With the
+later than the rows the copy was fitted on, as in a real forecast. The
+Nordpool-masked copies (#91, see [Nordpool Prognoses](#nordpool-prognoses))
+are added **after** the split, to each side separately, so both copies of a
+row are on the same side; the holdout error covers the holdout rows with
+and without their prognoses. The live model fits all rows and all their
+copies. The copies roughly double the rows and the training time. With the
 cross-border model the holdout copy gets the same stage-1 columns as the
 live model: out of sample per day, but from stage-1 models fitted on the
 whole window, so the neighbours' prices around the holdout days are
@@ -502,7 +522,7 @@ fit roughly doubles training time. Like the rest of training, it runs in the
 executor.
 
 Hyperparameter optimization compares its candidates on the same chronological
-80/20 split, then replaces `price_model` with an unfitted model using the best
+80/20 split (masked copies added per side), then replaces `price_model` with an unfitted model using the best
 parameters, which the next training fits on all rows.
 
 ## Training Window
@@ -550,8 +570,10 @@ until a new window sweep says otherwise.
 **Footprint** (synthetic full history, DK1's four weather points): the
 database holds about 8 MB at 60 days and 20 MB at 180 days, and a training
 run (live fit plus holdout fit) takes 0.3 s and 0.8 s on one aarch64 core
-here; expect a few seconds on a Raspberry Pi 4. The rows in memory while
-training (17,280 × 21 at 180 days) are a few MB.
+here; expect a few seconds on a Raspberry Pi 4. The Nordpool-masked copies
+(#91) double the rows: one production fit on random rows takes 0.2 → 0.3 s
+at 60 days and 0.4 → 0.7 s at 180 days. The rows in memory while
+training (34,560 × 24 at 180 days, with the copies) are a few MB.
 
 ## Target: Raw Spot Price, VAT at Output
 
@@ -723,9 +745,15 @@ pipeline:
   target slot days ahead gets weather about as good as a same-day forecast:
   the zone rows are **optimistic at 2-3 days ahead**, where the live
   forecast is less accurate.
-- **No Nordpool history.** Features 10-15 have no source for a year of
-  history (`nordpool_prognoses` keeps the 30-day training window plus 2
-  days), so they are NaN in every row.
+- **No Nordpool history by default.** Features 10-15 have no source for a
+  year of history (`nordpool_prognoses` keeps the training window plus 2
+  days), so they are NaN in every row. `--nordpool-db PATH` reads the
+  `nordpool_prognoses` table of a learning-database export (read-only; keep
+  it in the git-ignored `.cache/live/`): training rows get their stored
+  prognoses and, as in production, target rows none; `--nordpool-day1`
+  gives day 1 its prognosis, as in a morning run. Training adds the masked
+  copies (#91); `--nordpool-no-copies` reproduces the training before it.
+  Only origins inside the export's history are meaningful.
 - **ENTSO-E load only with a key.** `--load entsoe` (token in the
   `ENTSOE_API_KEY` environment variable, never cached or printed) adds
   feature 16 from ENTSO-E's week-ahead forecasts, one request per month,
@@ -756,6 +784,7 @@ python -m scripts.backtest --region DK1 --start 2025-09-21 --end 2026-09-20 --wi
 python -m scripts.backtest --region DK1 --window-days 60 --days holidays
 python -m scripts.backtest --region DK1 --window-days 60 --cross-border
 python -m scripts.backtest --region DK1 --window-days 60 --gas
+python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --nordpool-db .cache/live/dk1_live.db
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 ```
 
@@ -1000,6 +1029,38 @@ period):
   without (stage 1 does not use it).
 - The gas price is known before the day, so unlike the zone weather it is
   not optimistic at 2-3 days ahead.
+
+### Nordpool prognoses at prediction (#91)
+
+DK1, `current (NumPy GBM)` with the zone weather, prognoses from a live
+learning-database export (82 days, 2026-07-07 to 2026-09-27), daily origins
+2026-08-06 to 2026-09-25 (30-day window, 51 origins) and 2026-09-05 to
+2026-09-25 (60-day window, 21 origins), so every training window lies inside
+the export. MAE in EUR ct/kWh, 1d / 2d / 3d. "→ without" scores target rows
+without prognoses (production after ~13:00), "→ day 1 with" gives day 1 its
+prognosis (morning runs). Recorded 2026-09-28.
+
+| Training rows → prediction rows                | 30-day window          | 60-day window          |
+| ---------------------------------------------- | ---------------------- | ---------------------- |
+| no Nordpool features                           | 3.20 / 3.45 / 3.59     | 3.98 / 4.10 / 4.16     |
+| with prognoses → without (before #91)          | 3.74 / 3.89 / 3.96     | 5.01 / 4.93 / 4.90     |
+| with prognoses → day 1 with (before #91)       | 2.97 / 3.89 / 3.96     | 3.68 / 4.93 / 4.90     |
+| with **and** without prognoses → without (#91) | **3.19 / 3.45 / 3.58** | **3.98 / 4.12 / 4.22** |
+| with and without prognoses → day 1 with (#91)  | 3.10 / 3.45 / 3.58     | 3.74 / 4.12 / 4.22     |
+
+Before #91 the model was 0.4-1.0 ct/kWh worse than without the features at
+every horizon, because a split whose node saw no NaN rows sends NaN to the
+child with more rows, an arbitrary branch. With the masked copies a forecast
+without prognoses scores like the model without the features (1d equal at
+both windows; 2d/3d within 0.06 ct/kWh at 60 days), and a morning forecast
+keeps most of the day-1 gain (3.10 vs 3.20 at 30 days, 3.74 vs 3.98 at 60
+days). Dropping features 10-15 would be as good after ~13:00 but lose that
+gain.
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --models current --nordpool-db .cache/live/dk1_live.db [--nordpool-day1] [--nordpool-no-copies]
+python -m scripts.backtest --region DK1 --window-days 60 --start 2026-09-05 --end 2026-09-25 --models current --nordpool-db .cache/live/dk1_live.db [--nordpool-day1] [--nordpool-no-copies]
+```
 
 ### ENTSO-E load forecast (#30)
 

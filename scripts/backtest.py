@@ -80,6 +80,7 @@ from custom_components.open_spot_forecast.ml.features import (
     SlotInputs,
     build_feature_row,
     build_feature_vector,
+    with_masked_nordpool,
 )
 from custom_components.open_spot_forecast.ml.gas_price import (
     GAS_LOOKBACK_DAYS,
@@ -89,6 +90,8 @@ from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 from custom_components.open_spot_forecast.ml.public_holidays import public_holiday
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
+
+from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 
 SLOT_SECONDS = 15 * 60
 # Origins with less history than this are skipped (the naive model needs a week).
@@ -470,6 +473,8 @@ def feature_matrix(
     region: str | None = None,
     load: Mapping[int, float] | None = None,
     gas: GasPriceIndex | None = None,
+    nordpool: NordpoolInputs | None = None,
+    nordpool_until: int | None = None,
 ) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
@@ -478,14 +483,16 @@ def feature_matrix(
     training and target slots alike, the sun features (#25) from the
     ``region``'s zone centre, ``load`` is ENTSO-E's week-ahead load
     forecast by slot start (#30) and ``gas`` the gas prices (#28). The local
-    weather entity and Nordpool inputs have no year of history, so they are
-    unknown (NaN).
+    weather entity has no year of history, so it is unknown (NaN), and so
+    are the Nordpool prognoses unless ``nordpool`` holds a live export's
+    (#91): slots from ``nordpool_until`` on get none.
     """
     rows = []
     for start in starts.tolist():
         moment = datetime.fromtimestamp(start, tz)
         inputs = SlotInputs(
             **(zone.for_slot(moment) if zone else {}),
+            **(nordpool.slot_inputs(start, nordpool_until) if nordpool else {}),
             load_forecast=load.get(start) if load else None,
             gas_price=gas.before(moment.date()) if gas else None,
         )
@@ -575,28 +582,46 @@ def _feature_rows(
     load: Mapping[int, float] | None = None,
     cross: CrossBorderInputs | None = None,
     gas: Sequence[dict[str, Any]] | None = None,
+    nordpool: NordpoolInputs | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (training rows, target rows) for the slot times and inputs.
 
     With ``cross`` the stage-1 price columns (#29) follow the features.
     ``gas`` holds the daily gas price rows (#28); only those dated before
     the horizon cutoff are used, so a target day gets the latest price
-    published before the forecast, as in production.
+    published before the forecast, as in production. With ``nordpool``
+    (#91) training rows get their stored prognoses and target rows none,
+    or only the first forecast day with ``nordpool.day1``.
     """
     index = None
+    first_target = datetime.fromtimestamp(int(targets.min()), tz)
     if gas is not None:
-        cutoff = datetime.fromtimestamp(int(targets.min()), tz).date()
+        cutoff = first_target.date()
         index = GasPriceIndex(
             row for row in gas if date.fromisoformat(row["timestamp"][:10]) < cutoff
         )
-    train = feature_matrix(history.starts, tz, zone, region, load, index)
-    target = feature_matrix(targets, tz, zone, region, load, index)
+    until = int(targets.min())
+    if nordpool is not None and nordpool.day1:
+        until = local_midnight(first_target.date() + timedelta(days=1), tz)
+    train = feature_matrix(history.starts, tz, zone, region, load, index, nordpool)
+    target = feature_matrix(
+        targets, tz, zone, region, load, index, nordpool, nordpool_until=until
+    )
     if cross is None:
         return train, target
     train_columns, target_columns = cross.columns(history, targets)
     return np.column_stack([train, train_columns]), np.column_stack(
         [target, target_columns]
     )
+
+
+def _training_set(
+    rows: np.ndarray, prices: np.ndarray, nordpool: NordpoolInputs | None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the fitted rows: with prognoses, their masked copies (#91)."""
+    if nordpool is None or not nordpool.copies:
+        return rows, prices
+    return with_masked_nordpool(rows, prices)
 
 
 class Forecaster(Protocol):
@@ -642,6 +667,7 @@ class CurrentModel:
     load: Mapping[int, float] | None = None
     cross: CrossBorderInputs | None = None
     gas: Sequence[dict[str, Any]] | None = None
+    nordpool: NordpoolInputs | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
@@ -654,9 +680,10 @@ class CurrentModel:
             self.load,
             self.cross,
             self.gas,
+            self.nordpool,
         )
         model = self.model_factory()
-        model.fit(train_rows, history.prices)
+        model.fit(*_training_set(train_rows, history.prices, self.nordpool))
         return model.predict(target_rows)
 
 
@@ -675,6 +702,7 @@ class LightGbmReference:
     load: Mapping[int, float] | None = None
     cross: CrossBorderInputs | None = None
     gas: Sequence[dict[str, Any]] | None = None
+    nordpool: NordpoolInputs | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
@@ -689,9 +717,11 @@ class LightGbmReference:
             self.load,
             self.cross,
             self.gas,
+            self.nordpool,
         )
         names = [*FEATURE_NAMES, *(self.cross.names if self.cross else ())]
-        dataset = lightgbm.Dataset(train_rows, label=history.prices, feature_name=names)
+        rows, prices = _training_set(train_rows, history.prices, self.nordpool)
+        dataset = lightgbm.Dataset(rows, label=prices, feature_name=names)
         booster = lightgbm.train(
             LIGHTGBM_PARAMS, dataset, num_boost_round=LIGHTGBM_ROUNDS
         )
@@ -711,10 +741,12 @@ def build_models(
     load: Mapping[int, float] | None = None,
     cross: CrossBorderInputs | None = None,
     gas: Sequence[dict[str, Any]] | None = None,
+    nordpool: NordpoolInputs | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
-    With ``cross`` the GBM rows are two-stage cross-border models (#29).
+    With ``cross`` the GBM rows are two-stage cross-border models (#29);
+    ``nordpool`` gives them a live export's prognoses (#91).
     """
     models: list[Forecaster] = []
     skipped: dict[str, str] = {}
@@ -732,6 +764,7 @@ def build_models(
                     load=load,
                     cross=cross,
                     gas=gas,
+                    nordpool=nordpool,
                 )
             )
         elif name == "lightgbm":
@@ -745,6 +778,7 @@ def build_models(
                         load=load,
                         cross=cross,
                         gas=gas,
+                        nordpool=nordpool,
                     )
                 )
             else:
@@ -1040,6 +1074,22 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default="all",
         help="score every target day, or only public holidays that are not Sundays",
     )
+    parser.add_argument(
+        "--nordpool-db",
+        type=Path,
+        help="learning-DB export (e.g. .cache/live/*.db): its nordpool_prognoses "
+        "for training rows, none for target rows (#91)",
+    )
+    parser.add_argument(
+        "--nordpool-day1",
+        action="store_true",
+        help="with --nordpool-db: the first forecast day has its prognosis too",
+    )
+    parser.add_argument(
+        "--nordpool-no-copies",
+        action="store_true",
+        help="with --nordpool-db: no Nordpool-masked training copies (before #91)",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -1049,6 +1099,10 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--load entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
     if args.cross_border and args.region not in NEIGHBOURS:
         parser.error(f"--cross-border needs a region in {', '.join(NEIGHBOURS)}")
+    if (args.nordpool_day1 or args.nordpool_no_copies) and args.nordpool_db is None:
+        parser.error("--nordpool-day1 and --nordpool-no-copies need --nordpool-db")
+    if args.nordpool_db is not None and not args.nordpool_db.is_file():
+        parser.error(f"--nordpool-db: no file {args.nordpool_db}")
     return args
 
 
@@ -1111,7 +1165,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         gas = load_gas_prices(
             data_first - timedelta(days=GAS_LOOKBACK_DAYS), data_last, args.cache_dir
         )
-    models, skipped = build_models(names, tz, zone, args.region, load, cross, gas)
+    nordpool = None
+    if args.nordpool_db is not None:
+        nordpool = load_nordpool_db(
+            args.nordpool_db,
+            day1=args.nordpool_day1,
+            copies=not args.nordpool_no_copies,
+        )
+    models, skipped = build_models(
+        names, tz, zone, args.region, load, cross, gas, nordpool
+    )
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
     series = load_energy_charts_prices(
