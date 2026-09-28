@@ -699,16 +699,18 @@ multi-day accuracy number. The method reimplements EpexPredictor's
   (`api.energy-charts.info`; © Bundesnetzagentur | SMARD.de, CC BY 4.0), the
   source #27 will add to the integration. Hourly prices from before
   2025-10-01 fill four quarter-hours. Complete months are cached in
-  `.cache/backtest/`. The OSF SQLite DB cannot be used, because it keeps only
+  `.cache/backtest/`. A month energy-charts has no prices for yet (HTTP 404,
+  e.g. when `--horizon-days` reaches past the current month) is left empty
+  and its slots are not scored. The OSF SQLite DB cannot be used, because it keeps only
   the training window's price history.
 
 ### Models
 
-| Row                           | Model                                                                                                                                                                        |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `naive (same slot last week)` | Price of the same local wall-clock slot seven days earlier. The bar every model must clear.                                                                                  |
-| `current (NumPy GBM)`         | `create_price_model()` fitted on rows from `build_feature_row()` + `build_feature_vector()`: the integration's own model and feature code.                                   |
-| `lightgbm (reference)`        | LightGBM (500 rounds, learning rate 0.05, 31 leaves, seed 42) on the same rows. Dev-only (`requirements_backtest.txt`): LightGBM has no musllinux wheels, so it cannot ship. |
+| Row                           | Model                                                                                                                                                                                    |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `naive (same slot last week)` | Price of the same local wall-clock slot seven days earlier. The bar every model must clear.                                                                                              |
+| `current (NumPy GBM)`         | `create_price_model()` fitted on rows from `build_feature_row()` + `build_feature_vector()`: the integration's own model and feature code.                                               |
+| `lightgbm (reference)`        | LightGBM (500 rounds, learning rate 0.05, 31 leaves, seed 42, one thread) on the same rows. Dev-only (`requirements_backtest.txt`): LightGBM has no musllinux wheels, so it cannot ship. |
 
 The `current` row measures the model and features, not the whole runtime
 pipeline:

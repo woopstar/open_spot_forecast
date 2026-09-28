@@ -551,6 +551,30 @@ def test_load_energy_charts_prices_caches_complete_months(tmp_path: Path) -> Non
     assert len(again) == 2
 
 
+def test_load_energy_charts_prices_skips_months_without_prices(tmp_path: Path) -> None:
+    """A month without prices yet (404) is empty; other HTTP errors still fail."""
+
+    def fetch(url: str) -> dict:
+        if "start=2026-07-01" in url:
+            raise _http_error(404 if "bzn=DK1" in url else 400, None)
+        return _payload([local_midnight(date(2026, 6, 1), TZ)], [100.0])
+
+    def load(region: str) -> PriceSeries:
+        return load_energy_charts_prices(
+            region,
+            date(2026, 6, 1),
+            date(2026, 7, 2),
+            tmp_path,
+            fetch,
+            date(2026, 7, 1),
+        )
+
+    assert len(load("DK1")) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["energy_charts_DK1_2026-06.json"]
+    with pytest.raises(urllib.error.HTTPError):
+        load("DE")
+
+
 class _FakeResponse(io.BytesIO):
     """Minimal context-manager response for urlopen."""
 

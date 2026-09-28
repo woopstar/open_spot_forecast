@@ -97,6 +97,28 @@ def validate_price_source(user_input: dict[str, Any]) -> str | None:
     return None
 
 
+def training_days_selector() -> SelectSelector:
+    """Return the training-window picker, with string options.
+
+    ``vol.In`` over ints renders as a radio list below six options, and the
+    frontend's radio group compares its (string) value to the (int) option
+    values, so the saved choice was never shown as selected.
+    """
+    return SelectSelector(
+        SelectSelectorConfig(
+            options=[str(days) for days in TRAINING_DAYS_OPTIONS],
+            mode=SelectSelectorMode.LIST,
+        )
+    )
+
+
+def normalize_training_days(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Store the picked training window as an int, as before the selector."""
+    if CONF_TRAINING_DAYS in user_input:
+        user_input[CONF_TRAINING_DAYS] = int(user_input[CONF_TRAINING_DAYS])
+    return user_input
+
+
 class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Config flow for Open Spot Forecast."""
 
@@ -169,7 +191,7 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             # Merge with data from step 1
-            self._data.update(user_input)
+            self._data.update(normalize_training_days(user_input))
 
             # Create the entry
             return self.async_create_entry(
@@ -251,8 +273,10 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): vol.In(PREDICTION_HOURS_OPTIONS),
                 vol.Optional(
                     CONF_TRAINING_DAYS,
-                    default=self._data.get(CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS),
-                ): vol.In(TRAINING_DAYS_OPTIONS),
+                    default=str(
+                        self._data.get(CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS)
+                    ),
+                ): training_days_selector(),
             }
         )
 
@@ -289,7 +313,7 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(
                 title=self.config_entry.data.get(CONF_REGION, DEFAULT_REGION),
-                data=user_input,
+                data=normalize_training_days(user_input),
             )
 
         # Build the form with entity selectors
@@ -332,13 +356,15 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                 ): bool,
                 vol.Optional(
                     CONF_TRAINING_DAYS,
-                    default=self.config_entry.options.get(
-                        CONF_TRAINING_DAYS,
-                        self.config_entry.data.get(
-                            CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS
-                        ),
+                    default=str(
+                        self.config_entry.options.get(
+                            CONF_TRAINING_DAYS,
+                            self.config_entry.data.get(
+                                CONF_TRAINING_DAYS, DEFAULT_TRAINING_DAYS
+                            ),
+                        )
                     ),
-                ): vol.In(TRAINING_DAYS_OPTIONS),
+                ): training_days_selector(),
                 # Two-stage cross-border model (#29), for regions with neighbours
                 **(
                     {

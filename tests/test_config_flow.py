@@ -233,13 +233,59 @@ async def test_the_training_window_is_configurable() -> None:
     await flow.async_step_sensors()
     schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
     key = next(k for k in schema if str(k) == "training_days")
-    assert key.default() == 60
-    assert schema[key].container == [30, 60, 90, 120, 180]
+    assert key.default() == "60"
+    assert schema[key].config["options"] == ["30", "60", "90", "120", "180"]
 
     options = _options_flow()
     await options.async_step_init()
     schema = options.async_show_form.call_args.kwargs["data_schema"].schema
     assert "training_days" in [str(k) for k in schema]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "data", "shown"),
+    [
+        ({"training_days": 120}, {"training_days": 30}, "120"),
+        ({}, {"training_days": 30}, "30"),
+        ({}, {}, "60"),
+    ],
+)
+async def test_the_options_flow_preselects_the_saved_training_window(
+    options: dict[str, Any], data: dict[str, Any], shown: str
+) -> None:
+    """The saved window is the form's default, as a string matching an option.
+
+    An int default never matched the radio list's string values, so the
+    saved choice looked forgotten when the options were reopened.
+    """
+    flow = _options_flow()
+    entry = flow.hass.config_entries.async_get_known_entry.return_value
+    entry.options = options
+    entry.data = {CONF_REGION: "DK1", **data}
+
+    await flow.async_step_init()
+
+    schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
+    key = next(k for k in schema if str(k) == "training_days")
+    assert key.default() == shown
+    assert shown in schema[key].config["options"]
+
+
+@pytest.mark.asyncio
+async def test_the_picked_training_window_is_saved_as_an_int() -> None:
+    """The selector's string value is stored as the int the predictor reads."""
+    options = _options_flow()
+    await options.async_step_init()
+    schema = options.async_show_form.call_args.kwargs["data_schema"]
+    submitted = schema({"training_days": "120"})
+
+    await options.async_step_init(submitted)
+    assert options.async_create_entry.call_args.kwargs["data"]["training_days"] == 120
+
+    flow = _config_flow()
+    await flow.async_step_sensors({"training_days": "90"})
+    assert flow.async_create_entry.call_args.kwargs["data"]["training_days"] == 90
 
 
 def test_the_predictor_keeps_the_configured_window(tmp_path: Any) -> None:
