@@ -19,6 +19,12 @@ notes.txt
 .tox
 logs
 
+# learning databases: live exports hold location-revealing weather snapshots;
+# keep analysis copies in .cache/live/ (see docs/persistence.md)
+/open_spot_forecast_*_learning*
+*.db-shm
+*.db-wal
+
 # Home Assistant configuration
 config/*
 !config/configuration.yaml

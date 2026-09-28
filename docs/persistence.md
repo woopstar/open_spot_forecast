@@ -242,3 +242,25 @@ on first startup if the SQLite database is empty. Only its training state
 is imported: its prices, predictions and error metrics are consumer prices
 (#16), and its bias factors are multiplicative (#15). After
 migration the JSON is renamed to `.json.bak` and never used again.
+
+## Live Exports for Analysis
+
+A learning database copied from a running installation (for
+`scripts/live_report.py` or `scripts/backtest.py --nordpool-db`) goes in the
+git-ignored `.cache/live/`, **never in the repository root**: its
+`weather_history` holds the local weather entity's snapshots and the inverter
+output, which roughly locate the home. `.gitignore` also keeps
+`open_spot_forecast_*_learning*` files and SQLite `-shm`/`-wal` files in the
+root out of git.
+
+Take the copy with SQLite's online backup, which stays consistent while Home
+Assistant writes to the database (a plain file copy misses what is still in
+the WAL):
+
+```bash
+sqlite3 /config/.storage/open_spot_forecast_DK1_learning.db ".backup /tmp/osf_dk1.db"
+# copy /tmp/osf_dk1.db from the HA host to .cache/live/
+```
+
+See [Live accuracy](ml_documentation.md#live-accuracy-94) for the full
+procedure.
