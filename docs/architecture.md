@@ -270,7 +270,10 @@ The background backfill fills the training window's zone weather from the
 archive at setup and after midnight; each forecast run refreshes the live
 forecast from yesterday on. Nordpool prognoses are stored in
 `nordpool_prognoses`; training matches both tables to slots by UTC time.
-Both phases build their rows with the same function. The local weather
+Both phases build their rows with the same function. Prognoses only exist
+for today and tomorrow, so almost no prediction row has them; training adds
+a copy of every row with them masked (#91), so the model also learns the
+rows without them. The local weather
 entity is no longer a model input: its snapshots (`weather_history`, one
 every 15 minutes) score its forecast for the confidence.
 

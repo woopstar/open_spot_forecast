@@ -3,6 +3,7 @@
 import io
 import json
 import math
+import sqlite3
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -42,6 +43,7 @@ from scripts.backtest import (
     run_backtest,
     target_slots,
 )
+from scripts.backtest_nordpool import load_nordpool_db
 
 TZ = ZoneInfo("Europe/Copenhagen")
 
@@ -990,3 +992,106 @@ def test_gas_prices_are_loaded_per_month_and_cached(tmp_path: Path) -> None:
 def test_the_gas_flag_is_parsed() -> None:
     assert backtest.parse_args(["--gas"]).gas is True
     assert backtest.parse_args([]).gas is False
+
+
+# --- Nordpool prognoses from a live export (#91) ------------------------------------
+
+
+def _nordpool_db(path: Path, first: date, days: int) -> Path:
+    """Write a learning-DB-like export with an hourly prognosis for ``days``."""
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE nordpool_prognoses (timestamp TEXT PRIMARY KEY,"
+        " consumption REAL, solar REAL, wind_offshore REAL, wind_onshore REAL)"
+    )
+    start = datetime(first.year, first.month, first.day, tzinfo=TZ)
+    rows = [
+        (
+            (start + timedelta(hours=hour))
+            .astimezone(ZoneInfo("UTC"))
+            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+            3000.0 + hour % 24,
+            100.0,
+            800.0,
+            700.0,
+        )
+        for hour in range(24 * days)
+    ]
+    connection.executemany(
+        "INSERT INTO nordpool_prognoses VALUES (?, ?, ?, ?, ?)", rows
+    )
+    connection.commit()
+    connection.close()
+    return path
+
+
+def _consumption(rows: np.ndarray) -> np.ndarray:
+    return rows[:, list(backtest.FEATURE_NAMES).index("consumption_forecast")]
+
+
+def test_nordpool_db_is_read_by_utc_hour(tmp_path: Path) -> None:
+    db = _nordpool_db(tmp_path / "live.db", date(2026, 6, 1), 1)
+
+    nordpool = load_nordpool_db(db, day1=True, copies=False)
+
+    ten = int(datetime(2026, 6, 1, 10, 45, tzinfo=TZ).timestamp())
+    assert nordpool.slot_inputs(ten) == {
+        "consumption": pytest.approx(3010.0),
+        "solar_generation": pytest.approx(100.0),
+        "wind_offshore": pytest.approx(800.0),
+        "wind_onshore": pytest.approx(700.0),
+    }
+    assert nordpool.slot_inputs(ten, until=ten) == {}
+    assert nordpool.day1 and not nordpool.copies
+    with pytest.raises(FileNotFoundError):
+        load_nordpool_db(tmp_path / "missing.db")
+
+
+@pytest.mark.parametrize("day1", [False, True])
+def test_target_rows_get_no_prognosis_beyond_the_first_day(
+    tmp_path: Path, day1: bool
+) -> None:
+    """Training rows have their prognoses; targets none, or day 1 only."""
+    db = _nordpool_db(tmp_path / "live.db", date(2026, 6, 1), 30)
+    nordpool = load_nordpool_db(db, day1=day1)
+    origin = date(2026, 6, 15)
+    history = history_for(
+        _series(date(2026, 6, 1), 30, _weekly), origin, _config(origin)
+    )
+    targets, horizon = target_slots(origin, _config(origin, horizon_days=3))
+
+    train, target = backtest._feature_rows(history, targets, TZ, nordpool=nordpool)
+
+    assert not np.isnan(_consumption(train)).any()
+    known = ~np.isnan(_consumption(target))
+    assert known.tolist() == ((horizon == 1) & day1).tolist()
+
+
+def test_training_adds_masked_copies_unless_disabled(tmp_path: Path) -> None:
+    db = _nordpool_db(tmp_path / "live.db", date(2026, 6, 1), 30)
+    rows = np.ones((4, len(backtest.FEATURE_NAMES)))
+    prices = np.arange(4.0)
+
+    with_copies = backtest._training_set(rows, prices, load_nordpool_db(db))
+    before = backtest._training_set(rows, prices, load_nordpool_db(db, copies=False))
+
+    assert len(with_copies[0]) == len(with_copies[1]) == 8
+    assert np.isnan(_consumption(with_copies[0][4:])).all()
+    assert before[0] is rows
+    assert backtest._training_set(rows, prices, None)[0] is rows
+
+
+def test_nordpool_flags_are_parsed(tmp_path: Path) -> None:
+    db = _nordpool_db(tmp_path / "live.db", date(2026, 6, 1), 1)
+
+    args = backtest.parse_args(["--nordpool-db", str(db), "--nordpool-day1"])
+
+    assert args.nordpool_db == db
+    assert args.nordpool_day1 and not args.nordpool_no_copies
+    for argv in (
+        ["--nordpool-day1"],
+        ["--nordpool-no-copies"],
+        ["--nordpool-db", str(tmp_path / "missing.db")],
+    ):
+        with pytest.raises(SystemExit):
+            backtest.parse_args(argv)

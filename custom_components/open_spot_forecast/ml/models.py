@@ -14,7 +14,12 @@ from homeassistant.util import dt as dt_util
 from ..price_series import known_prices
 from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
-from .features import FEATURE_NAMES, build_feature_vector, optional_float
+from .features import (
+    FEATURE_NAMES,
+    build_feature_vector,
+    optional_float,
+    with_masked_nordpool,
+)
 from .gbm import NumpyGradientBoosting
 
 _LOGGER = logging.getLogger(__name__)
@@ -113,10 +118,12 @@ class ModelMixin(PredictorBase):
             y = np.array(all_prices, dtype=float)
 
             # Chronological train/test split (80/20), used only to measure
-            # holdout error with a copy of the model on the oldest 80 %
+            # holdout error with a copy of the model on the oldest 80 %.
+            # Each side gets its rows' Nordpool-masked copies (#91) after the
+            # split, so both copies of a row stay on the same side.
             split_idx = int(0.8 * len(X))
-            X_train, X_test = X[:split_idx], X[split_idx:]
-            y_train, y_test = y[:split_idx], y[split_idx:]
+            X_train, y_train = with_masked_nordpool(X[:split_idx], y[:split_idx])
+            X_test, y_test = with_masked_nordpool(X[split_idx:], y[split_idx:])
 
             holdout_model = NumpyGradientBoosting(**self.price_model.get_params())
             holdout_model.fit(X_train, y_train)
@@ -128,7 +135,7 @@ class ModelMixin(PredictorBase):
 
             # The live model trains on all rows, so the most recent days
             # (closest to what is being predicted) are part of it
-            self.price_model.fit(X, y)
+            self.price_model.fit(*with_masked_nordpool(X, y))
 
             _LOGGER.info(
                 "ML model trained in %.1f s: holdout MAE=%.2f, RMSE=%.2f, "
@@ -225,10 +232,11 @@ class ModelMixin(PredictorBase):
         X = self._model_inputs(all_features, train=True)
         y = np.array(all_prices, dtype=float)
 
-        # 80/20 train/validation split
+        # Chronological 80/20 train/validation split; Nordpool-masked copies
+        # (#91) are added per side, so both copies of a row stay on one side
         split_idx = int(0.8 * len(X))
-        X_train, X_val = X[:split_idx], X[split_idx:]
-        y_train, y_val = y[:split_idx], y[split_idx:]
+        X_train, y_train = with_masked_nordpool(X[:split_idx], y[:split_idx])
+        X_val, y_val = with_masked_nordpool(X[split_idx:], y[split_idx:])
 
         best_params: dict[str, Any] = {
             "n_estimators": DEFAULT_N_ESTIMATORS,
