@@ -116,6 +116,9 @@ LIGHTGBM_PARAMS: dict[str, Any] = {
     "seed": 42,
     "deterministic": True,
     "force_row_wise": True,
+    # One thread: on ~6k rows OpenMP's per-core threads mostly contend, and
+    # on a loaded machine a fit slowed from under a second to half a minute
+    "num_threads": 1,
     "verbosity": -1,
 }
 LIGHTGBM_ROUNDS = 500
@@ -259,6 +262,8 @@ def load_energy_charts_prices(
 
     Prices are fetched one calendar month per request. Complete past months
     are cached as JSON in ``cache_dir``, so repeated runs work offline.
+    energy-charts answers a month without any price yet (e.g. a horizon
+    reaching into next month) with HTTP 404; such a month is empty, not cached.
     Prices are © Bundesnetzagentur | SMARD.de, CC BY 4.0, via energy-charts.info.
     """
     zone = ENERGY_CHARTS_ZONES[region]
@@ -276,7 +281,13 @@ def load_energy_charts_prices(
                     "end": month_end.isoformat(),
                 }
             )
-            payload = fetch(f"{ENERGY_CHARTS_API}?{query}")
+            try:
+                payload = fetch(f"{ENERGY_CHARTS_API}?{query}")
+            except urllib.error.HTTPError as err:
+                if err.code != 404:
+                    raise
+                print(f"  no {zone} prices for {month_start:%Y-%m}", file=sys.stderr)
+                continue
             if month_end < today:
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(json.dumps(payload), encoding="utf-8")
@@ -1109,7 +1120,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     started = time.monotonic()
 
     def progress(origin: date, scored: int) -> None:
-        if scored % 10 == 0:
+        if scored == 1 or scored % 10 == 0:
             elapsed = time.monotonic() - started
             print(f"  {origin}: {scored} origins ({elapsed:.0f} s)", file=sys.stderr)
 
