@@ -179,7 +179,8 @@ export read-only (`?immutable=1`) and prints per-bucket MAE/RMSE/bias from
 `lead_time_accuracy`, the `evaluation` MAE, the holdout metrics and the covered dates
 (`--currency DKK` / `--eur-per-unit` → EUR ct/kWh, `--since`, `--log` for
 `ML model trained in … s`). Exports go to the git-ignored `.cache/live/`, never the
-repository root (location-revealing weather). Procedure: `docs/ml_documentation.md` →
+repository root (location-revealing weather; `.gitignore` blocks root learning DBs and
+`-shm`/`-wal`, see `docs/persistence.md` → Live Exports for Analysis). Procedure: `docs/ml_documentation.md` →
 Live accuracy.
 
 ### Learning storage
