@@ -131,8 +131,8 @@ class LearningStateStorageMixin(StorageMixinBase):
     def save_meta_dict(self, extra_meta: dict) -> None:
         """Save arbitrary key/value pairs to the meta table (blocking).
 
-        Used for persisting hyperparameter optimization results and
-        other runtime-learned configuration.
+        Used for persisting the holdout metrics, source state and other
+        runtime-learned configuration.
 
         Args:
             extra_meta: Dict of string key -> string/int/float value
@@ -394,7 +394,7 @@ class LearningStateStorageMixin(StorageMixinBase):
             if raw is not None:
                 with contextlib.suppress(ValueError, TypeError):
                     result[key] = converter(raw)
-        # Include remaining meta keys (HPO params, etc.)
+        # Include remaining meta keys (holdout metrics, source state, etc.)
         for key, value in meta.items():
             if key not in result and key not in ("schema_version",):
                 result[key] = value

@@ -52,7 +52,7 @@ class LearningStorage(
       bias_correction — per-slot additive bias offsets (0-95)
       volatility      — per-slot volatility MAE
       meta            — key/value pairs (training_samples, is_trained,
-                        hpo_counter) (all four: state_storage.py)
+                        holdout metrics) (all four: state_storage.py)
       spot_prices     — the model's price history per UTC 15-min slot (#24;
                         price_storage.py); price_history is its legacy,
                         emptied JSON-per-day form

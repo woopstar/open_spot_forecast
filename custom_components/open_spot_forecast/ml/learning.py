@@ -14,6 +14,7 @@ from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
 from .gas_price import GAS_LOOKBACK_DAYS, GasPriceIndex
+from .models import OBSOLETE_HPO_META_KEYS
 from .series_storage import ENTSOE_LOAD, GAS_PRICES, OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
 from .zone_weather import ZoneWeatherIndex, zone_points
@@ -585,11 +586,26 @@ class LearningMixin(PredictorBase):
 
         return await self.storage.async_save_all(data)
 
+    async def _forget_tuned_hyperparameters(self) -> None:
+        """Delete the removed optimization's results from meta (#92).
+
+        They were tuned on a month-long extrapolation and forecast worse than
+        the defaults in the backtest, so they are never applied again.
+        """
+        _LOGGER.info("Dropping stored tuned hyperparameters; using the defaults")
+        try:
+            await self.hass.async_add_executor_job(
+                self.storage.delete_meta_keys, OBSOLETE_HPO_META_KEYS
+            )
+        except Exception as err:
+            _LOGGER.warning("Could not delete the tuned hyperparameters: %s", err)
+
     async def _load_learning_data(self) -> None:
         """Load learning data from persistent storage.
 
-        Called automatically during initialization. Also restores
-        optimized hyperparameters if previously saved.
+        Called automatically during initialization. Hyperparameters stored
+        by the removed optimization (#92) are deleted, never restored: the
+        model always uses the production defaults.
         """
         data = await self.storage.async_load_all()
 
@@ -602,38 +618,9 @@ class LearningMixin(PredictorBase):
             self.is_trained = data.get("is_trained", False)
             self.solar_scale = data.get("solar_scale", 1.0)
             self._solar_scale_samples = data.get("solar_scale_samples", 0)
-            self._restore_hpo_counter(data)
             self._restore_holdout_metrics(data)
-
-            # Restore optimized hyperparameters if available. Results saved
-            # without hpo_max_depth were tuned for the old depth-1 stumps and
-            # are ignored until the next optimization run.
-            hpo_n = data.get("hpo_n_estimators")
-            hpo_lr = data.get("hpo_learning_rate")
-            hpo_depth = data.get("hpo_max_depth")
-            if hpo_n and hpo_lr and hpo_depth:
-                try:
-                    from .models import create_price_model
-
-                    self.price_model = create_price_model(
-                        n_estimators=int(hpo_n),
-                        learning_rate=float(hpo_lr),
-                        max_depth=int(hpo_depth),
-                    )
-                    self.is_trained = False  # Force re-train with new params
-                    _LOGGER.info(
-                        "Restored optimized hyperparameters: n=%d, lr=%.2f, depth=%d",
-                        int(hpo_n),
-                        float(hpo_lr),
-                        int(hpo_depth),
-                    )
-                except ValueError, TypeError:
-                    pass
-            elif hpo_n and hpo_lr:
-                _LOGGER.debug(
-                    "Ignoring hyperparameters tuned for the old stump model; "
-                    "using defaults until the next optimization"
-                )
+            if any(key in data for key in OBSOLETE_HPO_META_KEYS):
+                await self._forget_tuned_hyperparameters()
 
             pred_count = data.get("prediction_count", 0)
 

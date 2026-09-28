@@ -18,8 +18,8 @@ from custom_components.open_spot_forecast.const import (
     CONF_TEMPERATURE_SENSOR,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
+from custom_components.open_spot_forecast.ml.models import create_price_model
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
-from custom_components.open_spot_forecast.ml.retraining import HPO_INTERVAL_DAYS
 from custom_components.open_spot_forecast.ml.series_storage import (
     NORDPOOL_PROGNOSES,
     OPENMETEO_WEATHER,
@@ -239,111 +239,25 @@ def test_predict_holds_lock_while_running(predictor: SpotPricePredictor) -> None
     assert predictor._predict_lock.locked() is False
 
 
-# --- Hyperparameter optimization cadence --------------------------------------
+# --- No hyperparameter optimization (#92) -------------------------------------
 
 
-def _record_days(predictor: SpotPricePredictor, days: int) -> None:
-    """Store `days` distinct past days of prices."""
-    for day in range(days):
+def test_retraining_keeps_the_production_hyperparameters(
+    predictor: SpotPricePredictor,
+) -> None:
+    """A week of new days retrains once, with the defaults, and stores no HPO state."""
+    for day in range(8):
         predictor.record_training_prices(TODAY, f"2026-08-{day + 1:02d}")
+    defaults = create_price_model().get_params()
+    predictor.price_model = create_price_model()
 
-
-def test_hpo_counter_counts_new_days_and_is_persisted(
-    predictor: SpotPricePredictor,
-) -> None:
-    """Only a new date bumps the counter; the value is stored in meta."""
-    predictor.record_training_prices(TODAY, "2026-09-23")
-    predictor.record_training_prices(TODAY, "2026-09-23")
-    predictor.record_training_prices(TODAY + TOMORROW, "2026-09-23")
-    predictor.record_training_prices(TODAY, "2026-09-24")
-
-    assert predictor._hpo_counter == 2
-    assert predictor.storage.load_meta_dict()["hpo_counter"] == "2"
-
-
-@pytest.mark.asyncio
-async def test_hpo_counter_survives_restart(
-    predictor: SpotPricePredictor,
-) -> None:
-    """A restarted predictor restores the persisted HPO counter."""
-    _record_days(predictor, 3)
-
-    restarted = SpotPricePredictor(predictor.hass, "DK1")
-    try:
-        await restarted._load_learning_data()
-        assert restarted._hpo_counter == 3
-    finally:
-        restarted.storage.close()
-
-
-def test_restore_ignores_invalid_hpo_counter(predictor: SpotPricePredictor) -> None:
-    """A corrupt meta value leaves the counter unchanged."""
-    predictor._restore_hpo_counter({"hpo_counter": "not-a-number"})
-
-    assert predictor._hpo_counter == 0
-
-
-def _fake_hpo(predictor: SpotPricePredictor) -> Callable[[], dict]:
-    """Mimic _optimize_hyperparameters: swap in an unfitted tuned model."""
-
-    def optimize() -> dict:
-        predictor.price_model = NumpyGradientBoosting(n_estimators=3)
-        predictor.is_trained = False
-        return {"n_estimators": 3, "learning_rate": 0.1}
-
-    return optimize
-
-
-def test_hpo_runs_after_interval_and_model_stays_trained(
-    predictor: SpotPricePredictor,
-) -> None:
-    """HPO runs once enough new days accrue, then the tuned model is fitted."""
-    _record_days(predictor, HPO_INTERVAL_DAYS)
-
-    with (
-        patch.object(
-            predictor, "_optimize_hyperparameters", side_effect=_fake_hpo(predictor)
-        ) as hpo,
-        _spy_training(predictor) as train,
-    ):
-        _forecast(predictor, TODAY)
-
-    hpo.assert_called_once()
-    assert train.call_count == 2
-    assert predictor.is_trained is True
-    assert len(predictor.price_model.trees) == 3
-    assert predictor._hpo_counter == 0
-    assert predictor.storage.load_meta_dict()["hpo_counter"] == "0"
-    assert all(p["model"] == "GradientBoosting" for p in predictor.predictions)
-
-
-def test_hpo_not_due_before_interval(predictor: SpotPricePredictor) -> None:
-    """Fewer than HPO_INTERVAL_DAYS new days never trigger optimization."""
-    _record_days(predictor, HPO_INTERVAL_DAYS)
-    predictor._hpo_counter = HPO_INTERVAL_DAYS - 2  # the forecast adds today
-
-    with patch.object(predictor, "_optimize_hyperparameters") as hpo:
-        _forecast(predictor, TODAY)
-
-    hpo.assert_not_called()
-    assert predictor._hpo_counter == HPO_INTERVAL_DAYS - 1
-
-
-def test_hpo_counter_kept_when_optimization_skipped(
-    predictor: SpotPricePredictor,
-) -> None:
-    """If optimization bails out (too little data), it is retried later."""
-    _record_days(predictor, HPO_INTERVAL_DAYS)
-
-    with (
-        patch.object(predictor, "_optimize_hyperparameters", return_value=None),
-        _spy_training(predictor) as train,
-    ):
+    with _spy_training(predictor) as train:
         _forecast(predictor, TODAY)
 
     assert train.call_count == 1
-    assert predictor._hpo_counter >= HPO_INTERVAL_DAYS
     assert predictor.is_trained is True
+    assert predictor.price_model.get_params() == defaults
+    assert not any(key.startswith("hpo_") for key in predictor.storage.load_meta_dict())
 
 
 # --- Model refit ----------------------------------------------------------------

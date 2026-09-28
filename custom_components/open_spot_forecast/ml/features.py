@@ -195,7 +195,7 @@ def _to_float(value: Any) -> float:
 def build_feature_vector(feature: dict[str, Any]) -> list[float]:
     """Return the model input row for one slot's feature dict.
 
-    Training, prediction, hyperparameter search and the dev backtest
+    Training, prediction and the dev backtest
     (``scripts/backtest.py``) all build rows here, so ``FEATURE_NAMES`` is
     the single source of truth for the column order. A missing or unknown
     feature is NaN, which the price model handles natively.

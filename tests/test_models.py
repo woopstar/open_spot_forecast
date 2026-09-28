@@ -1,4 +1,4 @@
-"""Tests for ModelMixin training: live model fit, holdout validation and HPO."""
+"""Tests for ModelMixin training: live model fit, holdout validation, defaults."""
 
 import logging
 from collections.abc import Callable, Iterator
@@ -250,67 +250,7 @@ def test_the_masked_model_predicts_without_prognoses(
     assert len(all_prices) == 5 * SLOTS_PER_DAY
 
 
-# --- Hyperparameter optimization (issue #14) -------------------------------------
-
-
-def test_hpo_searches_max_depth_and_persists_best_params(
-    predictor: SpotPricePredictor, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The grid covers max_depth; the winner is applied unfitted and saved."""
-    monkeypatch.setattr(models, "HPO_N_ESTIMATORS", (5, 10))
-    monkeypatch.setattr(models, "HPO_LEARNING_RATES", (0.1,))
-    monkeypatch.setattr(models, "HPO_MAX_DEPTHS", (1, 3))
-    profile = 10 * np.sin(2 * np.pi * np.arange(SLOTS_PER_DAY) / SLOTS_PER_DAY)
-    predictor.price_history = [
-        {"date": f"2026-09-{1 + day:02d}", "prices": (BASE_LEVEL + profile).tolist()}
-        for day in range(8)
-    ]
-
-    best = predictor._optimize_hyperparameters()
-
-    assert best is not None
-    assert best["n_estimators"] in (5, 10)
-    assert best["max_depth"] in (1, 3)
-    assert predictor.is_trained is False
-    assert predictor.price_model.trees == []
-    assert predictor.price_model.max_depth == best["max_depth"]
-    assert predictor.price_model.n_estimators == best["n_estimators"]
-    meta = predictor.storage.load_meta_dict()
-    assert meta["hpo_max_depth"] == str(best["max_depth"])
-    assert meta["hpo_n_estimators"] == str(best["n_estimators"])
-
-
-def test_hpo_splits_before_adding_masked_copies(
-    predictor: SpotPricePredictor, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """HPO fits on the oldest rows and their copies, never on a later row."""
-    monkeypatch.setattr(models, "HPO_N_ESTIMATORS", (5,))
-    monkeypatch.setattr(models, "HPO_LEARNING_RATES", (0.1,))
-    monkeypatch.setattr(models, "HPO_MAX_DEPTHS", (2,))
-    profile = 10 * np.sin(2 * np.pi * np.arange(SLOTS_PER_DAY) / SLOTS_PER_DAY)
-    predictor.price_history = [
-        {"date": f"2026-09-{14 + day}", "prices": (day + profile).tolist()}
-        for day in range(10)
-    ]
-    _store_prognoses(predictor, range(10))
-    fits: list[np.ndarray] = []
-    real_fit = NumpyGradientBoosting.fit
-
-    def spy_fit(model: NumpyGradientBoosting, X: np.ndarray, y: np.ndarray) -> None:
-        fits.append(y)
-        real_fit(model, X, y)
-
-    with patch.object(NumpyGradientBoosting, "fit", spy_fit):
-        assert predictor._optimize_hyperparameters() is not None
-
-    (y,) = fits
-    assert len(y) == 2 * 8 * SLOTS_PER_DAY
-    # Day 8 and 9 (levels 8 and 9) are validation only
-    assert float(np.max(y)) < 8 + 10
-
-
-def test_hpo_skipped_without_a_week_of_history(predictor: SpotPricePredictor) -> None:
-    assert predictor._optimize_hyperparameters() is None
+# --- No hyperparameter optimization (#92) ----------------------------------------
 
 
 def _restart(predictor: SpotPricePredictor) -> SpotPricePredictor:
@@ -320,38 +260,60 @@ def _restart(predictor: SpotPricePredictor) -> SpotPricePredictor:
 
 
 @pytest.mark.asyncio
-async def test_restore_applies_saved_hyperparameters(
-    predictor: SpotPricePredictor,
+@pytest.mark.parametrize(
+    "stored",
+    [
+        # The live DK1 instance's choice from the old 80/20 validation
+        {
+            "hpo_n_estimators": "300",
+            "hpo_learning_rate": "0.2",
+            "hpo_max_depth": "6",
+            "hpo_best_mae": "0.27",
+            "hpo_counter": "1",
+        },
+        # Tuned for the depth-1 stumps (no max_depth)
+        {"hpo_n_estimators": "300", "hpo_learning_rate": "0.2"},
+    ],
+)
+async def test_stored_tuned_hyperparameters_are_dropped_at_startup(
+    predictor: SpotPricePredictor, stored: dict[str, str]
 ) -> None:
-    predictor.storage.save_meta_dict(
-        {"hpo_n_estimators": "300", "hpo_learning_rate": "0.05", "hpo_max_depth": "4"}
-    )
-    restarted = _restart(predictor)
-    try:
-        await restarted._load_learning_data()
-
-        assert restarted.price_model.n_estimators == 300
-        assert restarted.price_model.learning_rate == pytest.approx(0.05)
-        assert restarted.price_model.max_depth == 4
-    finally:
-        restarted.storage.close()
-
-
-@pytest.mark.asyncio
-async def test_restore_ignores_hyperparameters_tuned_for_stumps(
-    predictor: SpotPricePredictor,
-) -> None:
-    """Parameters saved before max_depth existed fall back to the defaults."""
-    predictor.storage.save_meta_dict(
-        {"hpo_n_estimators": "300", "hpo_learning_rate": "0.2"}
-    )
+    """Old HPO results are never applied and are deleted from meta."""
+    predictor.storage.save_meta_dict(stored | {"holdout_mae": "0.1"})
     restarted = _restart(predictor)
     try:
         await restarted._load_learning_data()
 
         assert restarted.price_model.get_params() == create_price_model().get_params()
+        meta = restarted.storage.load_meta_dict()
+        assert not set(meta) & set(models.OBSOLETE_HPO_META_KEYS)
+        assert meta["holdout_mae"] == "0.1"
     finally:
         restarted.storage.close()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cleanup_keeps_the_defaults(
+    predictor: SpotPricePredictor,
+) -> None:
+    predictor.storage.save_meta_dict({"hpo_max_depth": "6"})
+    restarted = _restart(predictor)
+    try:
+        with patch.object(
+            restarted.storage, "delete_meta_keys", side_effect=OSError("locked")
+        ):
+            await restarted._load_learning_data()
+
+        assert restarted.price_model.get_params() == create_price_model().get_params()
+    finally:
+        restarted.storage.close()
+
+
+def test_the_predictor_has_no_hyperparameter_search(
+    predictor: SpotPricePredictor,
+) -> None:
+    assert not hasattr(predictor, "_optimize_hyperparameters")
+    assert not hasattr(models, "HPO_MAX_DEPTHS")
 
 
 def test_predictions_use_one_batch_model_call(predictor: SpotPricePredictor) -> None:
@@ -374,4 +336,3 @@ def test_production_model_uses_depth_limited_trees() -> None:
 
     assert params["max_depth"] > 1
     assert params["min_samples_leaf"] == MIN_SAMPLES_LEAF
-    assert min(models.HPO_MAX_DEPTHS) > 1

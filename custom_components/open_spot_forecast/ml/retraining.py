@@ -9,26 +9,17 @@ cadence. ``last_data_update`` is the newest of two change timestamps:
   (tracked by ``LearningStorage.last_data_write``)
 
 ``predict`` retrains when the model is untrained or ``last_data_update`` is
-newer than ``last_trained_at``. Hyperparameter optimization runs once per
-``HPO_INTERVAL_DAYS`` new days of price data; the counter is persisted in the
-``meta`` table so it survives restarts.
+newer than ``last_trained_at``. The hyperparameters are the backtest-chosen
+production defaults; there is no per-installation optimization (#92).
 """
 
-import contextlib
-import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
 
 from homeassistant.util import dt as dt_util
 
 from ..price_series import same_prices
 from .base import PredictorBase
-
-_LOGGER = logging.getLogger(__name__)
-
-# New days of price data between hyperparameter optimization runs
-HPO_INTERVAL_DAYS = 7
 
 
 class RetrainMixin(PredictorBase):
@@ -53,9 +44,8 @@ class RetrainMixin(PredictorBase):
     ) -> None:
         """Store the day's prices for training and note whether they changed.
 
-        A new date bumps the HPO counter (persisted in meta). A new date or
-        changed prices mark the price history as updated, which triggers a
-        retrain on this forecast run. Invalid prices (see store_daily_prices)
+        A new date or changed prices mark the price history as updated,
+        which triggers a retrain on this forecast run. Invalid prices (see store_daily_prices)
         are not stored and change nothing.
 
         Args:
@@ -72,9 +62,7 @@ class RetrainMixin(PredictorBase):
         if not self.store_daily_prices(prices, date):
             return
 
-        if previous is None:
-            self._set_hpo_counter(self._hpo_counter + 1)
-        elif same_prices(previous, prices):
+        if previous is not None and same_prices(previous, prices):
             return
 
         self._prices_updated_at = dt_util.utcnow()
@@ -89,38 +77,12 @@ class RetrainMixin(PredictorBase):
         return last_update is not None and last_update > self.last_trained_at
 
     def retrain(self) -> None:
-        """Train the price model and run hyperparameter optimization when due.
+        """Train the price model on the stored history.
 
         ``last_trained_at`` is the time training *started*: data written while
         training runs is newer than it and triggers the next retrain.
         """
         started = dt_util.utcnow()
         self._train_models()
-        if not self.is_trained:
-            return
-        self.last_trained_at = started
-
-        if self._hpo_counter < HPO_INTERVAL_DAYS or len(self.price_history) < 7:
-            return
-
-        _LOGGER.info(
-            "Triggering periodic hyperparameter optimization (%d new days)",
-            self._hpo_counter,
-        )
-        if self._optimize_hyperparameters() is None:
-            return
-        self._set_hpo_counter(0)
-        # Optimization swaps in an unfitted model with the best params — fit it
-        # now so this run still predicts with the ML model
-        self._train_models()
-
-    def _set_hpo_counter(self, value: int) -> None:
-        """Set the HPO day counter and persist it in the meta table."""
-        self._hpo_counter = value
-        with contextlib.suppress(Exception):
-            self.storage.save_meta_dict({"hpo_counter": value})
-
-    def _restore_hpo_counter(self, data: dict[str, Any]) -> None:
-        """Restore the HPO day counter from loaded meta data."""
-        with contextlib.suppress(TypeError, ValueError):
-            self._hpo_counter = int(data.get("hpo_counter", 0))
+        if self.is_trained:
+            self.last_trained_at = started

@@ -326,15 +326,15 @@ def test_error_metrics_bias_and_volatility_round_trip(
 
 def test_meta_round_trip(storage: LearningStorage) -> None:
     storage.save_meta(120, True)
-    storage.save_meta_dict({"hpo_counter": 3, "hpo_best_mae": 0.12})
+    storage.save_meta_dict({"holdout_mae": 0.12, "source_state": "x"})
 
     meta = storage.load_meta()
     assert meta["training_samples"] == 120
     assert meta["is_trained"] is True
-    assert meta["hpo_counter"] == "3"
+    assert meta["source_state"] == "x"
     raw = storage.load_meta_dict()
     assert raw["is_trained"] == "1"
-    assert raw["hpo_best_mae"] == "0.12"
+    assert raw["holdout_mae"] == "0.12"
 
 
 @pytest.mark.asyncio
@@ -356,7 +356,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
         }
     )
     assert saved is True
-    storage.save_meta_dict({"hpo_best_mae": 0.1})
+    storage.save_meta_dict({"holdout_rmse": 0.1})
 
     data = await storage.async_load_all()
     assert data is not None
@@ -369,7 +369,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
     assert data["solar_scale_samples"] == 12
     assert data["training_samples"] == 50
     assert data["is_trained"] is True
-    assert data["hpo_best_mae"] == "0.1"
+    assert data["holdout_rmse"] == "0.1"
     assert "schema_version" not in data
 
 
