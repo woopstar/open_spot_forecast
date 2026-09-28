@@ -21,7 +21,7 @@ All learning data is stored in a single SQLite database:
 | `gas_prices`         | `timestamp` (UTC day)       | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                        |
 | `neighbour_prices`   | `(timestamp, zone)`         | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)      |
 | `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
-| `meta`               | `key`                       | Training state, schema version, HPO params, `hpo_counter`, the latest holdout metrics, source state             |
+| `meta`               | `key`                       | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)  |
 | `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
 | `evaluation`         | `timestamp` (UTC slot key)  | Per scored slot: the prediction made closest to 24 h ahead, the actual price and its lead time (#36)            |
 

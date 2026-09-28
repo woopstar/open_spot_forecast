@@ -80,10 +80,9 @@ class SpotPricePredictor(
         self.training_samples = 0
 
         # Retrain tracking (see retraining.py): retrain when training inputs
-        # changed after last_trained_at; HPO counts new days of price data
+        # changed after last_trained_at
         self.last_trained_at: datetime | None = None
         self._prices_updated_at: datetime | None = None
-        self._hpo_counter = 0
 
         # Holdout error of the last successful training (see
         # ModelMixin._train_models), persisted in meta; None before one

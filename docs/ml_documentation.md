@@ -30,7 +30,9 @@ These values were chosen with the [backtest](#backtesting): with the current
 inputs, deeper or less regularized trees (e.g. `max_depth` 6,
 `learning_rate` 0.1, `min_samples_leaf` 20) fit the noise of single
 weekday/slot cells and lose about 0.05 ct/kWh 1d MAE on a 30-day window.
-Hyperparameter optimization can raise `max_depth` per installation.
+Every installation uses these values; there is no per-installation
+hyperparameter optimization (removed in #92, see
+[Retraining](#retraining)).
 
 How it is fitted (squared loss; each tree fits the residuals of the trees
 before it):
@@ -97,17 +99,32 @@ kept in memory only, so the first forecast after a restart always retrains
 from the persisted history. The log line
 `ML model trained in … s: holdout MAE=…` gives each training's duration.
 
-**Hyperparameter optimization** (a grid search over `n_estimators` ∈ {100,
-200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2} and `max_depth` ∈ {2, 3, 4, 6})
-runs once per 7 new days of price data. Each (`learning_rate`, `max_depth`)
-pair is fitted once with 300 trees, and `staged_predict` scores it after 100,
-200 and 300 trees, so the 36 candidates cost 12 fits. The day counter is
-persisted as `hpo_counter` in the `meta` table, so it survives restarts. After
-optimization the model is refitted with the best parameters in the same run.
-The best parameters are stored as `hpo_n_estimators`, `hpo_learning_rate` and
-`hpo_max_depth` in `meta` and restored at startup; parameters stored without
-`hpo_max_depth` were tuned for the old depth-1 stump model and are ignored
-until the next optimization.
+**No hyperparameter optimization** (#92). Until #92 a weekly grid search
+(`n_estimators` ∈ {100, 200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2},
+`max_depth` ∈ {2, 3, 4, 6}) replaced the defaults per installation. It fitted
+each candidate on the oldest 80 % of the window and scored the newest 20 %:
+a month-long extrapolation (36 days at 180 days), not the 1-7 day forecast
+the live model makes after every retrain. It chose deep, fast-learning
+trees that forecast worse than the defaults. DK1, 180-day window, 365 daily
+origins (2025-09-24 to 2026-09-23), zone weather, MAE / RMSE in EUR ct/kWh:
+
+| Parameters                                       | 1d              | 2d              | 3d              |
+| ------------------------------------------------ | --------------- | --------------- | --------------- |
+| production defaults (200, 0.05, depth 3)         | **2.31 / 3.50** | **2.43 / 3.64** | **2.49 / 3.72** |
+| a live DK1 instance's choice (300, 0.2, depth 6) | 2.36 / 3.56     | 2.55 / 3.81     | 2.61 / 3.92     |
+
+A rolling-origin validation (4 origins in the window's last 2 weeks, each
+fitted on the rows before it and scored on the next 1-3 days, defaults
+kept unless beaten by 1 %) was tried as the replacement. Re-run at every
+weekly origin of the same year (53 origins, 180-day window), it chose about
+20 different parameter sets and was worse at 1d than the defaults (2.30 vs
+2.22 MAE; 2d 2.31 vs 2.34, 3d 2.32 vs 2.37): a few days of validation
+are too noisy to tune on. The optimization was removed instead, so every
+installation uses the backtest-chosen `create_price_model()` defaults.
+At startup the old results (`hpo_n_estimators`, `hpo_learning_rate`,
+`hpo_max_depth`, `hpo_best_mae`, `hpo_counter`; `OBSOLETE_HPO_META_KEYS`)
+are deleted from `meta` and never applied. Change the defaults only with a
+backtest.
 
 ## Feature Vector (24 features)
 
@@ -240,7 +257,7 @@ not averaged into a medium wind). The aggregation is `ZoneWeatherIndex`
 chose aggregates over per-point columns (see [Backtesting](#backtesting)).
 
 **One definition for training and prediction** (#17). Every row, for
-training, prediction, hyperparameter search and the backtest, is built by
+training, prediction and the backtest, is built by
 `build_feature_row(slot_start, SlotInputs, region)` in `ml/features.py` and turned
 into the model input by `build_feature_vector()`. The two phases differ only
 in where a slot's `SlotInputs` come from (see
@@ -521,10 +538,6 @@ known to stage 1 and the holdout error is slightly optimistic. The extra
 fit roughly doubles training time. Like the rest of training, it runs in the
 executor.
 
-Hyperparameter optimization compares its candidates on the same chronological
-80/20 split (masked copies added per side), then replaces `price_model` with an unfitted model using the best
-parameters, which the next training fits on all rows.
-
 ## Training Window
 
 The model trains on the last `training_days` of prices (option
@@ -762,8 +775,8 @@ pipeline:
   days of a week can be newer than the origin (optimistic, like the
   weather archive).
 - **Raw model output.** Per-slot bias correction (which needs live
-  self-learning state) and
-  hyperparameters restored from HPO are not applied.
+  self-learning state) is not applied. The hyperparameters are the
+  production defaults, as in the integration.
 - **Gas price only with `--gas`.** Feature 17 comes from Instrat's daily
   history (one request per month, cached in `.cache/backtest/`); every
   origin only sees prices dated before its horizon cutoff, so all target

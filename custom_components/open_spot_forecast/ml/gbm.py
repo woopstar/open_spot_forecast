@@ -471,8 +471,8 @@ class NumpyGradientBoosting:
     def staged_predict(self, X: np.ndarray) -> Iterator[np.ndarray]:
         """Yield the prediction after each tree (1, 2, …, ``n_estimators``).
 
-        Lets hyperparameter search score every ``n_estimators`` up to the
-        fitted one from a single fit.
+        Lets a search (e.g. the backtest) score every ``n_estimators`` up to
+        the fitted one from a single fit.
         """
         X = self._check_input(X)
         predictions = np.full(len(X), self.initial_prediction or 0.0)

@@ -231,10 +231,10 @@ def test_delete_meta_keys_leaves_other_keys(
     make_predictor: Callable[[], SpotPricePredictor],
 ) -> None:
     storage = make_predictor().storage
-    storage.save_meta_dict({"holdout_mae": 0.1, "hpo_counter": 3})
+    storage.save_meta_dict({"holdout_mae": 0.1, "holdout_rmse": 3})
 
     storage.delete_meta_keys(("holdout_mae", "missing"))
 
     meta = storage.load_meta_dict()
     assert "holdout_mae" not in meta
-    assert meta["hpo_counter"] == "3"
+    assert meta["holdout_rmse"] == "3"

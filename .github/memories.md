@@ -60,7 +60,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
 | `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
 | `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the day-ahead prediction next to the actual price, #36)                              |
-| `retraining.py`         | `RetrainMixin` — retrain when training data changed, HPO cadence                                                                    |
+| `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                 |
 | `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
@@ -146,13 +146,15 @@ The model retrains when its inputs change, not on a timer: `predict()` stores to
 via `record_training_prices()` and retrains only if `needs_retraining()` (untrained, or
 `last_data_update > last_trained_at`). New training-data writes must move
 `LearningStorage.last_data_write` (or `_prices_updated_at` for prices), or they will never
-reach the model. HPO runs once per 7 new price days (`hpo_counter` in `meta`).
+reach the model. There is no hyperparameter optimization (removed in #92: it tuned on a
+month-long extrapolation and forecast worse than the defaults); old `hpo_*` meta keys
+(`OBSOLETE_HPO_META_KEYS`) are deleted at startup. Change the defaults only with a backtest.
 
 Pure helpers shared by training, prediction and the dev backtest — never inline them:
 `build_feature_row()` (the one definition of every feature), `build_feature_vector()`
 (model input row, column order `FEATURE_NAMES`) and `slot_time_features()` (per-slot time
 features) in `ml/features.py`, and
-`create_price_model()` (production GBM hyperparameters, also used by HPO) in `ml/models.py`.
+`create_price_model()` (production GBM hyperparameters, the same for every installation) in `ml/models.py`.
 The price model handles NaN inputs natively (each split learns where missing values go),
 so a missing feature can reach it as NaN instead of an invented value.
 
@@ -202,7 +204,7 @@ predictions, and `weather_history` snapshots score it and never trigger a retrai
 Nordpool prognoses (`NORDPOOL_FEATURES`, 10-15) exist for today and tomorrow only, so almost no
 prediction row has them (#91): training fits every row plus its Nordpool-masked copy
 (`with_masked_nordpool()` in `ml/features.py`), added **after** the chronological 80/20 split,
-per side (`_train_models`, `_optimize_hyperparameters`). Prediction rows are never copied.
+per side (`_train_models`). Prediction rows are never copied.
 `scripts/backtest.py --nordpool-db .cache/live/<export>.db` measures it on a live DB export.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 

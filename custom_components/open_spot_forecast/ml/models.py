@@ -1,6 +1,5 @@
 """Model training and prediction generation."""
 
-import contextlib
 import logging
 import time
 from collections.abc import Sequence
@@ -27,20 +26,22 @@ _LOGGER = logging.getLogger(__name__)
 # meta keys of the latest training's holdout metrics (see _train_models)
 HOLDOUT_META_KEYS = ("holdout_mae", "holdout_rmse", "holdout_trained_at")
 
-# Production hyperparameters, chosen with the backtest (docs/ml_documentation.md);
-# hyperparameter optimization may replace the first three per installation
+# Production hyperparameters, chosen with the backtest (docs/ml_documentation.md)
+# for every installation; there is no per-installation search any more (#92)
 DEFAULT_N_ESTIMATORS = 200
 DEFAULT_LEARNING_RATE = 0.05
 DEFAULT_MAX_DEPTH = 3
 # About one day of 15-minute slots: a leaf never describes a single day's noise
 MIN_SAMPLES_LEAF = 100
 
-# Hyperparameter search grid. n_estimators is scored from one fit per
-# (learning_rate, max_depth) pair with staged predictions, so the grid costs
-# len(HPO_LEARNING_RATES) * len(HPO_MAX_DEPTHS) fits, not the full product.
-HPO_N_ESTIMATORS = (100, 200, 300)
-HPO_LEARNING_RATES = (0.05, 0.1, 0.2)
-HPO_MAX_DEPTHS = (2, 3, 4, 6)
+# meta keys of the removed hyperparameter optimization (#92); deleted at startup
+OBSOLETE_HPO_META_KEYS = (
+    "hpo_n_estimators",
+    "hpo_learning_rate",
+    "hpo_max_depth",
+    "hpo_best_mae",
+    "hpo_counter",
+)
 
 
 def create_price_model(
@@ -50,8 +51,8 @@ def create_price_model(
 ) -> NumpyGradientBoosting:
     """Return an untrained price model; defaults are the production hyperparameters.
 
-    Used by ``SpotPricePredictor``, hyperparameter search and the dev backtest
-    (``scripts/backtest.py``), so all of them evaluate the same model
+    Used by ``SpotPricePredictor`` and the dev backtest
+    (``scripts/backtest.py``), so both evaluate the same model
     configuration. Leaf count and L2 regularization keep their
     ``NumpyGradientBoosting`` defaults.
     """
@@ -206,102 +207,6 @@ class ModelMixin(PredictorBase):
             "holdout_rmse": self.holdout_rmse,
             "holdout_trained_at": trained_at.isoformat() if trained_at else None,
         }
-
-    def _optimize_hyperparameters(self) -> dict | None:
-        """Run grid search for best GradientBoosting hyperparameters.
-
-        Tests every combination of n_estimators, learning_rate and max_depth
-        in the HPO_* grids using the stored price history. Best parameters are
-        saved to the storage meta table. Returns the best param dict or None
-        if insufficient data.
-
-        Called by RetrainMixin.retrain once per HPO_INTERVAL_DAYS new days
-        of price data.
-        """
-        if len(self.price_history) < 7:
-            _LOGGER.debug("Not enough history for hyperparameter opt (need 7 days)")
-            return None
-
-        _LOGGER.info("Starting hyperparameter optimization...")
-
-        # Build training data from all history
-        all_prices, all_features = self.get_all_historical_prices()
-        if len(all_prices) < 168:  # min 7 days * 24 hours
-            return None
-
-        X = self._model_inputs(all_features, train=True)
-        y = np.array(all_prices, dtype=float)
-
-        # Chronological 80/20 train/validation split; Nordpool-masked copies
-        # (#91) are added per side, so both copies of a row stay on one side
-        split_idx = int(0.8 * len(X))
-        X_train, y_train = with_masked_nordpool(X[:split_idx], y[:split_idx])
-        X_val, y_val = with_masked_nordpool(X[split_idx:], y[split_idx:])
-
-        best_params: dict[str, Any] = {
-            "n_estimators": DEFAULT_N_ESTIMATORS,
-            "learning_rate": DEFAULT_LEARNING_RATE,
-            "max_depth": DEFAULT_MAX_DEPTH,
-        }
-        best_score = float("inf")
-
-        for lr in HPO_LEARNING_RATES:
-            for depth in HPO_MAX_DEPTHS:
-                model = create_price_model(
-                    n_estimators=max(HPO_N_ESTIMATORS),
-                    learning_rate=lr,
-                    max_depth=depth,
-                )
-                try:
-                    model.fit(X_train, y_train)
-                    staged = model.staged_predict(X_val)
-                    for n_trees, y_pred in enumerate(staged, start=1):
-                        if n_trees not in HPO_N_ESTIMATORS:
-                            continue
-                        mae = float(np.mean(np.abs(y_val - y_pred)))
-                        if mae < best_score:
-                            best_score = mae
-                            best_params = {
-                                "n_estimators": n_trees,
-                                "learning_rate": lr,
-                                "max_depth": depth,
-                            }
-                            _LOGGER.debug(
-                                "HPO candidate: n=%d lr=%.2f depth=%d MAE=%.4f",
-                                n_trees,
-                                lr,
-                                depth,
-                                mae,
-                            )
-                except Exception:
-                    continue
-
-        _LOGGER.info(
-            "Hyperparameter optimization complete: n_estimators=%d learning_rate=%.2f "
-            "max_depth=%d best_MAE=%.4f",
-            best_params["n_estimators"],
-            best_params["learning_rate"],
-            best_params["max_depth"],
-            best_score,
-        )
-
-        # Apply best params to the live model
-        self.price_model = create_price_model(**best_params)
-        # The new model is unfitted until the caller retrains it
-        self.is_trained = False
-
-        # Persist best params
-        with contextlib.suppress(Exception):
-            self.storage.save_meta_dict(
-                {
-                    "hpo_n_estimators": str(best_params["n_estimators"]),
-                    "hpo_learning_rate": str(best_params["learning_rate"]),
-                    "hpo_max_depth": str(best_params["max_depth"]),
-                    "hpo_best_mae": str(best_score),
-                }
-            )
-
-        return best_params
 
     def _generate_predictions(
         self, features: list[dict], forecast_days: int, interval_minutes: int

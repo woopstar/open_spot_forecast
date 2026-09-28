@@ -91,13 +91,12 @@ def test_invalid_day_is_not_stored_and_keeps_stored_prices(tmp_path: Path) -> No
 
 
 def test_invalid_day_does_not_trigger_retraining(tmp_path: Path) -> None:
-    """Rejected prices neither count as a new HPO day nor as changed data."""
+    """Rejected prices are neither stored nor count as changed data."""
     predictor = _predictor(tmp_path)
 
     predictor.record_training_prices([0.0] * 96, "2026-09-24")
 
     assert predictor.price_history == []
-    assert predictor._hpo_counter == 0
     assert predictor._prices_updated_at is None
     predictor.storage.close()
 
