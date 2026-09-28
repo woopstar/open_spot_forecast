@@ -19,5 +19,5 @@
         "numpy>=2.3.0",
         "holidays>=0.70"
     ],
-    "version": "0.0.2"
+    "version": "0.0.3"
 }
