@@ -174,6 +174,14 @@ backtest: naive last-week baseline, current NumPy GBM, optional LightGBM referen
 enforces a strict horizon cutoff. Run `./scripts/quality.sh backtest` before and after any
 model or feature change; the baseline is in `docs/ml_documentation.md` → Backtesting.
 
+`scripts/live_report.py` (dev-only, #94) is the live counterpart: it reads a learning-DB
+export read-only (`?immutable=1`) and prints per-bucket MAE/RMSE/bias from
+`lead_time_accuracy`, the `evaluation` MAE, the holdout metrics and the covered dates
+(`--currency DKK` / `--eur-per-unit` → EUR ct/kWh, `--since`, `--log` for
+`ML model trained in … s`). Exports go to the git-ignored `.cache/live/`, never the
+repository root (location-revealing weather). Procedure: `docs/ml_documentation.md` →
+Live accuracy.
+
 ### Learning storage
 
 `LearningStorage` in `ml/storage.py` is the single SQLite persistence layer. Never open a

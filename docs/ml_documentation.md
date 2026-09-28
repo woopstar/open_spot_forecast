@@ -362,7 +362,8 @@ synthetic full history, a DK1 training (stage 1, stage 2 and the holdout
 copy) takes 3.4 s on one aarch64 core of the development container with the
 option and 0.5 s without it. It was not measured on a Raspberry Pi: a Pi 4
 core is roughly 5-10 times slower, so expect 20-35 s per training there, in
-the executor, a few times a day (whenever an input changed). Prediction
+the executor, a few times a day (whenever an input changed); the
+[live-accuracy procedure](#live-accuracy-94) measures it from the log. Prediction
 only adds the stage-1 forecasts of the forecast week's slots. The database
 grows by about 19 MB at 60 days: the neighbours' prices and their weather
 (DK1: 23 weather points besides its own 4). The option is off by default
@@ -807,6 +808,75 @@ target days that are public holidays and not Sundays (and only runs the
 origins that forecast one), to measure a change on the days the `holiday`
 feature is for. Run the backtest before and after every
 model or feature change, and put both tables in the PR.
+
+### Live accuracy (#94)
+
+The backtest is optimistic from day 2 on (archived weather, see above), so
+choices that only show at longer lead times, such as the out-of-sample
+stage-1 values of the cross-border model, need live numbers.
+`scripts/live_report.py` (dev-only, not shipped) reads them from a
+learning-database export:
+
+- **Per lead-time bucket** (`lead_time_accuracy`, the last 30 days): samples,
+  days, MAE, RMSE and bias (mean of predicted − actual) pooled over every
+  sample, as the accuracy sensors show them, plus the mean daily MAE and the
+  root of the mean daily MSE, the backtest's method. With more than one ISO
+  week, the MAE per week and bucket too. The buckets are lead times from
+  when the prediction was stored (`day_1` = 0-24 h), while the backtest's 1d
+  is the local day after the origin (0-24 h after midnight), so `day_1`
+  compares with the backtest's 1d and `day_2` with its 2d only roughly.
+- **Evaluation** (`evaluation`, the last 7 days): the same metrics for the
+  prediction made closest to 24 h ahead of each slot.
+- **Training** (`meta`): the latest holdout MAE/RMSE and training sample
+  count, and the `hpo_*` keys of an export from before #92.
+- **Coverage**: the dates the data spans, with a warning below 14 days.
+  `--since YYYY-MM-DD` keeps only slots from that local date on.
+
+The tables are in the model's unit (raw spot price excl. VAT,
+currency/kWh). `--eur-per-unit RATE` (EUR per currency unit, e.g. the
+period's mean ECB rate) or `--currency DKK` (the ERM II central rate, or
+`EUR`) reports EUR ct/kWh, the backtest's unit. The export is opened with
+SQLite's `immutable=1`: the report never writes, migrates or checkpoints
+it.
+
+Procedure:
+
+1. Update the Home Assistant instance to the current `main` and turn on the
+   option under test (e.g. **Cross-border model**). Note the date: the
+   database keeps the older version's lead-time sums for 30 days, and
+   `--since` (the first local date on the new version) leaves them out.
+2. Let it run for **14 days or more** on that version.
+3. Export the database with SQLite's online backup, which is consistent
+   while Home Assistant writes to it (a plain copy of the `.db` file misses
+   what is still in the WAL):
+
+   ```bash
+   mkdir -p .cache/live
+   sqlite3 /config/.storage/open_spot_forecast_DK1_learning.db ".backup '/tmp/dk1_live.db'"
+   # copy /tmp/dk1_live.db from the HA host to .cache/live/dk1_live.db
+   ```
+
+   Keep exports in the git-ignored `.cache/live/`, **never in the
+   repository root**: they hold weather snapshots and forecasts that reveal
+   the installation's location.
+
+4. Run the report, with the training times from the Home Assistant log
+   (`ML model trained in … s: holdout MAE=…`, one line per training; see
+   [Retraining](#retraining)):
+
+   ```bash
+   python -m scripts.live_report .cache/live/dk1_live.db --region DK1 --currency DKK --since 2026-10-01 --log .cache/live/home-assistant.log
+   ```
+
+5. Record the per-bucket MAE next to the backtest's 1d/2d/3d rows and, for
+   the cross-border model, the median training time on the Raspberry Pi in
+   its **Cost** paragraph (see [Cross-Border Model](#cross-border-model-29)).
+
+**No live results are recorded yet.** The only DK1 export so far
+(2026-09-28) held one day of self-learning, from a version with
+hyperparameter optimization (#92) and without the cross-border model:
+day 1 MAE 3.41 and day 2 4.62 EUR ct/kWh (133 and 155 samples, bias −1.75
+and −3.78), too few days to compare with the backtest.
 
 ### Zone weather (#22)
 
