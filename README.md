@@ -87,6 +87,16 @@ The response has `known_until` (end of the confirmed prices), `unit`,
 The forecast sensor can show the same continuous series (option "Include
 confirmed prices in the forecast attribute").
 
+### Dashboards and evcc
+
+[QUICKSTART.md → Dashboard](QUICKSTART.md#dashboard) has tested
+ApexCharts and Plotly Graph Card examples for the forecast (detailed and
+compact format) and for predicted vs actual, plus a script that finds the
+cheapest window with `get_forecast`.
+[evcc](https://evcc.io/) can use the forecast as a grid tariff through a
+user-defined tariff over Home Assistant's REST API (no built-in template):
+see [QUICKSTART.md → evcc](QUICKSTART.md#evcc).
+
 ### Data Sources
 
 - **Stromligning** — confirmed consumer prices (96/day) and the raw spot price
