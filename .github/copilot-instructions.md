@@ -34,14 +34,17 @@ It contains the complete Home Assistant development compliance checklist:
 
 When asked to solve a GitHub issue, always follow these steps in order:
 
-0. **Checkout main and pull latest**
+0. **Fetch main and create a worktree** — `/workspaces/osf` is shared between
+   concurrent sessions; never `git checkout` / `git pull` there (see `AGENTS.md` →
+   Shared Checkout).
    ```bash
-   git checkout main
-   git pull
+   git -C /workspaces/osf fetch origin
+   git -C /workspaces/osf worktree add /workspaces/worktrees/osf-<issue-number> -b <type>/<issue-number>-<slug> origin/main
+   cd /workspaces/worktrees/osf-<issue-number>
    ```
 1. **Read the GitHub issue** — Understand the problem fully before touching any code.
 2. **Read `.github/memories.md`** — Check if the issue touches a known pattern or canonical helper.
-3. **Create a branch** using the issue prefix and a short slug.
+3. **Name the branch** (created with the worktree in step 0) using the issue prefix and a short slug.
    - Format: `<type>/<issue-number>-<slug>` — e.g., `fix/444-bias-correction-ema`
 4. **Understand the relevant code** — Search and read the affected files before making changes.
 5. **Implement the smallest safe fix** — No unrelated changes, no broad refactors.

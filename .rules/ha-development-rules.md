@@ -12,8 +12,10 @@ Apply these rules to **every** PR, regardless of scope.
 ## Pre-Flight
 
 ```bash
-git checkout main
-git pull
+# /workspaces/osf is shared between sessions: never checkout/pull there
+git -C /workspaces/osf fetch origin
+git -C /workspaces/osf worktree add /workspaces/worktrees/osf-<issue-number> -b <type>/<issue-number>-<slug> origin/main
+cd /workspaces/worktrees/osf-<issue-number>
 cat .github/memories.md
 ```
 

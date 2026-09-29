@@ -1,18 +1,63 @@
 ---
 name: osf-pre-flight
-description: Run before starting any OSF code change. Checkout main, pull latest, read repository memory and relevant docs, create a feature branch.
+description: Run before starting any OSF code change. Fetch the latest main, create a dedicated git worktree and feature branch, read repository memory and relevant docs.
 ---
 
 # OSF Pre-Flight — Start Any Code Change
 
 Activate this skill **before writing any code** — when the user asks to fix a bug, implement a feature, or make any change to the OSF codebase.
 
-## Step 1: Checkout Main and Pull Latest
+## Step 0: Never Switch the Shared Checkout
+
+`/workspaces/osf` is the **shared main checkout**. Several agent sessions (and the
+user) work in the same devcontainer at the same time, and they all see that working
+tree, index and `HEAD`. Switching or rebasing it moves the branch under whoever else
+is working there (on 2026-09-24 a session's feature branch, with uncommitted edits,
+was rebased onto `origin/main` by another session's pre-flight).
+
+In `/workspaces/osf`, **never** run `git checkout`, `git switch`, `git pull`,
+`git rebase`, `git reset` or `git stash`. Read-only commands (`git fetch`,
+`git log`, `git status`, `git worktree ...`) are fine.
+
+## Step 1: Create a Worktree and Branch From the Latest Main
+
+Every task gets its own linked worktree under `/workspaces/worktrees/` (a Docker
+volume that survives container rebuilds; the same directory Zed and Claude Code use
+for their worktrees). Branch format: `<type>/<issue-number>-<slug>`.
 
 ```bash
-git checkout main
-git pull
+cd /workspaces/osf
+git fetch origin
+git worktree add /workspaces/worktrees/osf-<issue-number> -b <type>/<issue-number>-<slug> origin/main
+cd /workspaces/worktrees/osf-<issue-number>
 ```
+
+Do **all** work from that worktree: edits, `./scripts/quality.sh`, commits, push and
+`gh pr ...`. Keep every shell command's working directory in the worktree (e.g. set
+the tool's working directory, or `cd` into it first).
+
+If the session already runs in a worktree it created (e.g. Claude Code's
+`EnterWorktree` or a Zed parallel agent), branch there instead:
+`git fetch origin && git switch -c <type>/<issue-number>-<slug> origin/main`.
+
+| Type       | Use for                  |
+| ---------- | ------------------------ |
+| `feat`     | New features             |
+| `fix`      | Bug fixes                |
+| `chore`    | Repository/code chores   |
+| `docs`     | Documentation updates    |
+| `refactor` | Code refactoring         |
+| `perf`     | Performance improvements |
+| `test`     | Test additions/updates   |
+| `ci`       | CI/CD changes            |
+
+Examples: `fix/444-bias-correction-ema`, `feat/123-add-temperature-feature`
+
+All branches MUST be based on `origin/main` unless the user explicitly instructs otherwise.
+
+No per-worktree setup is needed: Python packages are installed container-wide, git
+hooks live in the common git dir, and `scripts/quality.sh` keeps its mypy, ruff and
+pytest caches separate per worktree path.
 
 ## Step 2: Read Repository Memory
 
@@ -31,26 +76,7 @@ Read `.github/memories.md`. Pay special attention to:
 
 If this is issue-driven work, read the full GitHub issue before touching any code.
 
-## Step 4: Create a Feature Branch
-
-Format: `<type>/<issue-number>-<slug>`
-
-| Type       | Use for                  |
-| ---------- | ------------------------ |
-| `feat`     | New features             |
-| `fix`      | Bug fixes                |
-| `chore`    | Repository/code chores   |
-| `docs`     | Documentation updates    |
-| `refactor` | Code refactoring         |
-| `perf`     | Performance improvements |
-| `test`     | Test additions/updates   |
-| `ci`       | CI/CD changes            |
-
-Examples: `fix/444-bias-correction-ema`, `feat/123-add-temperature-feature`
-
-All branches MUST be based on main unless the user explicitly instructs otherwise.
-
-## Step 5: Identify Relevant Documentation
+## Step 4: Identify Relevant Documentation
 
 Based on the change type, read these docs before touching code:
 
@@ -63,10 +89,26 @@ Based on the change type, read these docs before touching code:
 | External sensor entities                      | `docs/using_existing_sensors.md`   |
 | System overview, data flow                    | `docs/architecture.md`             |
 
-## Step 6: Understand the Affected Code
+## Step 5: Understand the Affected Code
 
 Search and read the relevant source files. Do not guess file paths — use `grep` and `glob` to locate them.
 
+## Step 6: Clean Up After the Merge
+
+The worktree is disposable. After the PR is merged (see `osf-pr-workflow` →
+Merge Rules), remove it and its local branch from the shared checkout:
+
+```bash
+cd /workspaces/osf
+git worktree remove /workspaces/worktrees/osf-<issue-number>
+git branch -D <type>/<issue-number>-<slug>
+git fetch --prune origin
+```
+
+`git worktree remove` refuses to delete a worktree with uncommitted or untracked
+changes; check them before adding `--force`. `git worktree list` shows what is left;
+`git worktree prune` clears entries whose directory is already gone.
+
 ## Reminder: One Issue Per Branch
 
-Solve **one issue only** per branch and PR. Do not combine multiple issues. Do not refactor unrelated code.
+Solve **one issue only** per branch, worktree and PR. Do not combine multiple issues. Do not refactor unrelated code.

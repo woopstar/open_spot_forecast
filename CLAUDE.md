@@ -11,7 +11,9 @@ please refer to `AGENTS.md`.
 1. **Read AGENTS.md first** — Understand the project's constraints, security rules, and Home
    Assistant compliance requirements
 2. **Verify Python 3.14** — Ensure you're using Python 3.14 (see `.python-version`)
-3. **Create a feature branch** — Use format: `feat/<issue-number>-<description>`
+3. **Create a worktree and feature branch** — Never switch the shared checkout at
+   `/workspaces/osf` (see [Shared Checkout](#shared-checkout-use-a-worktree)). Branch
+   format: `feat/<issue-number>-<description>`
 4. **Make focused changes** — Solve one issue at a time
 5. **Run quality checks** — `./scripts/quality.sh lint`, `./scripts/quality.sh typing`, `./scripts/quality.sh quality`, `./scripts/quality.sh test`
 6. **Submit PR for review** — Do not merge without explicit permission
@@ -129,14 +131,26 @@ activate the `osf-translation-sync` skill and run `./scripts/quality.sh translat
 missing/stale/placeholder-mismatch keys. This check is also enforced by CI
 (`lint-and-test.yml`) and by `./scripts/quality.sh all`.
 
+## Shared Checkout: Use a Worktree
+
+`/workspaces/osf` is shared: several agent sessions and the user work in the same
+devcontainer at the same time. **Never run `git checkout`, `git switch`, `git pull`,
+`git rebase`, `git reset` or `git stash` there** — it moves the branch, index and
+files under every other session. Each task gets its own git worktree under
+`/workspaces/worktrees/`, created from `origin/main` by the `osf-pre-flight` skill,
+and all work, quality gates, commits and PR steps run from that worktree. Remove the
+worktree after the PR merges (`osf-pr-workflow` → Merge Rules).
+
 ## Development Workflow
 
 ```bash
 # 1. Ensure you're on Python 3.14
 python --version  # Should show 3.14.x
 
-# 2. Create a feature branch
-git checkout -b feat/<issue-number>-<description>
+# 2. Create a worktree and feature branch from the latest main (never switch /workspaces/osf)
+git -C /workspaces/osf fetch origin
+git -C /workspaces/osf worktree add /workspaces/worktrees/osf-<issue-number> -b feat/<issue-number>-<description> origin/main
+cd /workspaces/worktrees/osf-<issue-number>
 
 # 3. Make your changes and write tests
 
@@ -160,6 +174,10 @@ git push origin feat/<issue-number>-<description>
 
 # 11. Create the PR with the `gh` CLI, passing the body via --body-file:
 #     gh pr create --base main --title "feat(scope): ..." --body-file pr.md
+
+# 12. After the merge, remove the worktree from the shared checkout
+#     cd /workspaces/osf && git worktree remove /workspaces/worktrees/osf-<issue-number>
+#     git branch -D feat/<issue-number>-<description>
 ```
 
 > **GitHub operations: use the `gh` CLI.** It is installed and authenticated in the
