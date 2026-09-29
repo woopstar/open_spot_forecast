@@ -228,6 +228,24 @@ explicitly instructs otherwise.
 
 All code changes MUST start from a dedicated branch following the naming convention above.
 
+### Shared Checkout — One Worktree per Session
+
+The main checkout at `/workspaces/osf` is **shared between concurrent agent sessions**
+(and the user) in the same devcontainer. An agent MUST NOT switch or rewrite it: no
+`git checkout`, `git switch`, `git pull`, `git rebase`, `git reset` or `git stash` in
+`/workspaces/osf`. Every task runs in its own linked worktree:
+
+```bash
+git -C /workspaces/osf fetch origin
+git -C /workspaces/osf worktree add /workspaces/worktrees/osf-<issue-number> -b <type>/<issue-number>-<slug> origin/main
+```
+
+All edits, quality gates (`./scripts/quality.sh` keeps its caches separate per
+worktree), commits, pushes and PR commands run from that worktree. After the PR is
+merged, remove it from the shared checkout
+(`git worktree remove /workspaces/worktrees/osf-<issue-number>` and
+`git branch -D <branch>`). See the `osf-pre-flight` and `osf-pr-workflow` skills.
+
 The agent must NEVER push directly to the default branch and NEVER merge directly without explicit
 user permission.
 

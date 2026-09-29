@@ -30,6 +30,25 @@ Or run all at once:
 
 Verify: `git --no-optional-locks status` shows only intended changes.
 
+## Pre-Commit Sanity Check (Worktree)
+
+Work happens in a dedicated worktree (see `osf-pre-flight`), never in the shared
+`/workspaces/osf` checkout. Before every commit, confirm the branch was not moved
+under you:
+
+```bash
+git rev-parse --show-toplevel          # your worktree, not /workspaces/osf
+git branch --show-current              # your <type>/<issue>-<slug> branch
+git fetch origin
+git merge-base --is-ancestor origin/main HEAD && echo "based on origin/main" || echo "behind origin/main"
+git --no-pager reflog -5               # only your own commits/checkouts
+```
+
+"behind origin/main" just means main moved on since you branched; that is fine
+unless the PR conflicts. A reflog entry you did not make (e.g. `rebase (start)` or a
+`checkout` you never ran) means another process touched the branch: stop and check
+the diff (`git diff origin/main...HEAD`) before committing.
+
 ## Translation Sync
 
 Before opening a PR, run the `osf-translation-sync` skill if any user-facing
@@ -155,7 +174,23 @@ Before merging ANY PR:
 
 **Never merge without explicit user permission.**
 
-After merge, delete the branch locally and remotely.
+After merge, delete the branch locally and remotely, and remove the task's worktree
+(from the shared checkout, never from inside the worktree being removed):
+
+```bash
+gh pr merge <n> --squash --delete-branch   # deletes the remote branch
+cd /workspaces/osf
+git worktree remove /workspaces/worktrees/osf-<issue-number>
+git branch -D <type>/<issue-number>-<slug>
+git fetch --prune origin
+```
+
+Run `gh pr merge` from the worktree. `gh` (2.101+) is worktree-aware: from a
+linked worktree, `--delete-branch` deletes the remote branch, skips the local one and
+prints the `git worktree remove ... && git branch -D ...` cleanup above; it does not
+touch `/workspaces/osf`. Run from a different directory, it removes the branch's
+worktree itself, which fails if the worktree has untracked files (e.g. a PR body file)
+and then leaves the local branch; finish with the commands above.
 
 ## PR Review Request
 

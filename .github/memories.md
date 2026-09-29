@@ -386,3 +386,12 @@ The `gh` CLI is installed and authenticated in the devcontainer (`/usr/bin/gh`).
 GitHub API operations (PRs, issues, reviews, branches, releases). GitHub MCP tools are not
 present in every session — never assume they exist. Prefer `rtk gh ...` to cut output
 tokens. Pass multiline bodies via `--body-file`, never as an inline shell argument.
+
+## Shared Checkout — One Worktree per Session (#55)
+
+`/workspaces/osf` is shared by concurrent agent sessions and the user. Never run
+`git checkout` / `switch` / `pull` / `rebase` / `reset` / `stash` there. Each task runs in
+its own worktree, `git worktree add /workspaces/worktrees/osf-<issue> -b <branch>
+origin/main` (the `osf-worktrees` volume), and is removed after the merge
+(`git worktree remove`, `git branch -D`). `scripts/quality.sh` namespaces the mypy, ruff
+and pytest caches per worktree path. Procedure: `osf-pre-flight`, `osf-pr-workflow`.
