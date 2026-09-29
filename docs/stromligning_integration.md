@@ -247,20 +247,25 @@ automation:
 
 ```yaml
 type: custom:apexcharts-card
-graph_span: 7d
+graph_span: 3d
 header:
+  show: true
   title: Spot Price Forecast (incl. VAT, excl. tariffs)
 series:
-  - entity: sensor.open_spot_forecast_ml_prediction
-    type: line
+  - entity: sensor.open_spot_forecast_dk1_price_forecast_ml
     name: Predicted Cost
+    curve: stepline
+    extend_to: false
     data_generator: |
-      return entity.attributes.predictions.map(p => {
-        return [new Date(p.timestamp).getTime(), p.predicted_price];
-      });
+      return entity.attributes.predictions.map((p) => [
+        new Date(p.start).getTime(),
+        p.price,
+      ]);
 ```
 
-**Result**: Shows the forecast spot price incl. VAT per kWh
+**Result**: Shows the forecast spot price incl. VAT per kWh (detailed
+attribute format). More cards, for the compact format and predicted vs
+actual: [QUICKSTART.md → Dashboard](../QUICKSTART.md#dashboard).
 
 ## Troubleshooting
 
