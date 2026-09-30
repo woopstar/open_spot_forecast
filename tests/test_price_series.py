@@ -13,10 +13,10 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast import async_setup_entry
 from custom_components.open_spot_forecast.const import (
+    CONF_CONSUMER_PRICE_SENSOR,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
     CONF_SPOT_PRICE_SENSOR,
-    CONF_STROMLIGNING_SENSOR,
     CONF_TEMPERATURE_SENSOR,
     DOMAIN,
 )
@@ -164,7 +164,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
     entry.data = {
         CONF_REGION: "DK1",
         CONF_ENABLE_ML_PREDICTION: True,
-        CONF_STROMLIGNING_SENSOR: "sensor.strom",
+        CONF_CONSUMER_PRICE_SENSOR: "sensor.strom",
         CONF_SPOT_PRICE_SENSOR: "sensor.spot",
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }

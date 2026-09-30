@@ -19,9 +19,9 @@ from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast import async_setup_entry
 from custom_components.open_spot_forecast.const import (
+    CONF_CONSUMER_PRICE_SENSOR,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
-    CONF_STROMLIGNING_SENSOR,
     CONF_TEMPERATURE_SENSOR,
 )
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
@@ -32,6 +32,8 @@ from custom_components.open_spot_forecast.time_slots import (
 )
 
 CPH = ZoneInfo("Europe/Copenhagen")
+# The default consumer tomorrow sensor (#107), before tomorrow is published
+NO_TOMORROW = {"tomorrow": [], "raw_tomorrow": [], "available": False}
 SPRING = date(2026, 3, 29)
 AUTUMN = date(2026, 10, 25)
 ML_DIR = Path(__file__).parents[1] / "custom_components" / "open_spot_forecast" / "ml"
@@ -193,7 +195,7 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
     entry.data = {
         CONF_REGION: "DK1",
         CONF_ENABLE_ML_PREDICTION: True,
-        CONF_STROMLIGNING_SENSOR: "sensor.stromligning_current_price_vat",
+        CONF_CONSUMER_PRICE_SENSOR: "sensor.stromligning_current_price_ex_vat",
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }
     reader = Mock()
@@ -204,6 +206,7 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
         "raw_today": [],
         "raw_tomorrow": [],
     }
+    reader.read_stromligning_tomorrow_sensor.return_value = NO_TOMORROW
     reader.read_spot_prices.return_value = {
         "today": today,
         "tomorrow": [],

@@ -179,10 +179,10 @@ async def test_learning_metrics_handle_update_invalidates_cache():
 
 
 def test_spot_price_native_value_stromligning():
-    """Stromligning current price is used directly (already incl. VAT)."""
+    """Stromligning's consumer price is read excl. VAT; OSF adds VAT once (#107)."""
     api_data = {"stromligning_data": {"current_price": 100.0}}
     sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
-    assert sensor.native_value == pytest.approx(100.0)
+    assert sensor.native_value == pytest.approx(100.0 * (1 + VAT))
 
 
 @pytest.mark.usefixtures("copenhagen_time_zone")
@@ -251,9 +251,11 @@ def test_spot_price_attributes_stromligning():
     assert attrs["currency"] == "DKK"
     assert attrs["vat"] == 0.25
     assert attrs["last_update"] == "2026-09-22T00:00:00"
-    assert attrs["today_prices"] == [1.0, 2.0]
-    assert attrs["tomorrow_prices"] == [3.0]
+    assert attrs["today_prices"] == pytest.approx([1.25, 2.5])
+    assert attrs["tomorrow_prices"] == pytest.approx([3.75])
     assert attrs["price_source"] == "stromligning"
+    assert attrs["includes_vat"] is True
+    assert attrs["includes_tariffs"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -285,7 +287,7 @@ PRICE_STAT_SENSORS = [
 
 @pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)
 def test_price_stat_native_value_stromligning(cls, list_key, reducer):
-    """Stromligning list prices drive the aggregate directly."""
+    """Stromligning's consumer prices (excl. VAT) drive the aggregate, plus VAT."""
     prices = [10.0, 20.0, 30.0]
     sensor = cls(
         _hass(),
@@ -294,7 +296,9 @@ def test_price_stat_native_value_stromligning(cls, list_key, reducer):
         "DKK",
         OUTPUT,
     )
-    assert sensor.native_value == pytest.approx(round(reducer(prices), PRECISION))
+    assert sensor.native_value == pytest.approx(
+        round(reducer(prices) * (1 + VAT), PRECISION)
+    )
 
 
 @pytest.mark.parametrize("cls, list_key, reducer", PRICE_STAT_SENSORS)

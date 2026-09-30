@@ -11,7 +11,7 @@ actual prices and continuously improves accuracy via per-slot bias correction.
 
 | Source                                      | Type                             | Used for                                         |
 | ------------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `sensor.stromligning_current_price_vat`     | Confirmed consumer prices        | Displayed prices (all-in)                        |
+| `sensor.stromligning_current_price_ex_vat`  | Consumer price excl. VAT         | Displayed prices; minus spot: the tariffs (#107) |
 | `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction  |
 | `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                      |
 | `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud               |
@@ -90,12 +90,17 @@ Every price an entity exposes is computed in one place, `PriceOutput`
 | `precision`      | 3       | Decimals every exposed price is rounded to                                |
 | `hourly_average` | false   | Mean of each local hour's four 15-min prices, for hourly-billed contracts |
 
-- **Spot-based prices** (the day-ahead source's prices and the ML forecast):
-  `total = (spot + surcharge) × (1 + VAT)`, in the configured unit
-  (`apply_price_components()`). `api_data["prices_today"/"prices_tomorrow"]`
-  hold the day-ahead source's raw spot prices; the sensors convert them.
-- **All-in prices** (Stromligning's consumer prices, which already include
-  tariffs, VAT and the supplier's surcharge): only converted to the unit.
+- **Every price** is read excl. VAT and exposed as
+  `total = (price + surcharge) × (1 + VAT)`, in the configured unit
+  (`apply_price_components()`): Stromligning's consumer price, the day-ahead
+  source's spot price and the ML forecast alike. `api_data["prices_today"/
+"prices_tomorrow"]` hold the source's prices excl. VAT; the sensors convert
+  them. VAT comes from the `vat` option only, never from the source.
+- **Tariffs** (#107): a forecast slot's price is the predicted spot price
+  plus the slot's tariff, Stromligning's consumer price minus its spot price
+  (both excl. VAT, see [Tariffs](#tariffs)). So the forecast is on the same
+  footing as the displayed consumer price. Stromligning's consumer price
+  already holds the supplier's surcharge: keep `surcharge` at 0 with it.
 - **`hourly_average`**: the current price is the current local hour's mean;
   today's/tomorrow's price lists hold one value per local hour (23/24/25 on
   DST days) and min/max/mean are taken over those; the forecast attribute has
@@ -106,6 +111,31 @@ Every price an entity exposes is computed in one place, `PriceOutput`
 Statistics are taken over the raw series, then converted: the conversion is
 affine and increasing, so this equals converting first. The options flow has
 no update listener: option changes apply after the integration reloads.
+
+### Tariffs
+
+`TariffSchedule` (`tariffs.py`, #107) is built with the spot prices
+(`ForecastUpdater.read_spot_prices()`, `api_data["tariffs"]`) from the
+consumer and spot prices already read:
+
+- A slot's tariff is `consumer − spot`, for every slot of today and tomorrow
+  where both are known (keyed by UTC slot start). That is every non-spot
+  component: supplier surcharge, electricity tax, Energinet's net and system
+  tariffs and the grid company's time-of-use tariff. Stromligning's separate
+  tariff sensors report only the current value, and its distribution sensor
+  has no tomorrow, so they are not read.
+- A slot past the published prices takes the latest known day's tariff at
+  the same local time of day (tariffs follow a fixed daily schedule, and the
+  latest day already has e.g. the winter tariffs from 1 October); a time of
+  day never seen (a skipped DST hour) takes the latest earlier one.
+- Without consumer prices (no sensor, or the `dayahead` source) the schedule
+  is empty: the tariff is 0 and `includes_tariffs` is false.
+
+`PriceOutput.forecast()` adds the tariff per slot, before the hourly mean,
+for the forecast sensor (state, `predictions`, `forecast_min/max/mean`) and
+the `get_forecast` action; `evaluation()` adds it to both the predicted and
+the actual price, so the error stays the spot price's. The model, the stored
+predictions, the error metrics and the bias correction never see a tariff.
 
 ## Forecast Attributes
 
@@ -169,7 +199,8 @@ entries. Predictions that start before the end of the confirmed prices (an
 older forecast) are dropped, so no slot appears twice and there is no gap at
 the boundary; a slot missing in the source stays missing. Confirmed prices go
 through the same `PriceOutput` as the predictions, so both are
-`(spot + surcharge) × (1 + VAT)`. The sensor's state stays the model's
+`(spot + tariff + surcharge) × (1 + VAT)`: a confirmed slot's tariff is its
+own, so it equals the displayed consumer price (#107). The sensor's state stays the model's
 prediction. The `today`/`tomorrow` lists are placed on their local day by the
 spot data's `day`, so the series is right in the first second after midnight
 too.

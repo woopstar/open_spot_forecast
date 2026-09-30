@@ -3,8 +3,8 @@
 Entity attributes are capped by Home Assistant's 16 KB limit, so the sensor
 shows at most 72 hours of the 7-day forecast. The action returns the whole
 forecast, or a window of it, as response data. Prices are converted exactly
-as the sensor converts them (``PriceOutput``: unit, surcharge, VAT, hourly
-mean), so both always agree.
+as the sensor converts them (``PriceOutput``: tariffs, unit, surcharge, VAT,
+hourly mean), so both always agree.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ from .const import CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES, DOMA
 from .price_output import PriceOutput
 from .price_source import PriceSettings
 from .spot_prices import known_until, with_known_prices
+from .tariffs import TariffSchedule
 from .time_slots import floor_to_slot, parse_utc
 
 SERVICE_GET_FORECAST = "get_forecast"
@@ -65,6 +66,7 @@ def forecast_response(
     known_until: datetime | None,
     start: datetime,
     hours: int | None = None,
+    tariffs: TariffSchedule | None = None,
 ) -> dict[str, Any]:
     """Build the action's response from the model's predictions.
 
@@ -75,6 +77,7 @@ def forecast_response(
         known_until: End of the last confirmed price slot, if any.
         start: First interval to return: the one containing this moment.
         hours: Length of the window in hours from that interval; all if None.
+        tariffs: Each slot's tariff, added to its price (#107).
 
     Returns:
         ``known_until`` (ISO, local time, or None), ``unit``,
@@ -84,7 +87,7 @@ def forecast_response(
     first = floor_to_slot(start, output.interval_minutes)
     last = first + timedelta(hours=hours) if hours is not None else None
     forecast = []
-    for entry in output.forecast(predictions):
+    for entry in output.forecast(predictions, tariffs):
         # Entries start on interval boundaries (slots, or hours if hourly)
         entry_start = parse_utc(entry["start"])
         if entry_start is None or entry_start < first:
@@ -123,6 +126,7 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     start = call.data.get(ATTR_START)
     start = dt_util.as_utc(start) if start is not None else dt_util.utcnow()
     spot_data = api_data.get("spot_data")
+    tariffs = api_data.get("tariffs")
     predictions = ml_predictor.predictions
     include_known = call.data.get(
         ATTR_INCLUDE_KNOWN,
@@ -138,10 +142,13 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
         known_until(spot_data),
         start,
         call.data.get(ATTR_HOURS),
+        tariffs,
     )
     if call.data[ATTR_EVALUATION]:
         # Every kept slot's day-ahead prediction next to its actual price (#36)
-        response["evaluation"] = settings.output.evaluation(ml_predictor.evaluation)
+        response["evaluation"] = settings.output.evaluation(
+            ml_predictor.evaluation, tariffs
+        )
     return response
 
 

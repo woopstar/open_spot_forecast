@@ -19,9 +19,11 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.const import (
+    CONF_CONSUMER_PRICE_SENSOR,
     CONF_SPOT_PRICE_SENSOR,
-    CONF_STROMLIGNING_SENSOR,
     CONF_TEMPERATURE_SENSOR,
+    DEFAULT_CONSUMER_PRICE_SENSOR,
+    DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     UPDATE_SIGNAL,
@@ -219,11 +221,11 @@ def _signals(harness: Harness) -> list[str]:
 def test_sensor_entities_prefer_options_over_data() -> None:
     entry = MagicMock()
     entry.data = {
-        CONF_STROMLIGNING_SENSOR: "sensor.strom_data",
+        CONF_CONSUMER_PRICE_SENSOR: "sensor.strom_data",
         CONF_TEMPERATURE_SENSOR: "sensor.temp",
     }
     entry.options = {
-        CONF_STROMLIGNING_SENSOR: "sensor.strom_options",
+        CONF_CONSUMER_PRICE_SENSOR: "sensor.strom_options",
         CONF_SPOT_PRICE_SENSOR: "sensor.spot_options",
     }
 
@@ -253,7 +255,9 @@ def test_sensor_entities_defaults_without_configuration() -> None:
     sensors = SensorEntities.from_entry(entry)
 
     assert sensors.spot_price == DEFAULT_SPOT_PRICE_SENSOR
-    assert sensors.stromligning is None
+    # Stromligning's consumer price excl. VAT, read by default (#107)
+    assert sensors.stromligning == DEFAULT_CONSUMER_PRICE_SENSOR
+    assert sensors.stromligning_tomorrow == DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR
     assert sensors.has_weather is False
 
 

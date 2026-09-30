@@ -26,9 +26,16 @@ CONF_SOLAR_POWER_SENSOR = "solar_power_sensor"
 CONF_SOLAR_FORECAST_SENSOR = "solar_forecast_sensor"
 CONF_TEMPERATURE_SENSOR = "temperature_sensor"
 
-# Stromligning sensor configuration
-CONF_STROMLIGNING_SENSOR = "stromligning_sensor"
-CONF_STROMLIGNING_TOMORROW_SENSOR = "stromligning_tomorrow_sensor"
+# Stromligning's consumer price excl. VAT (#107): spot price plus surcharge,
+# electricity tax and tariffs. Displayed with OSF's VAT; minus the spot price it
+# is each slot's tariff, added to the forecast. New keys: a stored incl.-VAT
+# entity must never be read as excl. VAT
+CONF_CONSUMER_PRICE_SENSOR = "consumer_price_sensor"
+CONF_CONSUMER_PRICE_TOMORROW_SENSOR = "consumer_price_tomorrow_sensor"
+DEFAULT_CONSUMER_PRICE_SENSOR = "sensor.stromligning_current_price_ex_vat"
+DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR = (
+    "binary_sensor.stromligning_tomorrow_available_ex_vat"
+)
 
 # Where prices come from (#27): Stromligning's sensors (DK1/DK2 only), or the
 # day-ahead auction prices from energy-charts.info, with the ENTSO-E

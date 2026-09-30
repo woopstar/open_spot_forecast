@@ -1,16 +1,18 @@
 """What the user pays: the one transformation of every exposed price (#39).
 
 The model predicts, and the day-ahead source delivers, the raw spot price in
-currency/kWh excl. VAT and tariffs (#16). Every spot-based price an entity
-exposes goes through ``PriceOutput``, once:
+currency/kWh excl. VAT and tariffs (#16). Stromligning's consumer price is
+read excl. VAT too (#107). Every price an entity exposes goes through
+``PriceOutput``, once:
 
-    total = (spot + surcharge) × (1 + VAT)
+    total = (price + surcharge) × (1 + VAT)
 
 in the configured unit (kWh, MWh or Wh), with the surcharge in the currency
-per that unit. Stromligning's consumer prices already include tariffs, VAT
-and the supplier's surcharge ("all-in"), so they are only converted to the
-unit. With ``hourly_average`` every series is averaged per local hour first,
-for contracts billed by the hour.
+per that unit. A forecast slot's price is the predicted spot price plus the
+slot's tariff (``TariffSchedule``: Stromligning's consumer − spot price), so
+it is on the same footing as the displayed consumer price. With
+``hourly_average`` every series is averaged per local hour first, for
+contracts billed by the hour.
 
 Averaging, then converting, gives the same result as converting each price
 first: the conversion is affine and increasing, so it also keeps the order
@@ -37,6 +39,7 @@ from .const import (
     SOURCE_ACTUAL,
     SOURCE_PREDICTED,
 )
+from .tariffs import TariffSchedule
 from .time_slots import SLOT_MINUTES, floor_to_slot, parse_utc, slot_index_in_day
 
 HOUR_MINUTES = 60
@@ -88,6 +91,27 @@ def _predicted_slots(
         start = parse_utc(prediction.get("start"))
         if start is not None and prediction.get("price") is not None:
             yield start, prediction
+
+
+def with_tariffs(
+    predictions: Iterable[dict[str, Any]], tariffs: TariffSchedule | None
+) -> list[dict[str, Any]]:
+    """Return the predictions with each slot's tariff added to its price (#107).
+
+    Args:
+        predictions: Raw spot prices per slot (``start``, ``price``).
+        tariffs: The tariff schedule; None or empty adds nothing.
+
+    Returns:
+        Copies of the predictions that have a start and a price.
+    """
+    return [
+        {
+            **prediction,
+            "price": prediction["price"] + (tariffs.at(start) if tariffs else 0.0),
+        }
+        for start, prediction in _predicted_slots(predictions)
+    ]
 
 
 def _with_source(
@@ -193,55 +217,45 @@ class PriceOutput:
         """Return the unit of the exposed prices, e.g. ``DKK/kWh``."""
         return f"{currency}/{self.price_type}"
 
-    def convert(self, price: float, *, all_in: bool = False) -> float:
-        """Return the exposed value of one price given in currency/kWh.
+    def convert(self, price: float) -> float:
+        """Return the exposed value of one price given in currency/kWh excl. VAT.
 
         Args:
-            price: A raw spot price excl. VAT, or an all-in consumer price.
-            all_in: True if ``price`` already includes VAT and surcharges
-                (Stromligning): it is only converted to the unit.
+            price: A spot or consumer price excl. VAT.
 
         Returns:
-            The price in the configured unit, rounded to the precision.
+            ``(price + surcharge) × (1 + VAT)`` in the configured unit,
+            rounded to the precision.
         """
         per_unit = (
             price * PRICE_IN["kWh"] / PRICE_IN.get(self.price_type, PRICE_IN["kWh"])
         )
-        if not all_in:
-            per_unit = apply_price_components(per_unit, self.surcharge, self.vat)
+        per_unit = apply_price_components(per_unit, self.surcharge, self.vat)
         return float(round(per_unit, self.precision))
 
     def day_series(self, prices: Sequence[float | None]) -> list[float | None]:
         """Return a day's raw prices per exposed interval (per hour if hourly)."""
         return hourly_averages(prices) if self.hourly_average else list(prices)
 
-    def day_prices(
-        self, prices: Sequence[float | None], *, all_in: bool = False
-    ) -> list[float | None]:
+    def day_prices(self, prices: Sequence[float | None]) -> list[float | None]:
         """Return a day's prices as exposed: per interval, converted.
 
         Args:
             prices: One price per 15-min slot from local midnight (None if missing).
-            all_in: Whether the prices already include VAT (see ``convert``).
         """
         return [
-            None if price is None else self.convert(price, all_in=all_in)
+            None if price is None else self.convert(price)
             for price in self.day_series(prices)
         ]
 
     def price_at(
-        self,
-        prices: Sequence[float | None],
-        moment: datetime,
-        *,
-        all_in: bool = False,
+        self, prices: Sequence[float | None], moment: datetime
     ) -> float | None:
         """Return the exposed price of the interval containing ``moment``.
 
         Args:
             prices: The prices of ``moment``'s local day (see ``day_prices``).
             moment: Timezone-aware time within that day.
-            all_in: Whether the prices already include VAT (see ``convert``).
 
         Returns:
             The converted price of the slot, or of the hour's mean with
@@ -250,45 +264,69 @@ class PriceOutput:
         series = self.day_series(prices)
         index = slot_index_in_day(moment, interval_minutes=self.interval_minutes)
         price = series[index] if index < len(series) else None
-        return None if price is None else self.convert(price, all_in=all_in)
+        return None if price is None else self.convert(price)
 
     def forecast_series(
-        self, predictions: Iterable[dict[str, Any]]
+        self,
+        predictions: Iterable[dict[str, Any]],
+        tariffs: TariffSchedule | None = None,
     ) -> list[dict[str, Any]]:
-        """Return the raw forecast per exposed interval (see ``hourly_forecast``)."""
-        if self.hourly_average:
-            return hourly_forecast(predictions)
-        return slot_forecast(predictions)
+        """Return the forecast per exposed interval, tariffs added, not converted.
 
-    def forecast(self, predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+        The tariff is added per slot, before the hourly mean (see
+        ``hourly_forecast``).
+        """
+        slots = with_tariffs(predictions, tariffs)
+        if self.hourly_average:
+            return hourly_forecast(slots)
+        return slot_forecast(slots)
+
+    def forecast(
+        self,
+        predictions: Iterable[dict[str, Any]],
+        tariffs: TariffSchedule | None = None,
+    ) -> list[dict[str, Any]]:
         """Return the forecast as exposed: per interval, prices converted.
 
         Args:
             predictions: Model predictions (raw spot prices, see ``slot_forecast``).
+            tariffs: Each slot's tariff, added to its price (#107).
 
         Returns:
             ``{"start", "end", "price", "confidence"}`` entries.
         """
         return [
             {**entry, "price": self.convert(entry["price"])}
-            for entry in self.forecast_series(predictions)
+            for entry in self.forecast_series(predictions, tariffs)
         ]
 
-    def evaluation(self, rows: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    def evaluation(
+        self,
+        rows: Iterable[dict[str, Any]],
+        tariffs: TariffSchedule | None = None,
+    ) -> list[dict[str, Any]]:
         """Return evaluated slots (#36) with both prices converted.
+
+        The slot's tariff is added to both prices, so the errors stay those
+        of the spot price.
 
         Args:
             rows: ``{"start", "end", "predicted", "actual", "lead_hours"}``
                 per slot, prices raw spot (the predictor's ``evaluation``).
+            tariffs: Each slot's tariff (#107).
 
         Returns:
             The same entries, ``predicted`` and ``actual`` as exposed.
         """
-        return [
-            {
-                **row,
-                "predicted": self.convert(row["predicted"]),
-                "actual": self.convert(row["actual"]),
-            }
-            for row in rows
-        ]
+        converted = []
+        for row in rows:
+            start = parse_utc(row.get("start"))
+            tariff = tariffs.at(start) if tariffs and start is not None else 0.0
+            converted.append(
+                {
+                    **row,
+                    "predicted": self.convert(row["predicted"] + tariff),
+                    "actual": self.convert(row["actual"] + tariff),
+                }
+            )
+        return converted

@@ -77,8 +77,6 @@ def test_convert_applies_the_components_once_and_rounds() -> None:
 
     assert output.convert(1.0) == pytest.approx(1.375)
     assert output.convert(0.12345) == pytest.approx(0.279)
-    # Stromligning's all-in prices already include VAT and surcharges
-    assert output.convert(2.0, all_in=True) == pytest.approx(2.0)
 
 
 def test_defaults_add_only_vat() -> None:
@@ -324,7 +322,8 @@ def test_dayahead_price_sensors_apply_the_surcharge() -> None:
 
 @pytest.mark.usefixtures("copenhagen_time_zone")
 def test_hourly_price_sensors_use_hour_means() -> None:
-    """Stromligning's all-in prices get no surcharge or VAT, only the hour mean."""
+    """Stromligning's consumer prices (excl. VAT, #107) get the hour mean, then
+    the surcharge and VAT like every price."""
     output = PriceOutput(vat=0.25, surcharge=0.2, hourly_average=True)
     # Slot prices alternate 0/4 in the first hour, then 10 for the rest
     today = [0.0, 4.0, 0.0, 4.0] + [10.0] * 92
@@ -333,16 +332,17 @@ def test_hourly_price_sensors_use_hour_means() -> None:
     current = SpotPriceSensor(Mock(), _entry({}), api_data, "DK1", "DKK", output)
 
     with patch("homeassistant.util.dt.now", return_value=now):
-        assert current.native_value == pytest.approx(2.0)
+        assert current.native_value == pytest.approx((2.0 + 0.2) * 1.25)
     assert TodayMinSensor(Mock(), _entry({}), api_data, "DKK", output).native_value == (
-        pytest.approx(2.0)
+        pytest.approx((2.0 + 0.2) * 1.25)
     )
     assert TodayMaxSensor(Mock(), _entry({}), api_data, "DKK", output).native_value == (
-        pytest.approx(10.0)
+        pytest.approx((10.0 + 0.2) * 1.25)
     )
     mean = TodayMeanSensor(Mock(), _entry({}), api_data, "DKK", output)
-    assert mean.native_value == pytest.approx(round((2.0 + 23 * 10.0) / 24, 3))
+    hour_mean = (2.0 + 23 * 10.0) / 24
+    assert mean.native_value == pytest.approx(round((hour_mean + 0.2) * 1.25, 3))
     attrs = current.extra_state_attributes
     assert len(attrs["today_prices"]) == 24
     assert attrs["hourly_average"] is True
-    assert "surcharge" not in attrs
+    assert attrs["surcharge"] == pytest.approx(0.2)

@@ -60,8 +60,8 @@ If the new value becomes a model feature, you must also:
 
 | Source                       | Entity (example)                                       | Used for                            |
 | ---------------------------- | ------------------------------------------------------ | ----------------------------------- |
-| Stromligning (current price) | `sensor.stromligning_current_price_vat`                | Confirmed consumer prices (96/day)  |
-| Stromligning (tomorrow)      | `binary_sensor.stromligning_tomorrow_spotprice_vat`    | Tomorrow's price availability       |
+| Stromligning (consumer)      | `sensor.stromligning_current_price_ex_vat`             | Consumer price excl. VAT; tariffs   |
+| Stromligning (consumer tmrw) | `binary_sensor.stromligning_tomorrow_available_ex_vat` | Tomorrow's consumer price           |
 | Stromligning (spot, ML)      | `sensor.stromligning_spotprice_ex_vat`                 | Raw spot price excl. VAT: ML target |
 | Stromligning (spot tomorrow) | `binary_sensor.stromligning_tomorrow_spotprice_ex_vat` | Tomorrow's raw spot price (ML)      |
 | Met.no weather (state)       | `weather.forecast_*`                                   | Current wind/temp/humidity/cloud    |

@@ -242,8 +242,8 @@ def test_new_database_starts_at_the_spot_price_schema(tmp_path: Path) -> None:
         storage.close()
 
 
-def test_current_price_sensor_is_labelled_all_in() -> None:
-    """The displayed Stromligning price includes tariffs and VAT; the ML one does not."""
+def test_current_price_sensor_includes_tariffs_and_vat() -> None:
+    """Stromligning's consumer price is read excl. VAT, tariffs included (#107)."""
     sensor = SpotPriceSensor(
         MagicMock(),
         MagicMock(entry_id="test"),
@@ -255,6 +255,6 @@ def test_current_price_sensor_is_labelled_all_in() -> None:
 
     attrs = sensor.extra_state_attributes
 
-    assert sensor.native_value == pytest.approx(2.45)
+    assert sensor.native_value == pytest.approx(2.45 * (1 + VAT))
     assert attrs["includes_vat"] is True
     assert attrs["includes_tariffs"] is True
