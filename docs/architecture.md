@@ -131,13 +131,19 @@ The `Price Forecast (ML)` sensor's `predictions` attribute holds the next
   confidence in percent (like the Prediction Confidence sensor). About 20
   bytes per slot, so up to 168 hours fit.
 
-Home Assistant's recorder does not store a state's attributes when their
-JSON exceeds 16 KB (`RECORDER_MAX_ATTRIBUTES_BYTES`); the state itself is
-still recorded. In the detailed layout that is the case beyond 24 hours of
-15-min slots. In the compact layout `fit_compact()` keeps the attributes
-within 15 KB (1 KB is left for the attributes Home Assistant adds) by
-dropping whole hours from the end, e.g. with MWh prices at 6 decimals. For
-the whole forecast without a size limit use the `get_forecast` action.
+Home Assistant's recorder does not store any of a state's attributes when
+their JSON exceeds 16 KB (`RECORDER_MAX_ATTRIBUTES_BYTES`), and logs a
+warning on every state write. The `predictions` attribute is therefore
+excluded from the recorder (`_unrecorded_attributes`, #103): it is in the
+live state for dashboards and automations, the sensor's state and its
+other attributes are recorded, and the window is not shortened (the
+detailed layout passes 16 KB beyond about 32 hours of 15-min slots). In
+the compact layout `fit_compact()` still keeps the attributes within
+15 KB (1 KB is left for the attributes Home Assistant adds) by dropping
+whole hours from the end, e.g. with MWh prices at 6 decimals: the live
+state has a size limit too. `hourly_metrics` of the Learning Metrics
+sensor (96 slots of metrics) is excluded the same way. For the whole
+forecast without a size limit use the `get_forecast` action.
 
 An ApexCharts series over the compact layout:
 

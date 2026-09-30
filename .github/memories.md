@@ -32,7 +32,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `history_updater.py`     | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                               |
 | `price_source.py`        | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source              |
 | `services.py`            | `get_forecast` action (#37): registered in `async_setup`, whole forecast as response data via `PriceOutput`                                                |
-| `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (s/t/c arrays), `fit_compact()` (16 KB recorder limit)                       |
+| `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (s/t/c arrays), `fit_compact()` (16 KB limit)                                |
 | `price_output.py`        | `PriceOutput` — the one transformation of exposed prices: unit, `(spot + surcharge) × (1 + VAT)`, rounding, hourly averages (#39)                          |
 | `attribution.py`         | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                         |
 

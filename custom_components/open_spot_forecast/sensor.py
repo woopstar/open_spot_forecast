@@ -370,6 +370,10 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     _attr_has_entity_name = True
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_icon = "mdi:brain"
+    # The forecast series is live data for dashboards. The recorder drops
+    # every attribute of a state whose attributes exceed 16 KB, so the
+    # series is not recorded and the other attributes are (#103)
+    _unrecorded_attributes = frozenset({"predictions"})
 
     def __init__(
         self,
@@ -390,9 +394,9 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         self.compact = attribute_format == ATTRIBUTE_FORMAT_COMPACT
         self.include_known = include_known
 
-        # Cap the predictions exposed as attributes to the configured window
-        # to stay under HA's 16 KB limit: up to 72 hours in the detailed
-        # format, up to 168 in the compact one (#38)
+        # Cap the predictions exposed as attributes to the configured window:
+        # up to 72 hours in the detailed format, up to 168 in the compact
+        # one (#38). The recorder does not store them (#103)
         hours = int(prediction_hours)
         if not self.compact:
             hours = min(hours, DETAILED_MAX_PREDICTION_HOURS)
@@ -447,8 +451,7 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
                 if self.include_known
                 else forecast
             )
-            # Only surface the configured hourly window to stay under HA's
-            # 16 KB attribute limit
+            # The configured window (the detailed format is capped at 72 hours)
             window = series[: self._max_predictions]
             attrs["predictions"] = (
                 compact_forecast(window, unit, self.output.interval_minutes)
@@ -535,6 +538,9 @@ class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
 
     _attr_has_entity_name = True
     _attr_icon = "mdi:school"
+    # The per-slot metrics (96 slots) are live data too large to record
+    # with the rest (#103)
+    _unrecorded_attributes = frozenset({"hourly_metrics"})
 
     def __init__(self, hass, entry, api_data):
         self.hass = hass
