@@ -21,6 +21,8 @@ from homeassistant.helpers.selector import (
 from .const import (
     ATTRIBUTE_FORMATS,
     CONF_ATTRIBUTE_FORMAT,
+    CONF_CONSUMER_PRICE_SENSOR,
+    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
     CONF_CROSS_BORDER,
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
@@ -36,8 +38,6 @@ from .const import (
     CONF_SOLAR_POWER_SENSOR,
     CONF_SPOT_PRICE_SENSOR,
     CONF_SPOT_PRICE_TOMORROW_SENSOR,
-    CONF_STROMLIGNING_SENSOR,
-    CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_SURCHARGE,
     CONF_TEMPERATURE_SENSOR,
     CONF_TRAINING_DAYS,
@@ -45,6 +45,8 @@ from .const import (
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
     DEFAULT_ATTRIBUTE_FORMAT,
+    DEFAULT_CONSUMER_PRICE_SENSOR,
+    DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
     DEFAULT_CROSS_BORDER,
     DEFAULT_CURRENCY,
     DEFAULT_HOURLY_AVERAGE,
@@ -203,17 +205,16 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema(
             {
                 vol.Optional(
-                    CONF_STROMLIGNING_SENSOR,
+                    CONF_CONSUMER_PRICE_SENSOR,
                     default=self._data.get(
-                        CONF_STROMLIGNING_SENSOR,
-                        "sensor.stromligning_current_price_vat",
+                        CONF_CONSUMER_PRICE_SENSOR, DEFAULT_CONSUMER_PRICE_SENSOR
                     ),
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
-                    CONF_STROMLIGNING_TOMORROW_SENSOR,
+                    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
                     default=self._data.get(
-                        CONF_STROMLIGNING_TOMORROW_SENSOR,
-                        "binary_sensor.stromligning_tomorrow_spotprice_vat",
+                        CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
+                        DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(
@@ -285,7 +286,7 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
             errors=self._errors,
             description_placeholders={
-                "stromligning_info": "Real consumer prices with tariffs/VAT (recommended)",
+                "stromligning_info": "Consumer prices excl. VAT, with tariffs (recommended)",
                 "weather_info": "Improves ML prediction accuracy",
             },
         )
@@ -389,17 +390,22 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                     },
                 ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
                 vol.Optional(
-                    CONF_STROMLIGNING_SENSOR,
+                    CONF_CONSUMER_PRICE_SENSOR,
                     default=self.config_entry.options.get(
-                        CONF_STROMLIGNING_SENSOR,
-                        "sensor.stromligning_current_price_vat",
+                        CONF_CONSUMER_PRICE_SENSOR,
+                        self.config_entry.data.get(
+                            CONF_CONSUMER_PRICE_SENSOR, DEFAULT_CONSUMER_PRICE_SENSOR
+                        ),
                     ),
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
-                    CONF_STROMLIGNING_TOMORROW_SENSOR,
+                    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
                     default=self.config_entry.options.get(
-                        CONF_STROMLIGNING_TOMORROW_SENSOR,
-                        "binary_sensor.stromligning_tomorrow_spotprice_vat",
+                        CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
+                        self.config_entry.data.get(
+                            CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
+                            DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
+                        ),
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(

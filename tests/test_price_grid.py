@@ -29,6 +29,8 @@ from custom_components.open_spot_forecast.time_slots import (
 )
 
 CPH = ZoneInfo("Europe/Copenhagen")
+# The default consumer tomorrow sensor (#107), before tomorrow is published
+NO_TOMORROW = {"tomorrow": [], "raw_tomorrow": [], "available": False}
 DAY = date(2026, 9, 24)
 SPRING = date(2026, 3, 29)
 AUTUMN = date(2026, 10, 25)
@@ -162,7 +164,8 @@ def test_price_sensor_ignores_missing_slots() -> None:
     """Min/max/mean sensors are computed over the known prices only."""
     sensor = TodayMinSensor.__new__(TodayMinSensor)
     sensor.api_data = {"stromligning_data": {"today": [None, 2.0, 1.5, None]}}
-    sensor.output = PriceOutput(precision=2)
+    # Stromligning's prices are excl. VAT (#107); no VAT to test the minimum
+    sensor.output = PriceOutput(vat=0.0, precision=2)
 
     assert sensor.native_value == pytest.approx(1.5)
 
@@ -236,6 +239,7 @@ async def test_quarter_update_skips_a_missing_slot(
         "raw_today": [],
         "raw_tomorrow": [],
     }
+    reader.read_stromligning_tomorrow_sensor.return_value = NO_TOMORROW
     reader.read_spot_prices.return_value = {
         "today": today,
         "tomorrow": [],

@@ -137,7 +137,8 @@ It is exposed by the diagnostic `Forecast evaluation` sensor
 start, unix seconds), `t` (predicted) and `a` (actual), plus `samples`, `bias`
 (mean signed error; positive = too high), `lead_hours` and `window_hours`,
 about 5 KB. Prices are converted like every exposed price (unit, surcharge,
-VAT). The `get_forecast` action returns all kept slots with
+VAT), with the slot's tariff (#107) added to both the predicted and the
+actual price, so the error stays the spot price's. The `get_forecast` action returns all kept slots with
 `evaluation: true`. An ApexCharts card over the sensor:
 
 ```yaml

@@ -2,58 +2,76 @@
 
 ## Overview
 
-Open Spot Forecast reads two kinds of prices from the
-[Stromligning](https://github.com/MTrab/stromligning) integration, and never
-mixes them:
+Open Spot Forecast reads two prices per 15-minute slot from the
+[Stromligning](https://github.com/MTrab/stromligning) integration, both
+**excl. VAT**:
 
-| Value              | Contains                                               | Stromligning entities (defaults)                                                               | Used for                                                               |
-| ------------------ | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| **Consumer price** | Spot price + supplier surcharge + tariffs + taxes, VAT | `sensor.stromligning_current_price_vat`, `binary_sensor.stromligning_tomorrow_spotprice_vat`   | Display: current price and today/tomorrow min/max/mean sensors         |
-| **Raw spot price** | Day-ahead spot price only, excl. VAT                   | `sensor.stromligning_spotprice_ex_vat`, `binary_sensor.stromligning_tomorrow_spotprice_ex_vat` | The ML model: training target, self-learning actuals, prediction input |
+| Value              | Contains                                        | Stromligning entities (defaults)                                                                   | Used for                                                               |
+| ------------------ | ----------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Consumer price** | Spot price + supplier surcharge + tax + tariffs | `sensor.stromligning_current_price_ex_vat`, `binary_sensor.stromligning_tomorrow_available_ex_vat` | Display (current price, today/tomorrow min/max/mean) and the tariffs   |
+| **Raw spot price** | Day-ahead spot price only                       | `sensor.stromligning_spotprice_ex_vat`, `binary_sensor.stromligning_tomorrow_spotprice_ex_vat`     | The ML model: training target, self-learning actuals, prediction input |
+
+All four `_ex_vat` entities are **disabled by default** in Stromligning:
+enable them under Settings → Devices & services → Stromligning → Entities.
 
 **The ML model learns and predicts the raw spot price** (#16). Grid tariffs
 are time-of-use and change with the season; in a tariff-inclusive target every
 tariff change would look like market behaviour to the model and like a model
 error to the bias correction. The spot price is what the market sets.
 
-**VAT is applied once, at output.** The `Price Forecast (ML)` sensor shows the
-predicted spot price as `(spot + surcharge) × (1 + VAT)` (#39), in its state
-and in every price attribute (`predictions[].price`, `forecast_min/max/mean`).
-The surcharge is an option (default 0); tariffs and taxes are not added
-separately, so put your average tariffs in the surcharge if you want them in
-the forecast. Its attributes say so: `includes_vat: true`,
-`includes_tariffs: false`, `vat`, `surcharge`. The `Current Spot Price` sensor
-shows Stromligning's consumer price (`includes_vat: true`,
-`includes_tariffs: true`), despite its name: it already contains the
-supplier's surcharge, so the surcharge option is not added to it. See
+**The forecast adds each slot's tariff** (#107). For every slot of today and
+tomorrow, consumer minus spot price is everything else on the bill, excl.
+VAT. Example (DK1, one slot, DKK/kWh):
+
+| Part                              | Stromligning sensor        | excl. VAT |
+| --------------------------------- | -------------------------- | --------- |
+| Spot price                        | Spotprice                  | 0.26      |
+| Supplier surcharge                | Spotprice surcharge        | 0.012     |
+| Electricity tax                   | Electricity tax            | 0.01      |
+| Energinet net tariff              | Nettariff                  | 0.04      |
+| Energinet system tariff           | Systemtariff               | 0.07      |
+| Grid company tariff (time-of-use) | Provider transportexpenses | 0.10      |
+| **Consumer price** (tariff: 0.23) | **Current**                | **0.49**  |
+
+The `Price Forecast (ML)` sensor shows
+`(spot + tariff + surcharge) × (1 + VAT)` in its state and every price
+attribute (`predictions[].price`, `forecast_min/max/mean`), with
+`includes_tariffs: true`. Days past tomorrow repeat the latest known day's
+tariff at the same local time of day (`TariffSchedule`, `tariffs.py`), so a
+new tariff season (e.g. the winter tariffs from 1 October) is picked up as
+soon as its first day is published. The separate tariff sensors are not
+read: they only report the current value (and the distribution sensor has no
+tomorrow).
+
+**VAT is applied once, at output**, from OSF's VAT option: to the consumer
+prices and to the forecast alike (`(price + surcharge) × (1 + VAT)`, #39).
+The consumer price already holds the supplier's surcharge, so keep the
+**surcharge** option at 0 with Stromligning. See
 [Architecture → Price Output](architecture.md#price-output).
 
 Error metrics (learning metrics, forecast MAE/RMSE sensors, bias offsets) are
-in the model's unit: raw spot price excl. VAT, in currency/kWh.
-
-The tomorrow sensors: the consumer tomorrow sensor's default,
-`binary_sensor.stromligning_tomorrow_spotprice_vat`, holds tomorrow's **spot
-price incl. VAT**, so the tomorrow min/max/mean sensors show that by default.
-Choose `binary_sensor.stromligning_tomorrow_available_vat` to see tomorrow's
-consumer price instead. The ML model always reads the spot price sensors.
+in the model's unit: raw spot price excl. VAT, in currency/kWh. The
+`Forecast evaluation` sensor adds the slot's tariff to both its predicted and
+its actual price, so its error is still the spot price's.
 
 ## Configuration
 
-1. Install and configure Stromligning (region and electricity provider).
-2. In **Developer Tools → States**, find its entities. With the default
-   integration name they are `sensor.stromligning_current_price_vat`,
-   `binary_sensor.stromligning_tomorrow_spotprice_vat`,
+1. Install and configure Stromligning (region and electricity provider), and
+   enable its four `_ex_vat` price entities (see above).
+2. In **Developer Tools → States**, find them. With the default integration
+   name they are `sensor.stromligning_current_price_ex_vat`,
+   `binary_sensor.stromligning_tomorrow_available_ex_vat`,
    `sensor.stromligning_spotprice_ex_vat` and
    `binary_sensor.stromligning_tomorrow_spotprice_ex_vat`; another integration
    name changes the `stromligning_` prefix.
-3. Enter them in Open Spot Forecast's sensor step (or its options):
-   **Stromligning Sensor** and **Stromligning Tomorrow Sensor** (consumer
-   price), **Spot Price Sensor** and **Spot Price Tomorrow Sensor** (raw spot
-   price for the ML model). Existing installations use the spot defaults
-   above until they are changed in the options.
+3. Open Spot Forecast uses these as defaults. Change them in its sensor step
+   (or its options) if needed: **Consumer Price Sensor** and **Consumer
+   Price Tomorrow Sensor**, **Spot Price Sensor** and **Spot Price Tomorrow
+   Sensor**. Only choose `_ex_vat` entities: OSF adds VAT itself.
 
 If the spot price sensor has no prices, a warning is logged and the ML
-forecast has no input; consumer prices are never used in its place.
+forecast has no input; consumer prices are never used in its place. Without
+consumer prices the forecast has no tariffs (`includes_tariffs: false`).
 
 ## Upgrading from a Version That Trained on Consumer Prices
 
@@ -78,7 +96,7 @@ All reads go through `SensorReader` (`sensor_reader.py`):
 - `read_stromligning_sensor(entity_id)` and
   `read_stromligning_tomorrow_sensor(entity_id)` read a Stromligning price
   sensor's `prices` attribute (items with `price`, `start`, `end`) onto the
-  day's 15-minute grid (see below).
+  day's 15-minute grid (see below): the consumer price excl. VAT.
 - `read_spot_prices(entity_id, tomorrow_entity_id)` reads the two spot price
   sensors with the same parsing and returns `today`, `tomorrow`, `raw_today`
   and `raw_tomorrow`. Stromligning fills their `prices` attribute from each
@@ -136,7 +154,7 @@ The price source is chosen when the integration is set up (**Price source**,
 
 | Source                   | Regions            | Displayed price                         | The model's price                         |
 | ------------------------ | ------------------ | --------------------------------------- | ----------------------------------------- |
-| `stromligning` (default) | DK1, DK2           | Stromligning's consumer price (all-in)  | Stromligning's `spotprice_ex_vat` sensors |
+| `stromligning` (default) | DK1, DK2           | Consumer price + VAT; forecast + tariff | Stromligning's `spotprice_ex_vat` sensors |
 | `dayahead`               | All 13 OSF regions | Day-ahead spot price + VAT (no tariffs) | The same day-ahead spot price, excl. VAT  |
 
 The config flow rejects `stromligning` for a region outside Denmark
@@ -182,15 +200,15 @@ database, which is then opened for them alone.
 
 ## Comparison: Stromligning vs Day-Ahead Price
 
-| Feature                  | Stromligning        | Day-ahead price              |
-| ------------------------ | ------------------- | ---------------------------- |
-| **Price Type**           | Real consumer price | Spot price + VAT             |
-| **Includes Tariffs**     | ✅ Yes              | ❌ No                        |
-| **Includes VAT**         | ✅ Yes              | ✅ Yes (configured VAT rate) |
-| **Includes Fees**        | ✅ Yes              | ❌ No                        |
-| **Matches Bill**         | ✅ Yes              | ❌ No                        |
-| **Regions**              | DK1, DK2            | All OSF regions              |
-| **History for training** | Accumulates daily   | Backfilled (training window) |
+| Feature                  | Stromligning                 | Day-ahead price              |
+| ------------------------ | ---------------------------- | ---------------------------- |
+| **Price Type**           | Real consumer price          | Spot price + VAT             |
+| **Includes Tariffs**     | ✅ Yes (forecast too)        | ❌ No                        |
+| **Includes VAT**         | ✅ Yes (configured VAT rate) | ✅ Yes (configured VAT rate) |
+| **Includes Fees**        | ✅ Yes                       | ❌ No                        |
+| **Matches Bill**         | ✅ Yes                       | ❌ No                        |
+| **Regions**              | DK1, DK2                     | All OSF regions              |
+| **History for training** | Accumulates daily            | Backfilled (training window) |
 
 ## Example Use Cases
 
@@ -204,16 +222,16 @@ automation:
     condition:
       - condition: numeric_state
         entity_id: sensor.open_spot_forecast_ml_prediction
-        below: 1.00 # DKK/kWh: spot price incl. VAT, excl. tariffs
+        below: 2.00 # DKK/kWh: incl. tariffs and VAT, like your bill
     action:
       - service: switch.turn_on
         target:
           entity_id: switch.ev_charger
 ```
 
-**Result**: Charges when the forecast spot price (incl. VAT) is below 1.00
-DKK/kWh. The forecast excludes tariffs, so compare it with a spot-price
-threshold.
+**Result**: Charges when the forecast price is below 2.00 DKK/kWh. With
+Stromligning the forecast includes each slot's tariffs (#107), so compare it
+with what you pay; with the day-ahead source it is the spot price incl. VAT.
 
 ### 2. Dishwasher Scheduling
 
@@ -239,7 +257,8 @@ automation:
           entity_id: switch.dishwasher
 ```
 
-**Result**: Runs during the 3 cheapest hours of the forecast spot price
+**Result**: Runs during the 3 cheapest hours of the forecast price, tariffs
+included (the grid tariff's evening peak counts)
 
 ### 3. Price Forecast Dashboard
 
@@ -250,7 +269,7 @@ type: custom:apexcharts-card
 graph_span: 3d
 header:
   show: true
-  title: Spot Price Forecast (incl. VAT, excl. tariffs)
+  title: Price Forecast (incl. tariffs and VAT)
 series:
   - entity: sensor.open_spot_forecast_dk1_price_forecast_ml
     name: Predicted Cost
@@ -263,7 +282,7 @@ series:
       ]);
 ```
 
-**Result**: Shows the forecast spot price incl. VAT per kWh (detailed
+**Result**: Shows the forecast price incl. tariffs and VAT per kWh (detailed
 attribute format). More cards, for the compact format and predicted vs
 actual: [QUICKSTART.md → Dashboard](../QUICKSTART.md#dashboard).
 
@@ -271,13 +290,14 @@ actual: [QUICKSTART.md → Dashboard](../QUICKSTART.md#dashboard).
 
 ### Stromligning Sensor Not Found
 
-**Problem**: "Stromligning sensor sensor.stromligning_current_price_vat not found"
+**Problem**: "Stromligning sensor sensor.stromligning_current_price_ex_vat not found"
 
 **Solutions**:
 
 1. Verify Stromligning integration is installed
 2. Check entity ID in Developer Tools → States
-3. Ensure sensor is not disabled
+3. Ensure the sensor is enabled: Stromligning's `_ex_vat` entities are
+   disabled by default
 4. Restart Home Assistant
 
 ### Stromligning Has No Data
@@ -295,14 +315,20 @@ actual: [QUICKSTART.md → Dashboard](../QUICKSTART.md#dashboard).
 
 **Problem**: Prices are higher than expected
 
-**This is normal** for the consumer price sensors (current price, today and
-tomorrow min/max/mean), which show what you pay:
+**This is normal**: the consumer price sensors (current price, today and
+tomorrow min/max/mean) and the ML forecast show what you pay, tariffs and
+VAT included (see [Overview](#overview)):
 
-- Spot price: ~1.85 DKK/kWh
-- With tariffs/VAT: ~2.45 DKK/kWh
+- Spot price: ~0.33 DKK/kWh incl. VAT
+- With tariffs, tax and fees: ~0.62 DKK/kWh incl. VAT
 
-The ML forecast is lower: it is the spot price incl. VAT, without tariffs
-(see [Overview](#overview)).
+The grid company's tariff peaks from 17:00 to 21:00, so evening prices are
+much higher than the spot price alone.
+
+### Prices Are 25 % Too High
+
+The consumer or spot sensor is the `_vat` variant: OSF adds VAT itself.
+Choose the `_ex_vat` entities (see [Configuration](#configuration)).
 
 ## Migration from Nordpool
 
@@ -317,18 +343,19 @@ Nordpool Sensor: sensor.nordpool_kwh_dk1_dkk_3_10_025
 ### After (Stromligning)
 
 ```yaml
-Stromligning Sensor: sensor.stromligning_current_price_vat
+Consumer Price Sensor: sensor.stromligning_current_price_ex_vat
 ```
 
-**Result**: Real consumer prices (2.45 DKK/kWh = 2450 DKK/MWh)
+**Result**: Real consumer prices (0.62 DKK/kWh incl. VAT = 620 DKK/MWh)
 
 ### What Changes
 
 1. **Price Scale**: DKK/MWh → DKK/kWh (divide by 1000)
 2. **Price Value**: Spot → Real consumer (includes tariffs/VAT)
 3. **Display**: The current price sensors show what you pay
-4. **ML forecast**: Unchanged in kind: trained on and predicting the raw spot
-   price (Stromligning's spot price sensors), VAT added once
+4. **ML forecast**: trained on and predicting the raw spot price
+   (Stromligning's spot price sensors); each slot's tariff and VAT are added
+   once, at output
 
 ## Summary
 
@@ -336,7 +363,8 @@ Stromligning Sensor: sensor.stromligning_current_price_vat
 
 ✅ Real consumer prices (with tariffs/VAT) for display  
 ✅ The raw spot price the ML model learns and predicts  
-✅ Matches your electricity bill (consumer price sensors)  
+✅ Per-slot tariffs in the forecast  
+✅ Matches your electricity bill (consumer price sensors and forecast)  
 ✅ Better for automation decisions  
 ✅ Region-specific tariffs  
 ✅ Already configured in your system  

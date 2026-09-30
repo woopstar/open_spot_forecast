@@ -6,7 +6,8 @@ prediction made closest to ``EVALUATION_LEAD_HOURS`` before each slot next
 to the slot's actual price, as compact parallel arrays (see
 ``forecast_attributes``), so a dashboard can chart predicted against actual.
 Its state is the mean absolute error over that window. Prices are converted
-like every exposed price (``PriceOutput``: unit, surcharge, VAT).
+like every exposed price (``PriceOutput``: unit, surcharge, VAT), with the
+slot's tariff added to both (#107), so the error stays the spot price's.
 """
 
 from __future__ import annotations
@@ -77,7 +78,9 @@ class ForecastEvaluationSensor(ModelAttributionMixin, SensorEntity):
         since = dt_util.utcnow() - timedelta(hours=EVALUATION_WINDOW_HOURS)
         return [
             (start, row)
-            for row in self.output.evaluation(ml_predictor.evaluation)
+            for row in self.output.evaluation(
+                ml_predictor.evaluation, self.api_data.get("tariffs")
+            )
             if (start := parse_utc(row["start"])) is not None and start >= since
         ]
 

@@ -11,10 +11,10 @@ import pytest
 
 from custom_components.open_spot_forecast import async_setup_entry
 from custom_components.open_spot_forecast.const import (
+    CONF_CONSUMER_PRICE_SENSOR,
+    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
     CONF_ENABLE_ML_PREDICTION,
     CONF_REGION,
-    CONF_STROMLIGNING_SENSOR,
-    CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
@@ -315,8 +315,8 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
     entry.data = {
         CONF_REGION: "DK1",
         CONF_ENABLE_ML_PREDICTION: True,
-        CONF_STROMLIGNING_SENSOR: "sensor.stromligning_current_price_vat",
-        CONF_STROMLIGNING_TOMORROW_SENSOR: "binary_sensor.stromligning_tomorrow",
+        CONF_CONSUMER_PRICE_SENSOR: "sensor.stromligning_current_price_ex_vat",
+        CONF_CONSUMER_PRICE_TOMORROW_SENSOR: "binary_sensor.stromligning_tomorrow",
         CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
     }
 

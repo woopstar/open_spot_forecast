@@ -35,9 +35,12 @@ and continuously improves accuracy via per-slot bias correction.
   trained within minutes instead of weeks
 - **Real consumer prices** — Stromligning integration provides prices with
   tariffs, fees, and VAT (what you actually pay) for display
-- **Spot price forecast** — the model learns the raw day-ahead spot price
-  (Stromligning's spot price sensors) and the forecast adds your surcharge and
-  VAT once: `(spot + surcharge) × (1 + VAT)`; tariffs are not included
+- **Forecast of what you pay** — the model learns the raw day-ahead spot
+  price (Stromligning's spot price sensors); the forecast adds each slot's
+  tariffs (Stromligning's consumer minus spot price: grid tariffs, tax and
+  fees, time of day included), your surcharge and VAT once:
+  `(spot + tariff + surcharge) × (1 + VAT)`. With the day-ahead source there
+  are no tariffs
 - **Hourly prices** — optionally averages each hour's four 15-minute prices,
   for contracts billed by the hour
 
@@ -69,7 +72,7 @@ and continuously improves accuracy via per-slot bias correction.
 
 `open_spot_forecast.get_forecast` returns the whole forecast (up to 7 days,
 beyond the sensor's attribute window) as response data, with the same unit,
-surcharge and VAT as the forecast sensor:
+tariffs, surcharge and VAT as the forecast sensor:
 
 ```yaml
 action: open_spot_forecast.get_forecast

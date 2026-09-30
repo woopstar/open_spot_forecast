@@ -32,15 +32,17 @@ from .api.gas_prices import GasPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.time_series_source import TimeSeriesSource
 from .const import (
+    CONF_CONSUMER_PRICE_SENSOR,
+    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
     CONF_SPOT_PRICE_SENSOR,
     CONF_SPOT_PRICE_TOMORROW_SENSOR,
-    CONF_STROMLIGNING_SENSOR,
-    CONF_STROMLIGNING_TOMORROW_SENSOR,
     CONF_TEMPERATURE_SENSOR,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_WIND_SPEED_SENSOR,
+    DEFAULT_CONSUMER_PRICE_SENSOR,
+    DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
     DEFAULT_SPOT_PRICE_SENSOR,
     DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     ENTSOE_LOAD_REGIONS,
@@ -56,6 +58,7 @@ from .ml.storage import LearningStorage
 from .price_source import DayAheadPrices, PriceSettings
 from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
+from .tariffs import TariffSchedule
 from .time_slots import (
     floor_to_slot,
     local_midnight,
@@ -78,6 +81,7 @@ class SensorEntities:
     Options (reconfiguration) take precedence over the entry's initial data.
     """
 
+    # Stromligning's consumer price excl. VAT, today and tomorrow (#107)
     stromligning: str | None
     stromligning_tomorrow: str | None
     # Raw spot price excl. VAT and tariffs: what the ML model learns (#16)
@@ -98,8 +102,13 @@ class SensorEntities:
             return value
 
         return cls(
-            stromligning=option(CONF_STROMLIGNING_SENSOR),
-            stromligning_tomorrow=option(CONF_STROMLIGNING_TOMORROW_SENSOR),
+            stromligning=option(
+                CONF_CONSUMER_PRICE_SENSOR, DEFAULT_CONSUMER_PRICE_SENSOR
+            ),
+            stromligning_tomorrow=option(
+                CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
+                DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
+            ),
             spot_price=option(CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR),
             spot_price_tomorrow=option(
                 CONF_SPOT_PRICE_TOMORROW_SENSOR, DEFAULT_SPOT_PRICE_TOMORROW_SENSOR
@@ -241,6 +250,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
         if self.ml_predictor and self.dayahead is None:
             self.api_data["spot_data"] = self.sensor_reader.read_spot_prices(
                 self.sensors.spot_price, self.sensors.spot_price_tomorrow
+            )
+            # Consumer − spot per slot: the forecast's tariffs (#107)
+            self.api_data["tariffs"] = TariffSchedule.from_prices(
+                self.api_data.get("stromligning_data"), self.api_data["spot_data"]
             )
 
     def read_prices(self) -> bool:

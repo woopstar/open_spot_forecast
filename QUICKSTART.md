@@ -27,12 +27,20 @@ Works immediately with Nordpool public API:
 Go to integration options and add:
 
 ```yaml
-Stromligning Sensor: sensor.stromligning_current_price_vat
+Consumer Price Sensor: sensor.stromligning_current_price_ex_vat
+Consumer Price Tomorrow Sensor: binary_sensor.stromligning_tomorrow_available_ex_vat
+Spot Price Sensor: sensor.stromligning_spotprice_ex_vat
+Spot Price Tomorrow Sensor: binary_sensor.stromligning_tomorrow_spotprice_ex_vat
 ```
+
+These are the defaults. All four are **disabled by default in Stromligning**:
+enable them under Settings → Devices & services → Stromligning → Entities.
+Always use the `_ex_vat` entities: Open Spot Forecast adds VAT itself.
 
 **Why Stromligning?**
 
-- Real consumer prices (includes tariffs + VAT)
+- Real consumer prices (includes tariffs; VAT added by OSF)
+- The forecast includes each slot's tariffs too (consumer minus spot price)
 - What you actually pay on your electricity bill
 - Better for automation decisions
 
@@ -173,7 +181,7 @@ The examples below were tested on Home Assistant 2026.9 with
 [Plotly Graph Card](https://github.com/dbuezas/lovelace-plotly-graph-card)
 3.3.5 (both from HACS). Entity IDs contain the region: replace `dk1` with
 yours (check **Developer Tools** → **States**). Prices are the spot price with
-surcharge and VAT, without tariffs.
+each slot's tariffs (Stromligning source), surcharge and VAT.
 
 The forecast sensor's `predictions` attribute has two layouts, set by the
 option **Forecast attribute format**; use the card that matches it (a card for
@@ -452,9 +460,11 @@ Notes:
   local times.
 - `currency` must match the integration's currency, and the price unit must
   be kWh (evcc expects currency per kWh).
-- The prices include VAT and the integration's surcharge but no tariffs. Add
-  grid tariffs (incl. VAT) with evcc's `charges` or `chargesZones`, and leave
-  `tax` at 0: evcc applies `tax` to the whole price, which already has VAT.
+- With the Stromligning source the prices include the tariffs, VAT and the
+  integration's surcharge: leave evcc's `charges`, `chargesZones` and `tax`
+  at 0 (evcc applies `tax` to the whole price, which already has VAT). With
+  the day-ahead source add grid tariffs (incl. VAT) with `charges` or
+  `chargesZones`.
 - With several regions add `"config_entry_id": "<entry id>"` to `body`.
 - evcc reads the forecast hourly (`interval`, default `1h`).
 
@@ -540,7 +550,8 @@ training_samples: 720
 1. Check currency setting (DKK, EUR, SEK, NOK)
 2. Verify VAT rate is correct for your country
 3. Check price unit (kWh vs MWh)
-4. If using Stromligning: prices include tariffs/VAT (higher than spot)
+4. If using Stromligning: prices include tariffs/VAT (higher than spot); 25 %
+   too high means a `_vat` sensor is configured instead of `_ex_vat`
 5. Compare with official Nordpool data
 
 ## Tips & Best Practices

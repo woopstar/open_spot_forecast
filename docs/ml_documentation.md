@@ -603,16 +603,18 @@ spot price sensors (`read_spot_prices()`; see
 `price_history`, stored predictions, error metrics and bias offsets are all in
 that unit. Tariffs are time-of-use and seasonal; in the target they would be
 learned as if they were market behaviour. The consumer price (tariffs, fees
-and VAT included) is only displayed.
+and tax included) is never a model input.
 
-VAT is applied once, at output (#39): `PriceOutput` (`price_output.py`)
-turns every exposed spot-based price into `(spot + surcharge) × (1 + VAT)` in
-the configured unit, optionally averaged per local hour. The
+Tariffs and VAT are applied once, at output (#39, #107): `PriceOutput`
+(`price_output.py`) turns every exposed forecast price into
+`(spot + tariff + surcharge) × (1 + VAT)` in the configured unit, optionally
+averaged per local hour. The slot's tariff is Stromligning's consumer minus
+spot price (`TariffSchedule`, `tariffs.py`); 0 without consumer prices. The
 `Price Forecast (ML)` sensor applies it to its state and to every price
-attribute, and says so with `includes_vat: true`, `includes_tariffs: false`,
-`vat`, `surcharge` and `hourly_average`. The model, the stored predictions and
-the error metrics never see the surcharge or VAT. See
-[Architecture → Price Output](architecture.md#price-output).
+attribute, and says so with `includes_vat: true`, `includes_tariffs`, `vat`,
+`surcharge` and `hourly_average`. The model, the stored predictions, the
+error metrics and the bias correction never see a tariff, the surcharge or
+VAT. See [Architecture → Price Output](architecture.md#price-output).
 
 ## Negative Prices
 

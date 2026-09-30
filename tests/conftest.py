@@ -36,9 +36,9 @@ def setup_entry(
     """
     from custom_components.open_spot_forecast import async_setup_entry
     from custom_components.open_spot_forecast.const import (
+        CONF_CONSUMER_PRICE_SENSOR,
         CONF_ENABLE_ML_PREDICTION,
         CONF_REGION,
-        CONF_STROMLIGNING_SENSOR,
         CONF_TEMPERATURE_SENSOR,
         DOMAIN,
     )
@@ -89,7 +89,7 @@ def setup_entry(
             entry.data = {
                 CONF_REGION: "DK1",
                 CONF_ENABLE_ML_PREDICTION: True,
-                CONF_STROMLIGNING_SENSOR: "sensor.stromligning_current_price_vat",
+                CONF_CONSUMER_PRICE_SENSOR: "sensor.stromligning_current_price_ex_vat",
                 CONF_TEMPERATURE_SENSOR: "sensor.outdoor_temperature",
             }
             assert await async_setup_entry(hass, entry) is True

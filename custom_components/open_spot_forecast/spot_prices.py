@@ -4,12 +4,12 @@ The model trains on, learns from and predicts the day-ahead spot price excl.
 VAT and tariffs, in the configured currency per kWh: read by
 ``SensorReader.read_spot_prices()`` from Stromligning's spot sensors, or
 built from stored day-ahead prices (EUR/MWh, #27) by ``dayahead_spot_data()``.
-VAT is applied once, in the sensor layer. Stromligning's all-in consumer
-price (tariffs, fees and VAT included) is only displayed; the model never
-sees it.
+VAT is applied once, in the sensor layer. Stromligning's consumer price
+(tariffs, fees and tax included) is displayed and, minus the spot price,
+gives the forecast's tariffs (#107); the model never sees it.
 """
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -97,6 +97,32 @@ def known_until(spot_data: dict | None) -> datetime | None:
     return ml_price_inputs(spot_data)[1]
 
 
+def slot_prices(
+    data: dict | None,
+) -> Iterator[tuple[datetime, datetime, float]]:
+    """Yield ``(start, end, price)`` of every known slot of today and tomorrow.
+
+    Args:
+        data: ``read_spot_prices()``-shaped data; its ``day`` is the local
+            date of the ``today`` list (today if missing).
+
+    Yields:
+        Local slot start and end and the price, in time order; a slot
+        missing in the source (None) is skipped.
+    """
+    data = data or {}
+    day: date = data.get("day") or dt_util.now().date()
+    for offset, key in enumerate(("today", "tomorrow")):
+        list_day = day + timedelta(days=offset)
+        for index, price in enumerate(data.get(key) or []):
+            if price is not None:
+                yield (
+                    slot_start_in_day(list_day, index),
+                    slot_start_in_day(list_day, index + 1),
+                    price,
+                )
+
+
 def with_known_prices(
     spot_data: dict | None,
     predictions: Sequence[dict[str, Any]],
@@ -119,27 +145,22 @@ def with_known_prices(
         confirmed prices. A slot missing in the source stays missing.
     """
     first = floor_to_slot(since.astimezone(UTC))
-    data = spot_data or {}
-    day: date = data.get("day") or dt_util.now().date()
     actual: list[dict[str, Any]] = []
     # Where the predictions take over: the end of the last confirmed slot
     boundary = first
-    for offset, key in enumerate(("today", "tomorrow")):
-        list_day = day + timedelta(days=offset)
-        for index, price in enumerate(data.get(key) or []):
-            start = slot_start_in_day(list_day, index)
-            if price is None or start < first:
-                continue
-            boundary = slot_start_in_day(list_day, index + 1)
-            actual.append(
-                {
-                    "start": start.isoformat(),
-                    "end": boundary.isoformat(),
-                    "price": price,
-                    "confidence": 1.0,
-                    "source": SOURCE_ACTUAL,
-                }
-            )
+    for start, end, price in slot_prices(spot_data):
+        if start < first:
+            continue
+        boundary = end
+        actual.append(
+            {
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "price": price,
+                "confidence": 1.0,
+                "source": SOURCE_ACTUAL,
+            }
+        )
     predicted = [
         {**prediction, "source": SOURCE_PREDICTED}
         for prediction in predictions

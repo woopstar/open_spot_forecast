@@ -40,6 +40,7 @@ from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
 from .price_source import PriceSettings
 from .spot_prices import known_until, with_known_prices
+from .tariffs import TariffSchedule
 from .time_slots import SLOT_MINUTES, parse_utc
 
 _LOGGER = logging.getLogger(__name__)
@@ -78,24 +79,22 @@ def current_prediction(
     return first_future
 
 
-def source_day_prices(
-    api_data: dict[str, Any], day: str
-) -> tuple[list[float | None], bool]:
-    """Return a day's prices as the price source delivers them.
+def source_day_prices(api_data: dict[str, Any], day: str) -> list[float | None]:
+    """Return a day's prices excl. VAT as the price source delivers them.
 
     Args:
         api_data: Integration data.
         day: ``today`` or ``tomorrow``.
 
     Returns:
-        One price per 15-min slot from local midnight (None if missing), and
-        whether they are all-in: Stromligning's consumer prices already
-        include tariffs and VAT; the day-ahead spot prices (#27) do not.
+        One price per 15-min slot from local midnight (None if missing):
+        Stromligning's consumer price (tariffs included, #107) or the
+        day-ahead spot price (#27), both excl. VAT.
     """
     if api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
-        return list(api_data.get(f"prices_{day}") or []), False
+        return list(api_data.get(f"prices_{day}") or [])
     stromligning_data = api_data.get("stromligning_data") or {}
-    return list(stromligning_data.get(day) or []), True
+    return list(stromligning_data.get(day) or [])
 
 
 async def async_setup_entry(
@@ -205,20 +204,17 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
     def native_value(self) -> float | None:
         """Return the current price.
 
-        Stromligning's all-in consumer price, or the day-ahead spot price of
-        the current slot with the surcharge and VAT (#27, #39). With
+        Stromligning's consumer price or the day-ahead spot price of the
+        current slot, with the surcharge and VAT (#27, #39, #107). With
         ``hourly_average`` it is the current local hour's mean.
         """
         stromligning_data = self.api_data.get("stromligning_data") or {}
         dayahead = self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD
         if not dayahead and not self.output.hourly_average:
-            # Stromligning's state already includes tariffs and VAT
             current = stromligning_data.get("current_price")
-            return (
-                None if current is None else self.output.convert(current, all_in=True)
-            )
-        prices, all_in = source_day_prices(self.api_data, "today")
-        return self.output.price_at(prices, dt_util.now(), all_in=all_in)
+            return None if current is None else self.output.convert(current)
+        prices = source_day_prices(self.api_data, "today")
+        return self.output.price_at(prices, dt_util.now())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -234,23 +230,23 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
         # Today's and tomorrow's prices per slot (per hour with
         # hourly_average). The raw dict arrays (prices_15min / raw_today /
         # raw_tomorrow) are omitted: they push the payload past HA's 16 KB limit
-        today, all_in = source_day_prices(self.api_data, "today")
-        tomorrow, _ = source_day_prices(self.api_data, "tomorrow")
         if self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD:
             attrs["price_source"] = PRICE_SOURCE_DAYAHEAD
-            # The day-ahead spot price with surcharge and VAT; no tariffs
-            attrs["surcharge"] = self.output.surcharge
-            attrs["includes_vat"] = True
+            # The day-ahead spot price: no tariffs
             attrs["includes_tariffs"] = False
         elif self.api_data.get("stromligning_data"):
             attrs["price_source"] = "stromligning"
-            # The state is Stromligning's all-in consumer price
-            attrs["includes_vat"] = True
+            # Stromligning's consumer price: tariffs, tax and fees included
             attrs["includes_tariffs"] = True
         else:
             return attrs
-        attrs["today_prices"] = self.output.day_prices(today, all_in=all_in)
-        attrs["tomorrow_prices"] = self.output.day_prices(tomorrow, all_in=all_in)
+        # Every source excl. VAT, then (price + surcharge) × (1 + VAT) (#107)
+        attrs["surcharge"] = self.output.surcharge
+        attrs["includes_vat"] = True
+        for day in ("today", "tomorrow"):
+            attrs[f"{day}_prices"] = self.output.day_prices(
+                source_day_prices(self.api_data, day)
+            )
         return attrs
 
 
@@ -302,7 +298,7 @@ class DayPriceStatSensor(PriceAttributionMixin, SensorEntity):
 
     @property
     def native_value(self) -> float | None:
-        prices, all_in = source_day_prices(self.api_data, self._day)
+        prices = source_day_prices(self.api_data, self._day)
         known = known_prices(self.output.day_series(prices))
         if not known:
             return None
@@ -312,7 +308,7 @@ class DayPriceStatSensor(PriceAttributionMixin, SensorEntity):
             value = max(known)
         else:
             value = sum(known) / len(known)
-        return self.output.convert(value, all_in=all_in)
+        return self.output.convert(value)
 
 
 class TodayMinSensor(DayPriceStatSensor):
@@ -360,9 +356,10 @@ class TomorrowMeanSensor(DayPriceStatSensor):
 class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     """Sensor for ML-based price predictions (replaces Carnot).
 
-    The model predicts the raw spot price excl. VAT and tariffs (#16). The
-    surcharge and VAT are applied here, exactly once, by ``PriceOutput`` to
-    the state and to every price attribute (#39); tariffs are not included.
+    The model predicts the raw spot price excl. VAT and tariffs (#16). Each
+    slot's tariff (``api_data["tariffs"]``, #107), the surcharge and VAT are
+    added here, exactly once, by ``PriceOutput`` to the state and to every
+    price attribute (#39).
     With ``include_known`` the ``predictions`` attribute starts at the
     current slot with the confirmed spot prices, then the forecast (#40).
     """
@@ -424,7 +421,13 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         ml_predictor = self.api_data.get("ml_predictor")
         if not ml_predictor or not ml_predictor.predictions:
             return []
-        return self.output.forecast(ml_predictor.predictions)
+        return self.output.forecast(ml_predictor.predictions, self._tariffs)
+
+    @property
+    def _tariffs(self) -> TariffSchedule | None:
+        """Return the tariff schedule, None without one (#107)."""
+        tariffs: TariffSchedule | None = self.api_data.get("tariffs")
+        return tariffs
 
     @property
     def native_value(self) -> float | None:
@@ -446,7 +449,8 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             spot_data = self.api_data.get("spot_data")
             series = (
                 self.output.forecast(
-                    with_known_prices(spot_data, ml_predictor.predictions, now)
+                    with_known_prices(spot_data, ml_predictor.predictions, now),
+                    self._tariffs,
                 )
                 if self.include_known
                 else forecast
@@ -466,9 +470,9 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             attrs["known_until"] = (
                 dt_util.as_local(known_end).isoformat() if known_end else None
             )
-            # Every price above and below: (spot + surcharge) + VAT, no tariffs
+            # Every price above and below: (spot + tariff + surcharge) + VAT
             attrs["includes_vat"] = True
-            attrs["includes_tariffs"] = False
+            attrs["includes_tariffs"] = bool(self._tariffs)
             attrs["vat"] = self.output.vat
             attrs["surcharge"] = self.output.surcharge
             attrs["hourly_average"] = self.output.hourly_average
@@ -477,7 +481,9 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
                 # Over the whole forecast, per slot (or hour), converted once
                 prices = [
                     entry["price"]
-                    for entry in self.output.forecast_series(ml_predictor.predictions)
+                    for entry in self.output.forecast_series(
+                        ml_predictor.predictions, self._tariffs
+                    )
                 ]
                 if prices:
                     attrs["forecast_min"] = self.output.convert(min(prices))

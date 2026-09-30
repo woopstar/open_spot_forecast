@@ -52,8 +52,9 @@ def test_spot_price_attributes_omit_raw_arrays():
 
     attrs = sensor.extra_state_attributes
 
-    assert attrs["today_prices"] == [1.0, 2.0, 3.0]
-    assert attrs["tomorrow_prices"] == [4.0, 5.0]
+    # Excl. VAT from Stromligning (#107), VAT added once
+    assert attrs["today_prices"] == pytest.approx([1.25, 2.5, 3.75])
+    assert attrs["tomorrow_prices"] == pytest.approx([5.0, 6.25])
     assert attrs["price_source"] == "stromligning"
     assert "prices_15min" not in attrs
     assert "raw_today" not in attrs
