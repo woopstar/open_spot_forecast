@@ -302,7 +302,10 @@ weather comes from Open-Meteo (no key), one request for all of a region's
 points, refreshed from yesterday to 8 days ahead on each forecast run. The other
 external requests are Nordpool's public consumption and production
 prognoses: today and tomorrow on each forecast run, older delivery days only
-while they are incomplete (see
+while they are incomplete and at most 6 days old (Nordpool answers 401
+beyond a week without a login; see
 [persistence](persistence.md#time-series-sources)). Every API client uses
 the shared `api/http.py` (`async_get`: retries with backoff, `Retry-After`,
-never logs a URL or its parameters).
+never logs a URL or its parameters). Nordpool gets a browser-like
+`USER_AGENT` and Instrat `INSTRAT_USER_AGENT`: both sit behind Cloudflare,
+which answers 403 to Home Assistant's default User-Agent.

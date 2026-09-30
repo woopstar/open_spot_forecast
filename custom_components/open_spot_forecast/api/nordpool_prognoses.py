@@ -9,7 +9,9 @@ changed). A day Nordpool has not published yet (tomorrow before ~13:00, or
 the per-type production breakdown, which comes later than the total) is
 asked for again after ``revalidate_after``. The same source fills the history
 the model trains on and today's and tomorrow's rows the forecast reads
-(``forecast_prognoses``).
+(``forecast_prognoses``). Without a login Nordpool only serves the last week
+(older days answer 401), so no update reaches back further than
+``NORDPOOL_HISTORY_DAYS``: older history is only what earlier runs stored.
 """
 
 from __future__ import annotations
@@ -19,8 +21,9 @@ from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
-from ..const import NORDPOOL_MARKET_TZ
+from ..const import NORDPOOL_HISTORY_DAYS, NORDPOOL_MARKET_TZ
 from ..ml.series_storage import NORDPOOL_PROGNOSES
 from ..time_series import TimeRange
 from ..time_slots import local_midnight
@@ -117,6 +120,19 @@ class NordpoolPrognosisSource(TimeSeriesSource):
         """Initialize the source for a delivery area (e.g. "DK1")."""
         super().__init__(hass, storage, horizon_cutoff)
         self.region = region
+
+    async def async_update(self, start: datetime, end: datetime) -> bool:
+        """Fetch the missing days of ``[start, end)`` that Nordpool still serves.
+
+        Days older than ``NORDPOOL_HISTORY_DAYS`` are never requested: every
+        one would answer 401 and, remembered as a hole, be asked for again
+        each day.
+        """
+        oldest = dt_util.utcnow().astimezone(_MARKET_TZ).date()
+        oldest -= timedelta(days=NORDPOOL_HISTORY_DAYS)
+        return await super().async_update(
+            max(start, delivery_day_range(oldest)[0]), end
+        )
 
     def refresh_from(self, now: datetime) -> datetime | None:
         """Re-fetch from the start of today's delivery day (still revised)."""

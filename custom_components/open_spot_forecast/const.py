@@ -331,15 +331,26 @@ ECB_RATES_API = "https://data-api.ecb.europa.eu/service/data/EXR"
 # (PLN/MWh, energy.instrat.pl, CC BY-NC 4.0), a machine-readable proxy for the
 # European gas price level; it scores like THE Day Ahead in the backtest
 INSTRAT_GAS_API = "https://energy-api.instrat.pl/api/prices/gas_price_rdn_daily"
+# Instrat's Cloudflare protection answers 403 to Home Assistant's default
+# ``HomeAssistant/... aiohttp/...`` User-Agent, so requests identify the
+# integration instead (verified 2026-09-30)
+INSTRAT_USER_AGENT = (
+    "OpenSpotForecast (+https://github.com/woopstar/open_spot_forecast)"
+)
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
 # Nordpool's delivery day (the API's ``date``) is the CET/CEST calendar day,
 # for every delivery area
 NORDPOOL_MARKET_TZ = "Europe/Berlin"
+# Without a login the dataportal only serves the last 7 delivery days; older
+# days answer 401 (verified 2026-09-30). Prognosis history is requested this
+# many days back, a day inside the window because its roll-over time is unknown
+NORDPOOL_HISTORY_DAYS = 6
 
 # Nordpool's dataportal API sits behind Cloudflare bot protection. A browser-like
-# User-Agent avoids being flagged as a script, which surfaces as HTTP 401/403.
+# User-Agent avoids being flagged as a script, which surfaces as HTTP 403. A 401
+# is a delivery day older than NORDPOOL_HISTORY_DAYS, not a bot block.
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"

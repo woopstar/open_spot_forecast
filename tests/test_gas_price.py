@@ -18,7 +18,10 @@ from custom_components.open_spot_forecast.api.gas_prices import (
 )
 from custom_components.open_spot_forecast.api.http import HttpResponse
 from custom_components.open_spot_forecast.attribution import model_attribution
-from custom_components.open_spot_forecast.const import GAS_PRICE_REGIONS
+from custom_components.open_spot_forecast.const import (
+    GAS_PRICE_REGIONS,
+    INSTRAT_USER_AGENT,
+)
 from custom_components.open_spot_forecast.ml.gas_price import (
     GAS_LOOKBACK_DAYS,
     GasPriceIndex,
@@ -139,10 +142,12 @@ class FakeInstrat:
         self.status = 200
         self.text: str | None = None
         self.queries: list[dict[str, str]] = []
+        self.headers: list[dict[str, str] | None] = []
 
     async def get(self, _session: Any, url: str, label: str, **kw: Any) -> Any:
         assert label == "Instrat"
         self.queries.append(kw["params"])
+        self.headers.append(kw.get("headers"))
         if self.text is not None:
             return HttpResponse(self.status, self.text)
         first = datetime.strptime(kw["params"]["date_from"], "%d-%m-%YT%H:%M:%SZ")
@@ -186,6 +191,19 @@ async def test_the_days_of_a_range_are_stored(
     # Stored days are not asked for again; the unpublished day waits
     assert await source.async_update(start, end) is False
     assert len(instrat.queries) == 1
+
+
+@pytest.mark.asyncio
+async def test_requests_do_not_carry_home_assistants_user_agent(
+    storage: LearningStorage, instrat: FakeInstrat
+) -> None:
+    """Instrat's Cloudflare answers 403 to ``HomeAssistant/... aiohttp/...``."""
+    start = datetime(2026, 9, 10, tzinfo=UTC)
+
+    await _source(storage).async_update(start, start + timedelta(days=5))
+
+    assert instrat.headers == [{"User-Agent": INSTRAT_USER_AGENT}]
+    assert "HomeAssistant" not in INSTRAT_USER_AGENT
 
 
 @pytest.mark.asyncio

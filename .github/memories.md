@@ -130,7 +130,10 @@ forecasts), `keys()` (keyed tables) and `retry_time()`. `async_update(start, end
 only missing grid points, skips remembered holes until their retry time (the horizon is
 open-ended), upserts (a change moves `last_data_write` → retrain) and persists the state in
 `meta`. Range helpers (`missing_ranges`, `split_range`, …) and `SourceState` live in
-`time_series.py`. Never re-fetch complete history outside a source's refresh window, and never
+`time_series.py`. `NordpoolPrognosisSource.async_update` never reaches back further than
+`NORDPOOL_HISTORY_DAYS` (Nordpool answers 401 beyond a week without a login). Instrat
+requests carry `INSTRAT_USER_AGENT` (403 for HA's default User-Agent). Never re-fetch
+complete history outside a source's refresh window, and never
 prune on a fixed day count: `ForecastUpdater.prune_history()` keeps the training window plus
 `HISTORY_MARGIN_DAYS`.
 

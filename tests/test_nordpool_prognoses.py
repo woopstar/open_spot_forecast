@@ -20,6 +20,7 @@ from custom_components.open_spot_forecast.api.nordpool_prognoses import (
     delivery_day_range,
     prognosis_rows,
 )
+from custom_components.open_spot_forecast.const import NORDPOOL_HISTORY_DAYS
 from custom_components.open_spot_forecast.ml.series_storage import NORDPOOL_PROGNOSES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 
@@ -298,7 +299,7 @@ async def test_a_failed_request_is_retried_at_the_next_update(
 async def test_history_nordpool_lacks_is_retried_daily_not_hourly(
     storage: LearningStorage, nordpool: FakeNordpool, clock: Callable[[datetime], None]
 ) -> None:
-    old_day = date(2026, 9, 10)
+    old_day = date(2026, 9, 19)
     start, end = delivery_day_range(old_day)
     source = _source(storage)
 
@@ -310,6 +311,25 @@ async def test_history_nordpool_lacks_is_retried_daily_not_hourly(
     clock(MORNING + timedelta(days=1, minutes=1))
     await source.async_update(start, end)
     assert nordpool.days == [old_day, old_day]
+
+
+@pytest.mark.asyncio
+async def test_days_nordpool_no_longer_serves_are_never_requested(
+    storage: LearningStorage, nordpool: FakeNordpool, clock: Callable[[datetime], None]
+) -> None:
+    """Without a login older days answer 401: the backfill stops at the window."""
+    oldest = TODAY - timedelta(days=NORDPOOL_HISTORY_DAYS)
+    source = _source(storage)
+
+    await source.async_update(
+        delivery_day_range(date(2026, 8, 1))[0], delivery_day_range(oldest)[1]
+    )
+    assert nordpool.days == [oldest]
+
+    # A range entirely before the window costs no request at all
+    old_start, old_end = delivery_day_range(date(2026, 9, 1))
+    assert await source.async_update(old_start, old_end) is False
+    assert nordpool.days == [oldest]
 
 
 @pytest.mark.asyncio
@@ -347,7 +367,7 @@ async def test_prune_drops_old_rows_and_holes(
     storage: LearningStorage, nordpool: FakeNordpool, clock: Callable[[datetime], None]
 ) -> None:
     source = _source(storage)
-    old_start, old_end = delivery_day_range(date(2026, 9, 10))
+    old_start, old_end = delivery_day_range(date(2026, 9, 19))
     await source.async_update(old_start, old_end)
     await source.async_update(START, END)
     assert len((await source._async_state()).holes) == 2
@@ -365,7 +385,7 @@ async def test_prune_drops_old_rows_and_holes(
 async def test_the_state_survives_a_restart(
     storage: LearningStorage, nordpool: FakeNordpool, clock: Callable[[datetime], None]
 ) -> None:
-    old_day = date(2026, 9, 10)
+    old_day = date(2026, 9, 19)
     await _source(storage).async_update(*delivery_day_range(old_day))
 
     restarted = _source(storage)
