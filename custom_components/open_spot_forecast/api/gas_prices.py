@@ -13,7 +13,9 @@ current through the shared ``TimeSeriesSource``. Sources considered:
 * energy-charts.info and ENTSO-E have no gas prices.
 
 The price only sets a level, so the currency and the hub do not matter as
-long as they follow the European gas price. A failed or unusable response
+long as they follow the European gas price. Requests carry
+``INSTRAT_USER_AGENT``: Instrat's Cloudflare protection answers 403 to Home
+Assistant's default one. A failed or unusable response
 is logged once (then at debug level) and stores nothing, so the feature is
 NaN and predictions go on.
 """
@@ -28,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from ..const import INSTRAT_GAS_API
+from ..const import INSTRAT_GAS_API, INSTRAT_USER_AGENT
 from ..ml.series_storage import GAS_PRICES
 from ..time_slots import UTC_KEY_FORMAT
 from .http import async_get
@@ -115,6 +117,7 @@ class GasPriceSource(TimeSeriesSource):
             INSTRAT_GAS_API,
             "Instrat",
             params=instrat_query(start, end),
+            headers={"User-Agent": INSTRAT_USER_AGENT},
         )
         if response is None or response.status != 200:
             status = response.status if response is not None else "no answer"

@@ -409,14 +409,19 @@ production of its first quarter) by a gap-aware source (see
 [persistence](persistence.md#time-series-sources)): each prediction run
 re-fetches today's and tomorrow's delivery days (Nordpool revises them), and
 a background task fills the missing days in `price_history` at startup and
-after midnight. Training reads
+after midnight. Without a login Nordpool only serves the last 7 delivery
+days (older days answer 401), so the backfill reaches back
+`NORDPOOL_HISTORY_DAYS` (6) days; older days only have the prognoses
+earlier runs stored, and the window fills up as the integration runs.
+Training reads
 the stored rows; prediction reads today's and tomorrow's stored rows at the
 same resolution: the hour's consumption and the production at the hour's
 start, for all four slots of the hour.
 
 **Availability differs between the phases** (#91). Almost every training
-row has a stored prognosis (the backfill covers the whole window, about
-98 % of the rows of a 30- or 60-day window), but almost no prediction row
+row has a stored prognosis once the integration has run for the whole
+window (about 98 % of the rows of a 30- or 60-day window; a new install
+only has the last 6 days, see above), but almost no prediction row
 does: prognoses exist for today and tomorrow only, and a forecast starts
 where the known prices end (`first_prediction_slot`). Once tomorrow's
 prices are published (~13:00) the first predicted slot is the day after

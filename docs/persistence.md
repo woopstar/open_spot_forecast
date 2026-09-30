@@ -187,7 +187,8 @@ Nordpool revises the current days' prognoses, so its refresh window starts
 at today's delivery day: each forecast run re-fetches today and tomorrow
 (the upsert tells whether anything changed) and reads them from the table.
 Older days are only requested while incomplete, so complete history costs
-no request. The history the model trains on (the stored price days up to
+no request, and never beyond `NORDPOOL_HISTORY_DAYS` (6) days back:
+without a login Nordpool answers 401 for delivery days older than a week. The history the model trains on (the stored price days up to
 today) is filled by a background task at setup and after midnight, which
 resumes where it stopped.
 
