@@ -169,10 +169,15 @@ Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 | `mean_bias`           | Average systematic error (negative = underpredicting) |
 | `slots_tracked`       | Number of 15-min slots with data                      |
 | `pending_predictions` | Predictions still waiting for their slot to arrive    |
-| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offset         |
+| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offset (¹)     |
 | `holdout_mae`         | Latest training's holdout MAE (see below)             |
 | `holdout_rmse`        | Latest training's holdout RMSE                        |
 | `holdout_trained_at`  | When that training ran (UTC ISO)                      |
+
+(¹) In the live state only: Home Assistant's recorder does not store it
+(`_unrecorded_attributes`, #103). With 96 slots it would push the
+attributes past the recorder's 16 KB limit, and then none of them would be
+recorded. The scalar metrics above are recorded.
 
 The holdout metrics measure how well the current model generalizes: each
 training fits a copy of the model on the oldest 80 % of the price history
