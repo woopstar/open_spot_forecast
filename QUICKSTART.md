@@ -69,40 +69,43 @@ Enable ML Predictions: true
 
 ## Available Sensors
 
-After installation, you'll have:
+After installation, you'll have the entities below. Their IDs follow the
+device name, `Open Spot Forecast <region>`: the list shows DK1, so for DK2
+read `open_spot_forecast_dk2_...`. Check them under **Settings** → **Devices
+& services** → **Open Spot Forecast**.
 
 ### Price Sensors
 
-- `sensor.open_spot_forecast_current_price` - Current price
-- `sensor.open_spot_forecast_today_min` - Today's lowest
-- `sensor.open_spot_forecast_today_max` - Today's highest
-- `sensor.open_spot_forecast_today_mean` - Today's average
-- `sensor.open_spot_forecast_tomorrow_min` - Tomorrow's lowest
-- `sensor.open_spot_forecast_tomorrow_max` - Tomorrow's highest
-- `sensor.open_spot_forecast_tomorrow_mean` - Tomorrow's average
+- `sensor.open_spot_forecast_dk1_current_spot_price` - Current price
+- `sensor.open_spot_forecast_dk1_today_min_price` - Today's lowest
+- `sensor.open_spot_forecast_dk1_today_max_price` - Today's highest
+- `sensor.open_spot_forecast_dk1_today_mean_price` - Today's average
+- `sensor.open_spot_forecast_dk1_tomorrow_min_price` - Tomorrow's lowest
+- `sensor.open_spot_forecast_dk1_tomorrow_max_price` - Tomorrow's highest
+- `sensor.open_spot_forecast_dk1_tomorrow_mean_price` - Tomorrow's average
 
 ### Forecast Sensors
 
-- `sensor.open_spot_forecast_ml_prediction` - **ML-based 7-day forecast**
-- `sensor.open_spot_forecast_prediction_confidence` - Prediction confidence (%)
+- `sensor.open_spot_forecast_dk1_price_forecast_ml` - **ML-based 7-day forecast**
+- `sensor.open_spot_forecast_dk1_prediction_confidence` - Prediction confidence (%)
 
 ### Learning Sensors
 
-- `sensor.open_spot_forecast_learning_metrics` - Self-learning status
+- `sensor.open_spot_forecast_dk1_learning_metrics` - Self-learning status
 
 ### Status Sensors
 
-- `binary_sensor.open_spot_forecast_tomorrow_available` - Tomorrow's prices ready
-- `binary_sensor.open_spot_forecast_ml_model_trained` - ML model status
+- `binary_sensor.open_spot_forecast_dk1_tomorrow_prices_available` - Tomorrow's prices ready
+- `binary_sensor.open_spot_forecast_dk1_ml_model_trained` - ML model status
 
 ### Predbat Sensors (optional)
 
 With the option **Predbat rate entities** (see [Predbat](#predbat)):
 
-- `sensor.open_spot_forecast_<region>_predbat_import_today` - Consumer price today
-- `sensor.open_spot_forecast_<region>_predbat_import_tomorrow` - Consumer price tomorrow and later
-- `sensor.open_spot_forecast_<region>_predbat_export_today` - Raw spot price today
-- `sensor.open_spot_forecast_<region>_predbat_export_tomorrow` - Raw spot price tomorrow and later
+- `sensor.open_spot_forecast_dk1_predbat_import_today` - Consumer price today
+- `sensor.open_spot_forecast_dk1_predbat_import_tomorrow` - Consumer price tomorrow and later
+- `sensor.open_spot_forecast_dk1_predbat_export_today` - Raw spot price today
+- `sensor.open_spot_forecast_dk1_predbat_export_tomorrow` - Raw spot price tomorrow and later
 
 ## Common Use Cases
 
@@ -111,7 +114,7 @@ With the option **Predbat rate entities** (see [Predbat](#predbat)):
 ```yaml
 type: entities
 entities:
-  - entity: sensor.open_spot_forecast_current_price
+  - entity: sensor.open_spot_forecast_dk1_current_spot_price
     name: Current Electricity Price
     secondary_info: last-updated
 ```
@@ -131,10 +134,10 @@ automation:
         minutes: "/15"
     condition:
       - condition: numeric_state
-        entity_id: sensor.open_spot_forecast_current_price
-        below: sensor.open_spot_forecast_today_mean
+        entity_id: sensor.open_spot_forecast_dk1_current_spot_price
+        below: sensor.open_spot_forecast_dk1_today_mean_price
       - condition: numeric_state
-        entity_id: sensor.open_spot_forecast_prediction_confidence
+        entity_id: sensor.open_spot_forecast_dk1_prediction_confidence
         above: 70
     action:
       - service: switch.turn_on
@@ -148,17 +151,16 @@ automation:
 automation:
   - alias: "Start dishwasher at cheapest hour"
     trigger:
-      - platform: time
-        at: "18:00:00"
+      - platform: time_pattern
+        minutes: "/15"
     condition:
+      # The cheapest interval of the forecast (detailed attribute format)
       - condition: template
         value_template: >
-          {% set prices = state_attr('sensor.open_spot_forecast_current_price', 'today_prices') %}
-          {% if prices %}
-            {% set current_hour = now().hour %}
-            {% set sorted_hours = prices | sort(attribute='price') %}
-            {% set cheapest_hour = sorted_hours[0].hour %}
-            {{ current_hour == cheapest_hour }}
+          {% set forecast = state_attr('sensor.open_spot_forecast_dk1_price_forecast_ml', 'predictions') %}
+          {% if forecast %}
+            {% set cheapest = forecast | sort(attribute='price') | first %}
+            {{ as_datetime(cheapest.start) <= now() < as_datetime(cheapest.end) }}
           {% else %}
             false
           {% endif %}
@@ -175,7 +177,7 @@ automation:
   - alias: "Notify when tomorrow's prices are ready"
     trigger:
       - platform: state
-        entity_id: binary_sensor.open_spot_forecast_tomorrow_available
+        entity_id: binary_sensor.open_spot_forecast_dk1_tomorrow_prices_available
         to: "on"
     action:
       - service: notify.mobile_app
@@ -593,7 +595,7 @@ training_samples: 720
 
 ### Tomorrow's Prices Not Available
 
-**Problem**: `binary_sensor.open_spot_forecast_tomorrow_available` is off
+**Problem**: `binary_sensor.open_spot_forecast_dk1_tomorrow_prices_available` is off
 
 **Solution**:
 
@@ -608,7 +610,7 @@ training_samples: 720
 
 **Solution**:
 
-1. Check if ML model is trained: `binary_sensor.open_spot_forecast_ml_model_trained`
+1. Check if ML model is trained: `binary_sensor.open_spot_forecast_dk1_ml_model_trained`
 2. If not trained, wait for 24+ hours of data collection
 3. Configure weather sensors to improve predictions
 4. Check Home Assistant logs for errors
@@ -635,7 +637,7 @@ Use confidence to decide when to act:
 ```yaml
 condition:
   - condition: numeric_state
-    entity_id: sensor.open_spot_forecast_prediction_confidence
+    entity_id: sensor.open_spot_forecast_dk1_prediction_confidence
     above: 70 # Only act on high-confidence predictions
 ```
 
@@ -647,26 +649,25 @@ Create a statistics sensor:
 sensor:
   - platform: statistics
     name: "ML Prediction Accuracy"
-    entity_id: sensor.open_spot_forecast_ml_prediction
+    entity_id: sensor.open_spot_forecast_dk1_price_forecast_ml
     state_characteristic: mean
     sampling_size: 100
 ```
 
-### 3. Use Templates for Cheapest Hours
+### 3. Use Templates for Cheapest Intervals
 
-Find the next 3 cheapest hours:
+Find the 3 cheapest intervals of the forecast (detailed attribute format):
 
 ```yaml
 template:
   - sensor:
-      - name: "Next 3 Cheap Hours"
+      - name: "Next 3 Cheap Intervals"
         state: >
-          {% set prices = state_attr('sensor.open_spot_forecast_current_price', 'today_prices') %}
-          {% if prices %}
-            {% set sorted = prices | sort(attribute='price') %}
-            {% set cheapest = sorted[:3] %}
-            {% for hour in cheapest %}
-              {{ hour.hour }}:00 - {{ hour.price }} DKK/kWh
+          {% set forecast = state_attr('sensor.open_spot_forecast_dk1_price_forecast_ml', 'predictions') %}
+          {% if forecast %}
+            {% set cheapest = forecast | sort(attribute='price') | list %}
+            {% for slot in cheapest[:3] %}
+              {{ as_datetime(slot.start).strftime('%a %H:%M') }} {{ slot.price }} {{ slot.unit }}{{ ', ' if not loop.last }}
             {% endfor %}
           {% else %}
             unavailable

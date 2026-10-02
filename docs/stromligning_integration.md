@@ -228,7 +228,7 @@ automation:
   - alias: "Charge EV when real price is low"
     condition:
       - condition: numeric_state
-        entity_id: sensor.open_spot_forecast_ml_prediction
+        entity_id: sensor.open_spot_forecast_dk1_price_forecast_ml
         below: 2.00 # DKK/kWh: incl. tariffs and VAT, like your bill
     action:
       - service: switch.turn_on
@@ -248,24 +248,27 @@ with what you pay; with the day-ahead source it is the spot price incl. VAT.
 automation:
   - alias: "Run dishwasher during cheapest 3 hours"
     trigger:
-      - platform: time
-        at: "18:00:00"
+      - platform: time_pattern
+        minutes: "/15"
     condition:
+      # One of the 3 cheapest intervals of the forecast (detailed attribute format)
       - condition: template
         value_template: >
-          {% set prices = state_attr('sensor.open_spot_forecast_ml_prediction', 'predictions') %}
-          {% set current_hour = now().hour %}
-          {% set sorted = prices | sort(attribute='predicted_price') %}
-          {% set cheapest_hours = sorted[:3] | map(attribute='hour') | list %}
-          {{ current_hour in cheapest_hours }}
+          {% set forecast = state_attr('sensor.open_spot_forecast_dk1_price_forecast_ml', 'predictions') %}
+          {% set cheapest = forecast | sort(attribute='price') | list %}
+          {% set ns = namespace(hit=false) %}
+          {% for slot in cheapest[:3] if as_datetime(slot.start) <= now() < as_datetime(slot.end) %}
+            {% set ns.hit = true %}
+          {% endfor %}
+          {{ ns.hit }}
     action:
       - service: switch.turn_on
         target:
           entity_id: switch.dishwasher
 ```
 
-**Result**: Runs during the 3 cheapest hours of the forecast price, tariffs
-included (the grid tariff's evening peak counts)
+**Result**: Runs during the 3 cheapest 15-minute intervals of the forecast
+price, tariffs included (the grid tariff's evening peak counts)
 
 ### 3. Price Forecast Dashboard
 
