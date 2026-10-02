@@ -69,7 +69,7 @@ DEFAULT_SURCHARGE = 0.0
 DEFAULT_HOURLY_AVERAGE = False
 DEFAULT_PREDICTION_HOURS = 48
 # The backtest's best window with the zone weather (docs/ml_documentation.md)
-DEFAULT_TRAINING_DAYS = 60
+DEFAULT_TRAINING_DAYS = 180
 TRAINING_DAYS_OPTIONS = [30, 60, 90, 120, 180]
 
 # Platforms
