@@ -669,18 +669,117 @@ def test_http_get_json_waits_out_rate_limits(monkeypatch: pytest.MonkeyPatch) ->
     assert waits == pytest.approx([22.0, 30.0])
 
 
-def test_http_get_json_gives_up_on_other_errors(
+def test_http_get_json_retries_transient_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Non-rate-limit errors propagate immediately."""
+    """A truncated body, a connection error, a timeout and a 5xx are retried."""
+    responses: list[object] = [
+        _FakeResponse(b'{"ok": '),
+        urllib.error.URLError("connection reset"),
+        TimeoutError(),
+        _http_error(503, None),
+        _FakeResponse(json.dumps({"ok": 1}).encode()),
+    ]
 
     def urlopen(request: urllib.request.Request, **kwargs: object) -> object:
-        raise _http_error(500, None)
+        response = responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    waits: list[float] = []
+
+    assert backtest._http_get_json("https://x", sleep=waits.append) == {"ok": 1}
+    assert waits == pytest.approx([2.0, 4.0, 8.0, 16.0])
+
+
+def test_http_get_json_gives_up_after_the_attempts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure that persists raises after HTTP_ATTEMPTS attempts."""
+    calls = 0
+
+    def urlopen(request: urllib.request.Request, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        return _FakeResponse(b"not json")
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    waits: list[float] = []
+
+    with pytest.raises(json.JSONDecodeError):
+        backtest._http_get_json("https://x", sleep=waits.append)
+    assert calls == backtest.HTTP_ATTEMPTS
+    assert len(waits) == backtest.HTTP_ATTEMPTS - 1
+
+
+@pytest.mark.parametrize("code", [400, 404])
+def test_http_get_json_gives_up_on_other_errors(
+    monkeypatch: pytest.MonkeyPatch, code: int
+) -> None:
+    """Client errors other than 429 propagate immediately, without a retry."""
+    calls = 0
+
+    def urlopen(request: urllib.request.Request, **kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        raise _http_error(code, None)
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
 
     with pytest.raises(urllib.error.HTTPError):
         backtest._http_get_json("https://x", sleep=lambda _: None)
+    assert calls == 1
+
+
+# --- Cache files ---------------------------------------------------------------------
+
+
+def test_an_unreadable_cache_file_is_fetched_again(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A truncated cache file (an interrupted run) is discarded, not fatal."""
+    cache_file = tmp_path / "energy_charts_DK1_2026-06.json"
+    cache_file.write_text('{"unix_seconds": [17', encoding="utf-8")
+    fetched: list[str] = []
+
+    def fetch(url: str) -> dict[str, Any]:
+        fetched.append(url)
+        return {"unix_seconds": [], "price": [], "unit": "EUR / MWh"}
+
+    series = backtest.load_energy_charts_prices(
+        "DK1", date(2026, 6, 1), date(2026, 6, 30), tmp_path, fetch, date(2026, 7, 5)
+    )
+
+    assert len(series) == 0
+    assert len(fetched) == 1
+    assert json.loads(cache_file.read_text(encoding="utf-8")) == {
+        "unix_seconds": [],
+        "price": [],
+        "unit": "EUR / MWh",
+    }
+    assert "discarding unreadable cache file" in capsys.readouterr().err
+
+
+def test_cache_files_are_written_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The final name only appears once the content is complete."""
+    cache_file = tmp_path / "cache" / "doc.json"
+
+    backtest._write_cache(cache_file, {"a": 1})
+    assert json.loads(cache_file.read_text(encoding="utf-8")) == {"a": 1}
+    assert [p.name for p in cache_file.parent.iterdir()] == ["doc.json"]
+
+    def interrupted(*_: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(backtest.os, "replace", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        backtest._write_cache(tmp_path / "cache" / "other.json", {"b": 2})
+    assert not (tmp_path / "cache" / "other.json").exists()
+    assert backtest._read_cache(tmp_path / "cache" / "other.json") is None
 
 
 # --- CLI -----------------------------------------------------------------------------

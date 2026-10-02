@@ -909,7 +909,9 @@ multi-day accuracy number. The method reimplements EpexPredictor's
   (`api.energy-charts.info`; © Bundesnetzagentur | SMARD.de, CC BY 4.0), the
   source #27 will add to the integration. Hourly prices from before
   2025-10-01 fill four quarter-hours. Complete months are cached in
-  `.cache/backtest/`. A month energy-charts has no prices for yet (HTTP 404,
+  `.cache/backtest/` (every cache file is written atomically and an
+  unreadable one is fetched again; a truncated response, a connection
+  error, a timeout and an HTTP 5xx or 429 are retried up to five times). A month energy-charts has no prices for yet (HTTP 404,
   e.g. when `--horizon-days` reaches past the current month) is left empty
   and its slots are not scored. The OSF SQLite DB cannot be used, because it keeps only
   the training window's price history.
