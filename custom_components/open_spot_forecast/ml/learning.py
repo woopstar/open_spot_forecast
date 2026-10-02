@@ -171,8 +171,8 @@ class LearningMixin(PredictorBase):
 
         Every row comes from ``build_feature_row``, the function prediction
         rows come from, with the slot's stored zone weather forecast,
-        Nordpool prognoses, ENTSO-E load forecast and gas price as inputs
-        (``TrainingInputs``). Inputs that were
+        Nordpool prognoses, ENTSO-E load forecast, gas price and UMM
+        outages as inputs (``TrainingInputs``). Inputs that were
         not stored for a slot stay unknown (NaN for the model).
 
         Returns:
@@ -196,6 +196,7 @@ class LearningMixin(PredictorBase):
                     GAS_PRICES, span[0] - timedelta(days=GAS_LOOKBACK_DAYS), span[1]
                 )
             ),
+            self._outage_index(self.storage.load_umm_rows(*span)),
         )
 
         for entry in self.price_history:

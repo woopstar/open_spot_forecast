@@ -10,22 +10,23 @@ bias correction.
 
 ## Data Sources
 
-| Source                                      | Type                             | Used for                                         |
-| ------------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| `sensor.stromligning_current_price_ex_vat`  | Consumer price excl. VAT         | Displayed prices; minus spot: the tariffs (#107) |
-| `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction  |
-| `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                      |
-| `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud               |
-| `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction |
-| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)         |
-| `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)         |
-| `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training              |
-| energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors  |
-| ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                  |
-| Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)     |
-| ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)         |
-| energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)        |
-| Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)     |
+| Source                                      | Type                             | Used for                                           |
+| ------------------------------------------- | -------------------------------- | -------------------------------------------------- |
+| `sensor.stromligning_current_price_ex_vat`  | Consumer price excl. VAT         | Displayed prices; minus spot: the tariffs (#107)   |
+| `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction    |
+| `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                        |
+| `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud                 |
+| `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction   |
+| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)           |
+| `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)           |
+| `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training                |
+| energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors    |
+| ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                    |
+| Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)       |
+| ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)           |
+| energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)          |
+| Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)       |
+| Nord Pool UMM API (no key)                  | Outage messages, every version   | `unavailable_*`, both phases, `UMM_REGIONS` (#123) |
 
 ## Component Architecture
 
@@ -279,7 +280,7 @@ The system uses **one model** — a Gradient Boosting regressor that takes 23
 features and directly predicts the spot price. Wind, solar, and temperature
 are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
-[ML Documentation](ml_documentation.md#feature-vector-24-features)).
+[ML Documentation](ml_documentation.md#feature-vector-26-features)).
 
 ```
 Features (23):
@@ -330,8 +331,9 @@ Entities credit the external sources of their values in Home Assistant's
 reports for the zone, and ENTSO-E when its fallback is configured; the
 model's entities (`ModelAttributionMixin`: forecast, confidence, learning
 metrics, accuracy, model trained) add Open-Meteo (CC BY 4.0) when the zone
-weather is used, Nord Pool, and ENTSO-E when its load forecast is used.
-The sources, their licences and the credit
+weather is used, Nord Pool, ENTSO-E when its load forecast is used, Instrat
+in the regions with the gas price and Nord Pool's UMMs in the regions that
+use them (#123). The sources, their licences and the credit
 to EpexPredictor are listed in the
 [README](../README.md#data-sources-and-attribution).
 
@@ -353,4 +355,6 @@ beyond a week without a login; see
 the shared `api/http.py` (`async_get`: retries with backoff, `Retry-After`,
 never logs a URL or its parameters). Nordpool gets a browser-like
 `USER_AGENT` and Instrat `INSTRAT_USER_AGENT`: both sit behind Cloudflare,
-which answers 403 to Home Assistant's default User-Agent.
+which answers 403 to Home Assistant's default User-Agent. Nord Pool's UMM
+API (#123, no key) accepts it; the source fetches the training window's
+messages once (every version, paged) and then only new publications.

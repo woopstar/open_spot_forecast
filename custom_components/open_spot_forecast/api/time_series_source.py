@@ -24,7 +24,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -44,6 +44,23 @@ if TYPE_CHECKING:
     from ..ml.storage import LearningStorage
 
 _LOGGER = logging.getLogger(__name__)
+
+
+class HistorySource(Protocol):
+    """What the update cycle needs of a stored source (#123).
+
+    Every ``TimeSeriesSource`` has it; ``NordpoolUmmSource`` (messages, not
+    grid rows) implements it on its own.
+    """
+
+    async def async_update(self, start: datetime, end: datetime) -> bool:
+        """Store what ``[start, end)`` is missing; return whether data changed."""
+
+    async def async_load(self, start: datetime, end: datetime) -> list[dict[str, Any]]:
+        """Return the stored rows of ``[start, end)``."""
+
+    async def async_prune(self, before: datetime) -> int:
+        """Delete what is older than ``before``; return how many rows."""
 
 
 class TimeSeriesSource(ABC):

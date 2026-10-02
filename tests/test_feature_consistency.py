@@ -20,6 +20,7 @@ from custom_components.open_spot_forecast.ml.features import (
     wind_power_curve,
 )
 from custom_components.open_spot_forecast.ml.gas_price import GasPriceIndex
+from custom_components.open_spot_forecast.ml.outages import OutageIndex
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import (
     ENTSOE_LOAD,
@@ -49,6 +50,7 @@ ZONE = {
 }
 LOAD = 3200.0
 GAS = 310.0
+OUTAGE = 400.0
 NORDPOOL = {
     "consumption": 3000.0,
     "solar": 500.0,
@@ -96,6 +98,44 @@ def _store_history(predictor: SpotPricePredictor, start: datetime) -> None:
     predictor.storage.upsert_series(OPENMETEO_WEATHER, _zone_rows(start))
     predictor.storage.upsert_series(ENTSOE_LOAD, _load_rows(start))
     predictor.storage.upsert_series(GAS_PRICES, _gas_rows(start))
+    predictor.storage.upsert_umm_rows(_umm_rows(start))
+
+
+def _umm_rows(start: datetime, unavailable: float = OUTAGE) -> list[dict]:
+    """UMM rows (#123): a plant out all day, published a week before the slot."""
+    day = datetime.combine(start.date(), datetime.min.time(), UTC)
+    return [
+        {
+            "message_id": f"m-{start.date()}",
+            "version": 1,
+            "published": _utc_iso(day - timedelta(days=7)),
+            "message_type": 1,
+            "unavailability_type": 2,
+            "status": 1,
+            "unit": "u1",
+            "kind": "production",
+            "fuel_type": 5,
+            "event_start": _utc_iso(day),
+            "event_stop": _utc_iso(day + timedelta(days=1)),
+            "unavailable_mw": unavailable,
+            "installed_mw": 412.0,
+        },
+        {
+            "message_id": f"t-{start.date()}",
+            "version": 1,
+            "published": _utc_iso(day - timedelta(days=7)),
+            "message_type": 3,
+            "unavailability_type": 2,
+            "status": 1,
+            "unit": "a>b",
+            "kind": "transmission",
+            "fuel_type": None,
+            "event_start": _utc_iso(day),
+            "event_stop": _utc_iso(day + timedelta(days=1)),
+            "unavailable_mw": unavailable / 2,
+            "installed_mw": None,
+        },
+    ]
 
 
 def _zone_rows(start: datetime, **values: float) -> list[dict]:
@@ -136,6 +176,7 @@ def _live_data(start: datetime) -> dict:
         "zone_weather": _zone_rows(start),
         "load_forecast": _load_rows(start),
         "gas_price": _gas_rows(start),
+        "outages": _umm_rows(start),
         "consumption_prognosis": {_utc_iso(start): NORDPOOL["consumption"]},
         "production_prognosis": [
             {
@@ -168,6 +209,7 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
         live,
         predictor._zone_index(live),
         GasPriceIndex(live["gas_price"]),
+        OutageIndex(live["outages"]),
     )
     prediction = build_feature_vector(prediction_row)
 
@@ -184,6 +226,8 @@ def test_same_inputs_give_identical_training_and_prediction_rows(
     assert row["load_forecast"] == pytest.approx(LOAD)
     # The price known before the slot's day, not the day's own (#28)
     assert row["gas_price"] == pytest.approx(GAS)
+    assert row["unavailable_production"] == pytest.approx(OUTAGE)
+    assert row["unavailable_transmission"] == pytest.approx(OUTAGE / 2)
 
 
 def test_every_quarter_of_an_hour_uses_the_hours_prognosis(
@@ -286,6 +330,9 @@ def test_no_training_feature_is_constant(predictor: SpotPricePredictor) -> None:
             )
         predictor.storage.upsert_series(
             GAS_PRICES, [{"timestamp": f"{date}T00:00:00Z", "price": 300.0 + day}]
+        )
+        predictor.storage.upsert_umm_rows(
+            _umm_rows(datetime(date.year, date.month, date.day, tzinfo=TZ), 100.0 + day)
         )
     predictor.price_history = entries
 
@@ -392,3 +439,54 @@ def test_solar_scale_ignores_missing_or_implausible_readings(
 
     assert predictor.solar_scale == pytest.approx(1.0)
     assert predictor._solar_scale_samples == 0
+
+
+def test_training_rows_only_see_messages_published_by_their_day_ahead_gate(
+    predictor: SpotPricePredictor,
+) -> None:
+    """A revision published after the auction never reaches a training row (#123)."""
+    _store_history(predictor, SLOT)
+    day = datetime.combine(SLOT.date(), datetime.min.time(), UTC)
+    late = [
+        {**_umm_rows(SLOT)[0], "version": 2, "unavailable_mw": 0.0}
+        | {"published": _utc_iso(day - timedelta(hours=1))}
+    ]
+    predictor.storage.upsert_umm_rows(late)
+
+    row = _training_row(predictor, SLOT)
+
+    # The day-ahead gate was 12:00 CEST the day before, 10:00Z; v2 came at 23:00Z
+    assert row["unavailable_production"] == pytest.approx(OUTAGE)
+    # Published before the gate, the revision counts
+    predictor.storage.upsert_umm_rows(
+        [late[0] | {"version": 3, "published": _utc_iso(day - timedelta(hours=15))}]
+    )
+    assert _training_row(predictor, SLOT)["unavailable_production"] == pytest.approx(
+        0.0
+    )
+
+
+def test_outages_are_unknown_without_stored_messages_and_outside_nord_pool(
+    tmp_path: Path,
+) -> None:
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    for region, expected in (("DK1", 0.0), ("DE", math.nan)):
+        predictor = SpotPricePredictor(hass, region)
+        try:
+            # Nothing stored: unknown in both regions
+            assert predictor._outage_index([]) is None
+            assert _training_row(predictor, SLOT)["unavailable_production"] is None
+            predictor.storage.upsert_umm_rows(_umm_rows(SLOT + timedelta(days=30)))
+            value = _training_row(predictor, SLOT)["unavailable_production"]
+            live = predictor._combine_features(
+                [slot_time_features(SLOT)],
+                {},
+                outages=predictor._outage_index(_umm_rows(SLOT + timedelta(days=30))),
+            )[0]["unavailable_production"]
+        finally:
+            predictor.storage.close()
+        if math.isnan(expected):
+            assert value is None and live is None
+        else:
+            assert value == pytest.approx(expected) and live == pytest.approx(expected)

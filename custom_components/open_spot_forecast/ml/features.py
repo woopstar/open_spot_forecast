@@ -27,11 +27,12 @@ from .sun import SUN_FEATURES, sun_features, zone_centre
 
 if TYPE_CHECKING:
     from .gas_price import GasPriceIndex
+    from .outages import OutageIndex
     from .zone_weather import ZoneWeatherIndex
 
 _LOGGER = logging.getLogger(__name__)
 
-# The canonical 24-feature model input, in column order (docs/ml_documentation.md).
+# The canonical 26-feature model input, in column order (docs/ml_documentation.md).
 # The local weather entity's values (wind_speed_mean, wind_power_estimate,
 # wind_direction, cloud_coverage, humidity, temperature) stay in the feature
 # dict, where prediction records its local forecast for the forecast-accuracy
@@ -53,6 +54,8 @@ FEATURE_NAMES: tuple[str, ...] = (
     "wind_share",
     "load_forecast",
     "gas_price",
+    "unavailable_production",
+    "unavailable_transmission",
     "zone_wind",
     "zone_wind_power",
     "zone_temperature",
@@ -95,7 +98,11 @@ class SlotInputs:
     pressure (hPa) and relative humidity (%). ``load_forecast`` is ENTSO-E's
     week-ahead load forecast for the slot (MW, ``entsoe_load``, #30).
     ``gas_price`` is the latest daily gas price dated before the slot's local
-    day (``gas_prices``, #28).
+    day (``gas_prices``, #28). ``unavailable_production`` and
+    ``unavailable_transmission`` are the MW of production units in the area
+    and of interconnectors into or out of it announced unavailable for the
+    slot by Nord Pool's UMMs as known at the row's origin (``OutageIndex``,
+    #123); 0 when nothing is announced, None where the source is not used.
     """
 
     temperature: float | None = None
@@ -109,6 +116,8 @@ class SlotInputs:
     wind_onshore: float | None = None
     load_forecast: float | None = None
     gas_price: float | None = None
+    unavailable_production: float | None = None
+    unavailable_transmission: float | None = None
     zone_wind: float | None = None
     zone_wind_power: float | None = None
     zone_temperature: float | None = None
@@ -326,6 +335,8 @@ def build_feature_row(
             "wind_share": wind_share,
             "load_forecast": inputs.load_forecast,
             "gas_price": inputs.gas_price,
+            "unavailable_production": inputs.unavailable_production,
+            "unavailable_transmission": inputs.unavailable_transmission,
         }
         | {name: getattr(inputs, name) for name in ZONE_FEATURES}
     )
@@ -381,6 +392,7 @@ class FeatureMixin(PredictorBase):
         weather_data: dict,
         zone: ZoneWeatherIndex | None = None,
         gas: GasPriceIndex | None = None,
+        outages: OutageIndex | None = None,
     ) -> list[dict]:
         """Build the prediction feature rows from live forecasts and prognoses.
 
@@ -392,12 +404,14 @@ class FeatureMixin(PredictorBase):
         (``production_prognosis``: deliveryStart, solar, wind_offshore,
         wind_onshore), the resolution training reads from storage. ``zone``
         holds the stored Open-Meteo rows (``ZoneWeatherIndex``), aggregated
-        per slot as in training, and ``gas`` the stored gas prices
-        (``GasPriceIndex``, #28). A slot
+        per slot as in training, ``gas`` the stored gas prices
+        (``GasPriceIndex``, #28) and ``outages`` the stored UMM messages
+        (``OutageIndex``, #123), read as known now. A slot
         outside a forecast's horizon gets None for those inputs, not a
         default or the current observation.
         """
         tz = self.tz
+        origin = dt_util.utcnow()
         weather_by_hour: dict[int, dict] = {}
         for entry in weather_data.get("weather_forecast") or []:
             key = hour_epoch(entry.get("datetime", ""), tz)
@@ -435,6 +449,7 @@ class FeatureMixin(PredictorBase):
                 load_forecast=load_by_slot.get(floor_epoch(start, tz)),
                 gas_price=gas.before(start.date()) if gas else None,
                 **(zone.for_slot(start) if zone else {}),
+                **(outages.for_slot(start, origin) if outages else {}),
             )
             combined.append(build_feature_row(start, inputs, self.region))
         return combined

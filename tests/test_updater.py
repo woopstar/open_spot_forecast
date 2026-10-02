@@ -47,6 +47,17 @@ ZONE_ROW = {"timestamp": "2026-09-24T08:00:00+00:00", "point": "57.40,10.24"}
 YESTERDAY_ZONE_ROW = {"timestamp": "2026-09-22T21:45:00+00:00", "point": "x"}
 GAS_ROW = {"timestamp": "2026-09-23T00:00:00Z", "price": 310.0}
 LOAD_ROW = {"timestamp": "2026-09-24T08:00:00Z", "load": 3200.0}
+UMM_ROW = {
+    "message_id": "m1",
+    "version": 1,
+    "published": "2026-09-20T08:00:00Z",
+    "status": 1,
+    "kind": "production",
+    "unit": "u",
+    "event_start": "2026-09-24T06:00:00Z",
+    "event_stop": "2026-09-25T06:00:00Z",
+    "unavailable_mw": 400.0,
+}
 YESTERDAY_LOAD_ROW = {"timestamp": "2026-09-22T21:45:00Z", "load": 2900.0}
 NP_ROW = {
     "timestamp": "2026-09-24T10:00:00Z",
@@ -103,6 +114,7 @@ class Harness:
     read_forecast: AsyncMock
     dispatch: Mock
     load: Mock
+    outages: Mock
 
 
 @pytest.fixture
@@ -124,6 +136,10 @@ def make() -> Iterator[Callable[..., Harness]]:
     gas.async_update = AsyncMock(return_value=False)
     gas.async_load = AsyncMock(return_value=[GAS_ROW])
     gas.async_prune = AsyncMock(return_value=0)
+    outages = Mock()
+    outages.async_update = AsyncMock(return_value=False)
+    outages.async_load = AsyncMock(return_value=[UMM_ROW])
+    outages.async_prune = AsyncMock(return_value=0)
     dayahead = Mock()
     dayahead.async_read = AsyncMock(return_value=_dayahead_spot())
     dayahead.async_history = AsyncMock(return_value={})
@@ -136,6 +152,7 @@ def make() -> Iterator[Callable[..., Harness]]:
         patch(f"{MODULE}.OpenMeteoWeatherSource", return_value=weather),
         patch(f"{MODULE}.EntsoeLoadSource", return_value=load),
         patch(f"{MODULE}.GasPriceSource", return_value=gas),
+        patch(f"{MODULE}.NordpoolUmmSource", return_value=outages),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -206,6 +223,7 @@ def make() -> Iterator[Callable[..., Harness]]:
                 read_forecast,
                 dispatch,
                 load,
+                outages,
             )
 
         yield build
@@ -392,6 +410,7 @@ async def test_run_forecast_without_weather_or_prognoses_does_not_predict(
     harness.nordpool.async_load.return_value = []
     assert harness.updater.gas is not None
     harness.updater.gas.async_load.return_value = []  # type: ignore[attr-defined]
+    harness.outages.async_load.return_value = []
 
     await harness.updater.run_forecast()
 
@@ -1088,6 +1107,90 @@ async def test_the_load_forecast_is_backfilled_and_pruned_with_the_history(
         datetime(2026, 9, 1, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH)
     )
     harness.load.async_prune.assert_awaited_once_with(datetime(2026, 8, 23, tzinfo=CPH))
+
+
+# --- Nord Pool UMM outages (#123) ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("region", "ml", "used"),
+    [
+        ("DK1", True, True),
+        ("DK1", False, False),
+        ("DK2", True, False),
+        ("DE", True, False),
+    ],
+)
+def test_the_outage_messages_need_the_model_and_a_region_they_help(
+    make: Callable[..., Harness], region: str, ml: bool, used: bool
+) -> None:
+    harness = make(region=region, ml=ml)
+
+    assert (harness.updater.outages is harness.outages) is used
+    assert (harness.updater.outages is None) is not used
+    assert harness.api_data["umm_outages"] is used
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_run_forecast_refreshes_the_outage_messages(
+    make: Callable[..., Harness],
+) -> None:
+    """Today to the forecast's end; the stored versions are attached."""
+    harness = make()
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.run_forecast()
+
+    window = (datetime(2026, 9, 24, tzinfo=CPH), datetime(2026, 10, 2, tzinfo=CPH))
+    harness.outages.async_update.assert_awaited_once_with(*window)
+    harness.outages.async_load.assert_awaited_once_with(*window)
+    assert harness.api_data["weather_data"]["outages"] == [UMM_ROW]
+    harness.predictor.predict.assert_called_once()
+
+    # Nothing stored yet (before the first fetch): the input stays unknown
+    fresh = make()
+    fresh.outages.async_load.return_value = []
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await fresh.updater.run_forecast()
+    assert "outages" not in fresh.api_data["weather_data"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_outage_source_does_not_block_the_forecast(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    harness.outages.async_update.side_effect = RuntimeError("down")
+    harness.outages.async_load.side_effect = RuntimeError("locked")
+
+    await harness.updater.run_forecast()
+
+    assert "outages" not in harness.api_data["weather_data"]
+    harness.predictor.predict.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_the_outage_messages_are_backfilled_and_pruned_with_the_history(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    harness.predictor.price_history = [{"date": "2026-09-01", "prices": [1.0] * 96}]
+    harness.updater.refresh_forecast = AsyncMock()  # type: ignore[method-assign]
+    harness.outages.async_update.return_value = True
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.backfill_history()
+        await harness.updater.prune_history()
+
+    harness.outages.async_update.assert_awaited_once_with(
+        datetime(2026, 9, 1, tzinfo=CPH), datetime(2026, 9, 24, tzinfo=CPH)
+    )
+    harness.updater.refresh_forecast.assert_awaited_once()
+    harness.outages.async_prune.assert_awaited_once_with(
+        datetime(2026, 8, 23, tzinfo=CPH)
+    )
 
 
 # --- Attribution (#41) ---------------------------------------------------------------

@@ -86,6 +86,10 @@ def test_model_attribution_credits_every_source_the_model_learns_from() -> None:
     assert model_attribution({"ml_predictor": model, "entsoe_load": True}) == (
         f"{PROGNOSES} · Load forecast: ENTSO-E Transparency Platform"
     )
+    # In Nord Pool's areas the model learns from its outage messages (#123)
+    assert model_attribution({"ml_predictor": model, "umm_outages": True}) == (
+        f"{PROGNOSES} · Outages: Nord Pool UMM"
+    )
     # The cross-border model also learns from the neighbours' prices (#29)
     assert model_attribution({"ml_predictor": model, "cross_border": True}) == (
         f"{PROGNOSES} · Neighbour prices: energy-charts.info"
