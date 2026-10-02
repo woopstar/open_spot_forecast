@@ -199,7 +199,9 @@ def test_negative_prices_survive_model_bias_correction_and_sensor(
     with patch.object(predictor, "store_daily_prices"):
         predictor._train_models()
     predictor.bias_correction = {SLOT: 0.05}
-    day = dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    # The day after the training week: its sun and calendar features lie
+    # inside the history, so the tree does not extrapolate (#117)
+    day = datetime(2026, 9, 21, tzinfo=dt_util.DEFAULT_TIME_ZONE)
     features = predictor._combine_features(
         [
             {"start": (day + timedelta(minutes=15 * slot)).isoformat()}
