@@ -225,6 +225,18 @@ EpexPredictor's backtests found it hurts; `ENTSOE_LOAD_REGIONS` in
 `const.py`), it is NaN in every row. A week-ahead forecast published once
 a week may not reach day 7; those slots are NaN too.
 
+ENTSO-E answers **one week-ahead document per request**, the ISO week of
+`periodStart` (clipped to it), whatever `periodEnd` says, so the source
+requests whole ISO weeks (`week_chunks()` in `time_series.py`, Monday to
+Monday local time) and, for the curve's edges, the weeks on each side, each
+week once per update (#114). The documents are variable sized blocks
+(`curveType` A03): a day whose value equals the day before is left out and
+`parse_entsoe_load()` repeats the previous value. A day published as `0`
+(no forecast; DK1 had them on the Monday and Sunday of recent weeks) is
+treated as missing, so the curve splits there instead of dipping below
+zero. ENTSO-E also has whole weeks without data (e.g. DK1's weeks of
+2026-09-07 and 2026-09-28); the feature is NaN for them.
+
 **Gas price** (#28). Gas-fired plants often set the marginal price, so
 the gas price level moves the electricity price. `gas_price`
 (`ml/gas_price.py`) is the latest daily gas price dated **before the
@@ -777,8 +789,9 @@ pipeline:
   Only origins inside the export's history are meaningful.
 - **ENTSO-E load only with a key.** `--load entsoe` (token in the
   `ENTSOE_API_KEY` environment variable, never cached or printed) adds
-  feature 16 from ENTSO-E's week-ahead forecasts, one request per month,
-  cached as daily min/max in `.cache/backtest/`; otherwise it is NaN. A
+  feature 16 from ENTSO-E's week-ahead forecasts, one request per ISO week
+  (ENTSO-E answers one week per request, #114), cached as daily min/max in
+  `.cache/backtest/` once the week is over; otherwise it is NaN. A
   target day gets the forecast ENTSO-E keeps for it, which for the last
   days of a week can be newer than the origin (optimistic, like the
   weather archive).
@@ -1154,20 +1167,36 @@ python -m scripts.backtest --region DK1 --window-days 60 --start 2026-09-05 --en
 
 ### ENTSO-E load forecast (#30)
 
-**Not measured yet.** No ENTSO-E API key was available when #30 was
-implemented, so the load feature ships without a backtest; it only takes
-effect with a key. To measure it, run DK1 with the production window
-before and after:
+DK1, 365 daily origins from 2025-09-30 to 2026-09-29, 60-day window,
+`--horizon-days 7`, with the zone weather; `--load none` against
+`--load entsoe` (one request per ISO week, #114). MAE in EUR ct/kWh,
+**without / with** the load feature. Recorded 2026-10-02.
+
+| Model                | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          |
+| -------------------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| current (NumPy GBM)  | 2.30 / 2.30 | 2.47 / 2.46 | 2.52 / 2.52 | 2.54 / 2.55 | 2.54 / 2.54 | 2.57 / 2.58 | 2.59 / 2.60 |
+| lightgbm (reference) | 2.29 / 2.27 | 2.51 / 2.49 | 2.58 / 2.58 | 2.60 / 2.62 | 2.62 / 2.62 | 2.63 / 2.63 | 2.67 / 2.66 |
+
+The naive row is 3.98-4.00 at every horizon. **The feature neither helps
+nor hurts DK1**: every cell moves by at most 0.02 ct/kWh, in both
+directions, at days 3-7 as much as at days 1-2, so it is noise. DK1 stays
+in `ENTSOE_LOAD_REGIONS` (the feature costs one request per week and
+nothing in accuracy), but a key is not worth getting for it. Why it carries
+so little, as far as the data shows:
+
+- the week-ahead forecast is two numbers per day (minimum and maximum),
+  and the demand shape they are stretched over is already in the time and
+  sun features;
+- ENTSO-E's DK1 series has gaps: 5 of the last 58 ISO weeks are not
+  published at all (none from 2026-09-07 on) and the Monday and Sunday are
+  `0` (dropped) in the weeks since 2026-08-10, so recent rows are NaN;
+- the backtest gives a target day the forecast ENTSO-E keeps for it, which
+  is at least as good as what a live forecast run would have had.
 
 ```bash
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load none
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 ```
-
-and compare days 3-7, where Nordpool has no prognosis (the backtest has
-no Nordpool history at any horizon, so its 1d-2d rows overstate the gain).
-EpexPredictor enables it for DK and disables it for DE and NL; if it hurts
-a region here, remove that region from `ENTSOE_LOAD_REGIONS`.
 
 ### Baseline
 

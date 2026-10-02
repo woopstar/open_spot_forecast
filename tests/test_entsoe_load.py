@@ -134,6 +134,72 @@ def test_no_data_and_bad_documents() -> None:
         parse_entsoe_load("<html>", TZ)
 
 
+def _blocks(business: str, points: dict[int, float], days: int = 7) -> str:
+    """A variable sized block (A03) series: equal points are left out."""
+    xml = "".join(
+        f"<Point><position>{position}</position><quantity>{value}</quantity></Point>"
+        for position, value in sorted(points.items())
+    )
+    return SERIES.format(
+        business=business,
+        start=WEEK_START.strftime("%Y-%m-%dT%H:%MZ"),
+        end=(WEEK_START + timedelta(days=days)).strftime("%Y-%m-%dT%H:%MZ"),
+        resolution="P1D",
+        points=xml,
+    ).replace("<curveType>A01</curveType>", "<curveType>A03</curveType>")
+
+
+def test_a_left_out_block_position_repeats_the_previous_value() -> None:
+    """ENTSO-E's live documents are A03: positions 2 and 7 are left out."""
+    text = DOCUMENT.format(
+        series=_blocks("A60", {1: 2100.0, 3: 2200.0, 4: 2250.0, 5: 2300.0, 6: 2000.0})
+        + _blocks("A61", {1: 3800.0, 3: 3900.0, 4: 3950.0, 5: 4000.0, 6: 3300.0})
+    )
+
+    days = parse_entsoe_load(text, TZ)
+
+    monday = date(2026, 9, 28)
+    assert list(days) == [monday + timedelta(days=n) for n in range(7)]
+    assert days[monday + timedelta(days=1)] == (2100.0, 3800.0)
+    assert days[monday + timedelta(days=6)] == (2000.0, 3300.0)
+
+
+def test_a_left_out_position_is_not_filled_in_a_point_curve() -> None:
+    """In an A01 series every point is given: a gap stays a gap."""
+    text = DOCUMENT.format(
+        series=_series("A60", LOWS[:3]).replace(
+            "<position>2</position>", "<position>5</position>"
+        )
+        + _series("A61", HIGHS[:3]).replace(
+            "<position>2</position>", "<position>5</position>"
+        )
+    )
+
+    assert list(parse_entsoe_load(text, TZ)) == [
+        date(2026, 9, 28),
+        date(2026, 9, 30),
+        date(2026, 10, 2),
+    ]
+
+
+def test_a_day_without_a_positive_load_is_missing() -> None:
+    """ENTSO-E publishes 0 for a day it has no forecast for (DK1, 2026-09-06)."""
+    lows = [*LOWS[:5], 0.0, LOWS[6]]
+    highs = [*HIGHS[:5], 0.0, HIGHS[6]]
+    text = DOCUMENT.format(series=_series("A60", lows) + _series("A61", highs))
+
+    days = parse_entsoe_load(text, TZ)
+
+    assert date(2026, 10, 3) not in days
+    assert len(days) == 6
+    assert min(row["load"] for row in load_curve(days, TZ)) >= min(LOWS) - 1
+    # ... and so is a day whose minimum is above its maximum
+    swapped = DOCUMENT.format(
+        series=_series("A60", HIGHS[:2]) + _series("A61", LOWS[:2])
+    )
+    assert parse_entsoe_load(swapped, TZ) == {}
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -219,12 +285,16 @@ def storage(tmp_path: Path) -> Iterator[LearningStorage]:
     store.close()
 
 
+def _period_start(params: dict) -> datetime:
+    return datetime.strptime(params["periodStart"], "%Y%m%d%H%M").replace(tzinfo=UTC)
+
+
 class FakeEntsoe:
-    """ENTSO-E's answers, recording every request."""
+    """ENTSO-E's answers, recording every request (one ISO week each)."""
 
     def __init__(self) -> None:
-        self.answer: Callable[[dict], HttpResponse | None] = lambda _p: HttpResponse(
-            200, _week(WEEK_START - timedelta(days=1), 7)
+        self.answer: Callable[[dict], HttpResponse | None] = lambda p: HttpResponse(
+            200, _week(_period_start(p), 7)
         )
         self.calls: list[tuple[str, dict]] = []
 
@@ -254,35 +324,80 @@ def _source(storage: LearningStorage) -> EntsoeLoadSource:
     return EntsoeLoadSource(hass, storage, "DK1", KEY)
 
 
+def _request(monday: datetime, days: int = 7) -> tuple[str, dict]:
+    return (
+        "ENTSO-E",
+        {
+            "documentType": "A65",
+            "processType": "A31",
+            "outBiddingZone_Domain": "10YDK-1--------W",
+            "periodStart": monday.strftime("%Y%m%d%H%M"),
+            "periodEnd": (monday + timedelta(days=days)).strftime("%Y%m%d%H%M"),
+            "securityToken": KEY,
+        },
+    )
+
+
 @pytest.mark.asyncio
-async def test_a_range_is_fetched_with_a_day_on_each_side(
+async def test_a_range_is_fetched_as_its_week_and_the_weeks_on_each_side(
     storage: LearningStorage, entsoe: FakeEntsoe
 ) -> None:
-    """Monday to Wednesday: the curve needs Sunday's and Thursday's anchors."""
+    """Monday to Wednesday: ENTSO-E answers one ISO week per request, so the
+    whole week is stored; the curve needs the previous Sunday's and the next
+    Monday's anchors, so the weeks on each side are fetched too."""
     start, end = WEEK_START, WEEK_START + timedelta(days=3)
 
     assert await _source(storage).async_update(start, end) is True
 
+    week = timedelta(weeks=1)
     assert entsoe.calls == [
-        (
-            "ENTSO-E",
-            {
-                "documentType": "A65",
-                "processType": "A31",
-                "outBiddingZone_Domain": "10YDK-1--------W",
-                "periodStart": "202609262200",
-                "periodEnd": "202610012200",
-                "securityToken": KEY,
-            },
-        )
+        _request(WEEK_START - week),
+        _request(WEEK_START),
+        _request(WEEK_START + week),
     ]
-    rows = storage.load_series(
-        ENTSOE_LOAD, start - timedelta(days=2), end + timedelta(days=2)
-    )
+    rows = storage.load_series(ENTSOE_LOAD, start - week, end + week)
     assert rows[0]["timestamp"] == "2026-09-27T22:00:00Z"
-    assert rows[-1]["timestamp"] == "2026-09-30T21:45:00Z"
-    assert len(rows) == 3 * 96
+    assert rows[-1]["timestamp"] == "2026-10-04T21:45:00Z"
+    assert len(rows) == 7 * 96
     assert all(1500 < row["load"] < 4500 for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_week_is_requested_once_per_update(
+    storage: LearningStorage, entsoe: FakeEntsoe
+) -> None:
+    """Two weeks: the weeks shared by neighbouring requests are not fetched twice."""
+    start, end = WEEK_START, WEEK_START + timedelta(days=10)
+
+    assert await _source(storage).async_update(start, end) is True
+
+    week = timedelta(weeks=1)
+    assert [c[1]["periodStart"] for c in entsoe.calls] == [
+        (WEEK_START + n * week).strftime("%Y%m%d%H%M") for n in (-1, 0, 1, 2)
+    ]
+    rows = storage.load_series(ENTSOE_LOAD, start, end)
+    assert len(rows) == 10 * 96
+
+
+@pytest.mark.asyncio
+async def test_a_missing_neighbouring_week_ends_the_curve_at_its_anchors(
+    storage: LearningStorage, entsoe: FakeEntsoe
+) -> None:
+    """Only the week itself is published: the curve runs from Monday 03:00
+    to Sunday 19:00, and the edges stay holes to be asked for again."""
+    entsoe.answer = lambda p: (
+        HttpResponse(200, _week(WEEK_START, 7))
+        if _period_start(p) == WEEK_START
+        else HttpResponse(400, NO_DATA)
+    )
+    start, end = WEEK_START, WEEK_START + timedelta(weeks=1)
+
+    assert await _source(storage).async_update(start, end) is True
+
+    rows = storage.load_series(ENTSOE_LOAD, start, end)
+    assert rows[0]["timestamp"] == _local(date(2026, 9, 28), 3)
+    assert rows[-1]["timestamp"] == _local(date(2026, 10, 4), 19)
+    assert len(rows) == 7 * 96 - 3 * 4 - 5 * 4 + 1
 
 
 @pytest.mark.parametrize(
@@ -323,7 +438,8 @@ async def test_no_matching_data_is_a_hole_not_a_failure(
     assert await source.async_update(WEEK_START, end) is False
     assert await source.async_update(WEEK_START, end) is False
 
-    assert len(entsoe.calls) == 1
+    # The week and its neighbours once; the hole is not asked for again yet
+    assert len(entsoe.calls) == 3
 
 
 def test_the_source_refreshes_from_yesterday() -> None:

@@ -169,3 +169,48 @@ def test_the_state_round_trips_through_json() -> None:
 )
 def test_an_unreadable_state_is_empty(stored: str | None) -> None:
     assert SourceState.from_json(stored).holes == []
+
+
+# --- ISO weeks (ENTSO-E's week-ahead documents, #114) ------------------------------
+
+
+def test_iso_weeks_touching_a_range() -> None:
+    from datetime import date
+
+    from custom_components.open_spot_forecast.time_series import iso_weeks
+
+    tz = ZoneInfo("Europe/Copenhagen")
+    # Wednesday 2026-09-30 12:00 to Monday 2026-10-12 00:00 local: W40 and W41
+    start = datetime(2026, 9, 30, 10, tzinfo=UTC)
+    end = datetime(2026, 10, 11, 22, tzinfo=UTC)
+
+    assert iso_weeks(start, end, tz) == [date(2026, 9, 28), date(2026, 10, 5)]
+    # A range inside one day is that day's week
+    assert iso_weeks(start, start + timedelta(hours=1), tz) == [date(2026, 9, 28)]
+    assert iso_weeks(start, start, tz) == []
+
+
+def test_week_chunks_are_local_mondays_in_utc_across_dst() -> None:
+    from custom_components.open_spot_forecast.time_series import week_chunks
+
+    tz = ZoneInfo("Europe/Copenhagen")
+    # Two ranges in the same week and one after the DST change (2026-10-25)
+    ranges = [
+        (datetime(2026, 10, 20, 12, tzinfo=UTC), datetime(2026, 10, 21, tzinfo=UTC)),
+        (datetime(2026, 10, 22, tzinfo=UTC), datetime(2026, 10, 22, 6, tzinfo=UTC)),
+        (datetime(2026, 10, 27, tzinfo=UTC), datetime(2026, 10, 28, tzinfo=UTC)),
+    ]
+
+    chunks = week_chunks(ranges, tz)
+
+    assert chunks == [
+        (
+            datetime(2026, 10, 18, 22, tzinfo=UTC),
+            datetime(2026, 10, 25, 23, tzinfo=UTC),
+        ),
+        (datetime(2026, 10, 25, 23, tzinfo=UTC), datetime(2026, 11, 1, 23, tzinfo=UTC)),
+    ]
+    # The week of the change is 169 hours long; the next one 168 again
+    assert chunks[0][1] - chunks[0][0] == timedelta(hours=169)
+    assert chunks[1][1] - chunks[1][0] == timedelta(hours=168)
+    assert week_chunks([], tz) == []

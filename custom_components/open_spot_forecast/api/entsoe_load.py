@@ -19,6 +19,7 @@ ENTSO-E security token.
 from __future__ import annotations
 
 import logging
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from typing import TYPE_CHECKING, Any
@@ -27,11 +28,12 @@ from zoneinfo import ZoneInfo
 import numpy as np
 
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from ..const import REGIONS
 from ..ml.series_storage import ENTSOE_LOAD
-from ..time_series import TimeRange, day_chunks
-from ..time_slots import UTC_KEY_FORMAT
+from ..time_series import TimeRange, iso_weeks, week_chunks
+from ..time_slots import UTC_KEY_FORMAT, local_midnight
 from .entsoe import (
     async_entsoe_get,
     child_text,
@@ -49,17 +51,22 @@ _LOGGER = logging.getLogger(__name__)
 
 _SLOT_SECONDS = 15 * 60
 _DAY = timedelta(days=1)
-# One request covers at most this many local days
-_MAX_REQUEST_DAYS = 31
 _MINIMUM, _MAXIMUM = "A60", "A61"
+# curveType: a point equal to the previous one is left out
+_VARIABLE_BLOCKS = "A03"
+_WEEK = timedelta(weeks=1)
 
 
 def parse_entsoe_load(text: str, tz: tzinfo) -> dict[date, tuple[float, float]]:
     """Return the (minimum, maximum) load forecast in MW per local day.
 
-    A day needs both values. Points finer than a day are combined per local
-    day (the lowest minimum, the highest maximum). An acknowledgement ("no
-    matching data") has no days.
+    A day needs both values, and both must be positive: ENTSO-E publishes
+    ``0`` for a day it has no forecast for, which is no load. Points finer
+    than a day are combined per local day (the lowest minimum, the highest
+    maximum). In a variable sized block period (``curveType`` A03) a point
+    equal to the one before it is left out, so a missing position repeats
+    the previous quantity. An acknowledgement ("no matching data") has no
+    days.
 
     Raises:
         ValueError: If the text is not XML.
@@ -70,27 +77,57 @@ def parse_entsoe_load(text: str, tz: tzinfo) -> dict[date, tuple[float, float]]:
         if values is None:
             continue
         pick = min if values is extremes[_MINIMUM] else max
+        blocks = child_text(series, "curveType") == _VARIABLE_BLOCKS
         for period in children(series, "Period"):
             bounds = period_bounds(period)
             if bounds is None:
                 continue
-            start, _, step = bounds
+            start, end, step = bounds
             first_day = start.astimezone(tz).date()
-            for point in children(period, "Point"):
-                position = child_text(point, "position")
-                quantity = child_text(point, "quantity")
-                if not position or not quantity:
-                    continue
-                offset = (int(position) - 1) * step
+            for position, load in _quantities(period, blocks, start, end, step):
+                offset = (position - 1) * step
                 day = (
                     first_day + timedelta(days=offset.days)
                     if step >= _DAY
                     else (start + offset).astimezone(tz).date()
                 )
-                load = float(quantity)
                 values[day] = pick(values.get(day, load), load)
     lows, highs = extremes[_MINIMUM], extremes[_MAXIMUM]
-    return {day: (lows[day], highs[day]) for day in sorted(lows.keys() & highs.keys())}
+    return {
+        day: (lows[day], highs[day])
+        for day in sorted(lows.keys() & highs.keys())
+        if 0 < lows[day] <= highs[day]
+    }
+
+
+def _quantities(
+    period: ET.Element,
+    blocks: bool,
+    start: datetime,
+    end: datetime | None,
+    step: timedelta,
+) -> Iterator[tuple[int, float]]:
+    """Yield a period's (position, quantity) points.
+
+    In a variable sized block period the positions left out repeat the
+    previous quantity, up to the period's end.
+    """
+    points: dict[int, float] = {}
+    for point in children(period, "Point"):
+        number = child_text(point, "position")
+        quantity = child_text(point, "quantity")
+        if number and quantity:
+            points[int(number)] = float(quantity)
+    if not points:
+        return
+    last = max(points)
+    if blocks and end is not None:
+        last = max(last, int((end - start) / step))
+    load: float | None = None
+    for position in range(1, last + 1):
+        load = points.get(position, load)
+        if load is not None and (blocks or position in points):
+            yield position, load
 
 
 def natural_cubic_spline(x: np.ndarray, y: np.ndarray, at: np.ndarray) -> np.ndarray:
@@ -206,23 +243,47 @@ class EntsoeLoadSource(TimeSeriesSource):
         self.eic = str(zone["entsoe"])
         self.tz = ZoneInfo(str(zone["tz"]))
         self._api_key = api_key
+        # Parsed weeks, by Monday: (fetched at, daily extremes)
+        self._weeks: dict[date, tuple[datetime, dict[date, tuple[float, float]]]] = {}
 
     def refresh_from(self, now: datetime) -> datetime | None:
         """Re-fetch from yesterday on: ENTSO-E revises the week ahead."""
         return now - _DAY
 
     def chunks(self, ranges: list[TimeRange]) -> list[TimeRange]:
-        """Return requests of whole local days, at most ``_MAX_REQUEST_DAYS`` each."""
-        return day_chunks(ranges, self.tz, _MAX_REQUEST_DAYS)
+        """Return one request per ISO week: ENTSO-E answers one week at a time."""
+        return week_chunks(ranges, self.tz)
 
     async def _fetch(
         self, start: datetime, end: datetime
     ) -> list[dict[str, Any]] | None:
-        """Fetch the days of ``[start, end)`` and one on each side.
+        """Fetch the weeks of ``[start, end)`` and a day on each side.
 
-        The neighbouring days' anchors shape the curve at the range's edges;
-        only the range's own slots are returned.
+        ENTSO-E answers one week-ahead document per request, the ISO week of
+        ``periodStart``, whatever the period's end. The neighbouring days'
+        anchors shape the curve at the range's edges, so the adjacent weeks
+        are fetched too (each week once per ``revalidate_after``); only the
+        range's own slots are returned.
         """
+        days: dict[date, tuple[float, float]] = {}
+        for monday in iso_weeks(start - _DAY, end + _DAY, self.tz):
+            week = await self._week(monday)
+            if week is None:
+                return None
+            days.update(week)
+        return [
+            row
+            for row in load_curve(days, self.tz)
+            if start <= datetime.fromisoformat(row["timestamp"]) < end
+        ]
+
+    async def _week(self, monday: date) -> dict[date, tuple[float, float]] | None:
+        """Return the week's daily extremes, fetched once per ``revalidate_after``."""
+        now = dt_util.utcnow()
+        cached = self._weeks.get(monday)
+        if cached is not None and now - cached[0] < self.revalidate_after:
+            return cached[1]
+        week_start = local_midnight(monday, self.tz)
         text = await async_entsoe_get(
             self.hass,
             self._api_key,
@@ -231,7 +292,7 @@ class EntsoeLoadSource(TimeSeriesSource):
                 "processType": "A31",
                 "outBiddingZone_Domain": self.eic,
             }
-            | entsoe_period(start - _DAY, end + _DAY),
+            | entsoe_period(week_start, week_start + _WEEK),
         )
         if text is None:
             return None
@@ -240,8 +301,5 @@ class EntsoeLoadSource(TimeSeriesSource):
         except ValueError as err:
             _LOGGER.warning("Unusable ENTSO-E load forecast: %s", err)
             return None
-        return [
-            row
-            for row in load_curve(days, self.tz)
-            if start <= datetime.fromisoformat(row["timestamp"]) < end
-        ]
+        self._weeks[monday] = (now, days)
+        return days

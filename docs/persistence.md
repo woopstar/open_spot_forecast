@@ -155,8 +155,9 @@ source fetches only what it is missing:
   `openmeteo_weather` is `OPENMETEO_WEATHER` (15-minute, keyed by point,
   #22: a slot counts as stored when every point of the region has it) and
   `entsoe_load` is `ENTSOE_LOAD` (15-minute, #30: the curve built from each
-  day's forecast minimum and maximum, requested in whole local days with a
-  day on each side for the curve's edges). With the cross-border model
+  day's forecast minimum and maximum, requested in whole ISO weeks, one
+  document each, with the weeks on each side for the curve's edges, #114).
+  With the cross-border model
   (#29), `neighbour_prices(zone)` gives each neighbour's prices a spec of
   its own in the shared `neighbour_prices` table (keyed by zone), and each
   neighbour's Open-Meteo points go into `openmeteo_weather` under a spec
