@@ -28,8 +28,8 @@ and continuously improves accuracy via per-slot bias correction.
   trained on archived forecasts, like the forecasts it predicts from) and
   market-demand features, implemented in pure NumPy (no scikit-learn
   dependency)
-- **Trains from day one** — the training window (default 60 days,
-  configurable up to 180) of day-ahead prices and archived zone weather is
+- **Trains from day one** — the training window (default 180 days,
+  configurable down to 30) of day-ahead prices and archived zone weather is
   backfilled in the background at setup (Nordpool prognoses only for the
   last 6 days, all Nordpool serves without a login), so the ML model is
   trained within minutes instead of weeks

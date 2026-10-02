@@ -385,16 +385,19 @@ A new install therefore predicts at once and gains the columns when the
 backfill has fetched the neighbours' history (which triggers a retrain).
 
 **Cost.** Each training fits `2 × neighbours` extra models on the training
-window and builds the neighbours' feature rows. With a 60-day window and
-synthetic full history, a DK1 training (stage 1, stage 2 and the holdout
-copy) takes 3.4 s on one aarch64 core of the development container with the
-option and 0.5 s without it. It was not measured on a Raspberry Pi: a Pi 4
-core is roughly 5-10 times slower, so expect 20-35 s per training there, in
-the executor, a few times a day (whenever an input changed); the
+window and builds the neighbours' feature rows. With synthetic full
+history, a DK1 training (stage 1, stage 2 and the holdout copy) takes 3.3 s
+at a 60-day window and 9.6 s at the default 180 days on one aarch64 core of
+the development container with the option, against 0.45 s and 1.1 s without
+it (see [Training Window](#training-window) → Footprint). It was not
+measured on a Raspberry Pi: a Pi 4 core is roughly 5-10 times slower, so
+expect 50-100 s per training there at the default window, in the executor,
+a few times a day (whenever an input changed); the
 [live-accuracy procedure](#live-accuracy-94) measures it from the log. Prediction
 only adds the stage-1 forecasts of the forecast week's slots. The database
-grows by about 19 MB at 60 days: the neighbours' prices and their weather
-(DK1: 23 weather points besides its own 4). The option is off by default
+grows by about 19 MB at 60 days and 60-70 MB at 180 days: the neighbours'
+prices and their weather (DK1: 23 weather points besides its own 4). The
+option is off by default
 because of that cost and the extra requests (energy-charts and Open-Meteo,
 per neighbour), not because of accuracy.
 
@@ -555,7 +558,7 @@ uses the rows twice:
 2. **Live model.** `price_model` is fitted on 100 % of the rows. The most
    recent days are the most similar to the days being predicted, so they
    must be part of the model: fitting on the oldest 80 % only would ignore
-   the newest ~12 of 60 days. The backtest's `current` row (see
+   the newest ~36 of 180 days. The backtest's `current` row (see
    [Backtesting](#backtesting)) also fits on its whole window.
 
 The split is chronological, never shuffled, so the holdout rows are always
@@ -575,9 +578,10 @@ executor.
 ## Training Window
 
 The model trains on the last `training_days` of prices (option
-**Training days**, 30-180, default **60**, #24): `max_history_days` on the
-predictor. The window also sets what is backfilled and how much history is
-kept (window + 2 days, see [persistence](persistence.md#retention)).
+**Training days**, 30-180, default **180**, #24, #121): `max_history_days`
+on the predictor. The window also sets what is backfilled and how much
+history is kept (window + 2 days, see
+[persistence](persistence.md#retention)).
 
 **Backfill.** At setup and after midnight a background task fills the
 window's missing days, whatever the displayed price source: the day-ahead
@@ -591,36 +595,149 @@ interrupted backfill resumes where it stopped and a repeat is a no-op. The
 heuristic stays the fallback while the backfill has not delivered (e.g. no
 network).
 
-**Why 60 days, not 180.** With the zone weather, the window sweep on DK1
-(365 daily origins, 2025-09-24 to 2026-09-23, EUR ct/kWh, NumPy GBM):
+**Why 180 days (#121).** The default was 60 days from the #24 sweep (zone
+weather, no sun features, days 1-3 scored): 60 days was then the best
+window at every horizon and 180 days (EpexPredictor's window) 0.13 ct/kWh
+worse at 1d, because the model had no seasonal feature and older days
+mostly added prices from another price level. The sun features (#25)
+narrowed that to 0.03 at 1d and reversed it at 2d and 3d. The sweep below
+re-ran the choice with the current feature set, on DK1 and DK2, 365 daily
+origins from 2025-09-24 to 2026-09-23, retrained daily, `--horizon-days 7`,
+NumPy GBM. Cells are MAE / RMSE in EUR ct/kWh; the last column is the mean
+MAE over days 2-7 (after 13:00, day 1 is mostly known prices) and decides
+the default. Four configurations: the single-stage model without and with
+the gas price (`--gas`; on in production for every region in
+`GAS_PRICE_REGIONS`, DK1 and DK2 included) and the cross-border model
+(`--cross-border`, option off by default) without and with it. Recorded
+2026-10-02.
 
-| Window | 1d MAE | 1d RMSE | 2d MAE | 2d RMSE | 3d MAE | 3d RMSE |
-| ------ | -----: | ------: | -----: | ------: | -----: | ------: |
-| 30 d   |   2.41 |    3.67 |   2.62 |    3.90 |   2.70 |    4.00 |
-| 60 d   |   2.40 |    3.62 |   2.57 |    3.80 |   2.62 |    3.87 |
-| 90 d   |   2.45 |    3.66 |   2.58 |    3.80 |   2.64 |    3.88 |
-| 120 d  |   2.48 |    3.69 |   2.60 |    3.84 |   2.65 |    3.90 |
-| 180 d  |   2.53 |    3.78 |   2.64 |    3.90 |   2.70 |    3.98 |
+**DK1, single-stage**
 
-60 days is the best window at every horizon; 180 days (EpexPredictor's,
-the issue's proposal) is 0.13 ct/kWh worse at 1d. The model had no
-seasonal feature, so older days mostly added prices from another price
-level. Longer windows stay selectable.
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.32 / 3.56 | 2.52 / 3.79 | 2.60 / 3.87 | 2.65 / 3.94 | 2.64 / 3.95 | 2.67 / 3.96 | 2.72 / 4.02 |     2.63 |
+| 60 d   | 2.29 / 3.46 | 2.46 / 3.66 | 2.52 / 3.73 | 2.54 / 3.77 | 2.54 / 3.76 | 2.57 / 3.79 | 2.58 / 3.81 |     2.54 |
+| 90 d   | 2.30 / 3.46 | 2.44 / 3.62 | 2.49 / 3.68 | 2.51 / 3.71 | 2.53 / 3.73 | 2.55 / 3.76 | 2.57 / 3.78 |     2.52 |
+| 120 d  | 2.29 / 3.46 | 2.41 / 3.60 | 2.46 / 3.67 | 2.49 / 3.70 | 2.50 / 3.71 | 2.51 / 3.73 | 2.53 / 3.76 | **2.48** |
+| 180 d  | 2.31 / 3.50 | 2.43 / 3.64 | 2.49 / 3.72 | 2.51 / 3.73 | 2.52 / 3.74 | 2.53 / 3.75 | 2.55 / 3.79 |     2.50 |
 
-The sun features (#25) carry the season (day length, noon elevation) and
-narrowed the gap: with them, 60 days scores 2.29 / 2.46 / 2.52 and 180 days
-2.32 / 2.43 / 2.49 (1d / 2d / 3d MAE, see
-[Backtesting](#sun-position-and-15-minute-time-25)), so 180 days is now
-0.03 worse at 1d and 0.03 better at 2d and 3d. The default stays 60 days
-until a new window sweep says otherwise.
+**DK1, single-stage + gas**
 
-**Footprint** (synthetic full history, DK1's four weather points): the
-database holds about 8 MB at 60 days and 20 MB at 180 days, and a training
-run (live fit plus holdout fit) takes 0.3 s and 0.8 s on one aarch64 core
-here; expect a few seconds on a Raspberry Pi 4. The Nordpool-masked copies
-(#91) double the rows: one production fit on random rows takes 0.2 → 0.3 s
-at 60 days and 0.4 → 0.7 s at 180 days. The rows in memory while
-training (34,560 × 24 at 180 days, with the copies) are a few MB.
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.22 / 3.44 | 2.44 / 3.70 | 2.54 / 3.84 | 2.63 / 3.97 | 2.65 / 3.98 | 2.66 / 4.00 | 2.70 / 4.02 |     2.60 |
+| 60 d   | 2.19 / 3.36 | 2.37 / 3.55 | 2.43 / 3.67 | 2.47 / 3.75 | 2.53 / 3.84 | 2.58 / 3.87 | 2.62 / 3.90 |     2.50 |
+| 90 d   | 2.21 / 3.39 | 2.36 / 3.56 | 2.44 / 3.67 | 2.49 / 3.76 | 2.52 / 3.81 | 2.55 / 3.84 | 2.58 / 3.86 |     2.49 |
+| 120 d  | 2.20 / 3.39 | 2.34 / 3.55 | 2.42 / 3.66 | 2.48 / 3.76 | 2.50 / 3.80 | 2.52 / 3.81 | 2.54 / 3.82 |     2.47 |
+| 180 d  | 2.20 / 3.41 | 2.31 / 3.54 | 2.40 / 3.65 | 2.45 / 3.72 | 2.47 / 3.75 | 2.49 / 3.77 | 2.52 / 3.81 | **2.44** |
+
+**DK1, cross-border**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 1.97 / 3.12 | 2.13 / 3.29 | 2.25 / 3.44 | 2.29 / 3.48 | 2.30 / 3.50 | 2.34 / 3.53 | 2.38 / 3.62 |     2.28 |
+| 60 d   | 1.90 / 3.00 | 2.02 / 3.11 | 2.07 / 3.18 | 2.10 / 3.20 | 2.10 / 3.21 | 2.14 / 3.27 | 2.16 / 3.35 |     2.10 |
+| 90 d   | 1.88 / 2.98 | 1.99 / 3.09 | 2.05 / 3.16 | 2.09 / 3.21 | 2.11 / 3.27 | 2.13 / 3.31 | 2.16 / 3.36 |     2.09 |
+| 120 d  | 1.90 / 2.97 | 1.99 / 3.07 | 2.03 / 3.12 | 2.05 / 3.17 | 2.07 / 3.20 | 2.11 / 3.25 | 2.13 / 3.31 | **2.06** |
+| 180 d  | 1.94 / 3.00 | 2.03 / 3.09 | 2.07 / 3.14 | 2.09 / 3.18 | 2.11 / 3.20 | 2.14 / 3.25 | 2.16 / 3.31 |     2.10 |
+
+**DK1, cross-border + gas**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 1.92 / 3.06 | 2.09 / 3.24 | 2.22 / 3.42 | 2.26 / 3.47 | 2.27 / 3.49 | 2.33 / 3.54 | 2.37 / 3.63 |     2.26 |
+| 60 d   | 1.84 / 2.92 | 1.97 / 3.05 | 2.05 / 3.16 | 2.08 / 3.20 | 2.11 / 3.25 | 2.14 / 3.30 | 2.17 / 3.37 |     2.09 |
+| 90 d   | 1.77 / 2.86 | 1.89 / 2.98 | 1.97 / 3.09 | 2.01 / 3.15 | 2.05 / 3.25 | 2.09 / 3.29 | 2.12 / 3.36 |     2.02 |
+| 120 d  | 1.79 / 2.85 | 1.90 / 2.98 | 1.97 / 3.07 | 2.00 / 3.13 | 2.04 / 3.20 | 2.07 / 3.24 | 2.08 / 3.29 |     2.01 |
+| 180 d  | 1.79 / 2.86 | 1.88 / 2.96 | 1.94 / 3.02 | 1.98 / 3.08 | 1.98 / 3.12 | 2.01 / 3.16 | 2.04 / 3.22 | **1.97** |
+
+**DK2, single-stage**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.55 / 3.85 | 2.76 / 4.10 | 2.83 / 4.16 | 2.86 / 4.21 | 2.87 / 4.23 | 2.86 / 4.23 | 2.89 / 4.27 |     2.85 |
+| 60 d   | 2.52 / 3.78 | 2.69 / 3.99 | 2.73 / 4.04 | 2.75 / 4.05 | 2.76 / 4.07 | 2.76 / 4.06 | 2.79 / 4.11 |     2.75 |
+| 90 d   | 2.50 / 3.73 | 2.65 / 3.90 | 2.69 / 3.95 | 2.70 / 3.97 | 2.73 / 4.00 | 2.74 / 4.00 | 2.75 / 4.03 |     2.71 |
+| 120 d  | 2.52 / 3.76 | 2.65 / 3.91 | 2.68 / 3.96 | 2.70 / 3.98 | 2.72 / 4.00 | 2.73 / 4.01 | 2.74 / 4.04 | **2.70** |
+| 180 d  | 2.55 / 3.83 | 2.65 / 3.96 | 2.69 / 4.00 | 2.71 / 4.02 | 2.73 / 4.04 | 2.74 / 4.06 | 2.76 / 4.08 |     2.71 |
+
+**DK2, single-stage + gas**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.50 / 3.80 | 2.75 / 4.09 | 2.83 / 4.19 | 2.88 / 4.28 | 2.89 / 4.33 | 2.88 / 4.29 | 2.92 / 4.32 |     2.86 |
+| 60 d   | 2.46 / 3.73 | 2.64 / 3.95 | 2.70 / 4.05 | 2.73 / 4.11 | 2.78 / 4.17 | 2.74 / 4.12 | 2.75 / 4.13 |     2.72 |
+| 90 d   | 2.45 / 3.71 | 2.62 / 3.91 | 2.67 / 3.98 | 2.70 / 4.04 | 2.75 / 4.10 | 2.75 / 4.08 | 2.75 / 4.11 |     2.71 |
+| 120 d  | 2.44 / 3.72 | 2.60 / 3.91 | 2.65 / 3.97 | 2.69 / 4.03 | 2.72 / 4.07 | 2.74 / 4.09 | 2.73 / 4.11 |     2.69 |
+| 180 d  | 2.46 / 3.74 | 2.57 / 3.88 | 2.60 / 3.93 | 2.64 / 3.99 | 2.68 / 4.03 | 2.70 / 4.04 | 2.69 / 4.04 | **2.65** |
+
+**DK2, cross-border**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.22 / 3.45 | 2.40 / 3.67 | 2.49 / 3.77 | 2.55 / 3.87 | 2.55 / 3.85 | 2.58 / 3.88 | 2.59 / 3.89 |     2.53 |
+| 60 d   | 2.12 / 3.27 | 2.29 / 3.50 | 2.34 / 3.57 | 2.35 / 3.57 | 2.37 / 3.60 | 2.37 / 3.61 | 2.39 / 3.64 |     2.35 |
+| 90 d   | 2.10 / 3.25 | 2.24 / 3.41 | 2.29 / 3.49 | 2.31 / 3.51 | 2.33 / 3.55 | 2.36 / 3.58 | 2.37 / 3.62 |     2.32 |
+| 120 d  | 2.12 / 3.26 | 2.24 / 3.41 | 2.28 / 3.46 | 2.30 / 3.51 | 2.32 / 3.55 | 2.34 / 3.58 | 2.36 / 3.63 |     2.31 |
+| 180 d  | 2.12 / 3.25 | 2.22 / 3.39 | 2.26 / 3.44 | 2.28 / 3.47 | 2.30 / 3.50 | 2.31 / 3.51 | 2.33 / 3.56 | **2.28** |
+
+**DK2, cross-border + gas**
+
+| Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE |
+| ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | -------: |
+| 30 d   | 2.17 / 3.38 | 2.38 / 3.63 | 2.46 / 3.74 | 2.51 / 3.83 | 2.53 / 3.85 | 2.56 / 3.87 | 2.57 / 3.87 |     2.50 |
+| 60 d   | 2.02 / 3.16 | 2.20 / 3.36 | 2.24 / 3.45 | 2.27 / 3.48 | 2.30 / 3.52 | 2.31 / 3.52 | 2.32 / 3.58 |     2.27 |
+| 90 d   | 1.99 / 3.13 | 2.11 / 3.29 | 2.19 / 3.41 | 2.22 / 3.42 | 2.26 / 3.49 | 2.27 / 3.49 | 2.29 / 3.54 |     2.22 |
+| 120 d  | 1.97 / 3.12 | 2.09 / 3.27 | 2.15 / 3.35 | 2.18 / 3.38 | 2.21 / 3.44 | 2.23 / 3.45 | 2.23 / 3.49 |     2.18 |
+| 180 d  | 1.95 / 3.07 | 2.03 / 3.18 | 2.08 / 3.23 | 2.11 / 3.28 | 2.12 / 3.32 | 2.15 / 3.34 | 2.15 / 3.37 | **2.11** |
+
+The naive baseline (same slot last week) is 3.93-4.00 (DK1) and 4.12-4.20
+(DK2) at every horizon.
+
+- **With the gas price, the longest window wins everywhere.** 180 days has
+  the lowest days-2-7 MAE in all four gas configurations: 0.06-0.07 under
+  60 days with the single-stage model and 0.12-0.16 with the cross-border
+  model, and the gain grows with the horizon (at 7d, 0.06-0.17). Day 1 is
+  unchanged with the single-stage model (within 0.01) and 0.05-0.07 better
+  with the cross-border model. The gas price carries the price level, so older
+  days no longer add prices from another level, which was what made them
+  harmful in #24.
+- **Without the gas price, 120 days is best** on DK1 and on single-stage
+  DK2, with 180 days within 0.01-0.04 of it, and 180 days is best on DK2
+  with the cross-border model; every one of them beats 60 days by
+  0.04-0.07. 180 days is 0.02-0.04 worse than 60 days at 1d there: without
+  the price level, the oldest days still cost a little on the day the known
+  prices dominate.
+- **Every window from 90 days up beats 60 days** at days 2-7 in all eight
+  tables, and 30 days is the worst everywhere: the 7-day horizon rewards
+  more history than the 3-day one of #24 did.
+- The default is therefore **180 days** in every configuration (the best
+  window does not differ with the cross-border option, so it is one number,
+  not tied to the option). The window stays selectable down to 30 days for
+  installs that must keep the footprint small.
+
+**Footprint.** One training (live fit plus holdout fit, with the
+Nordpool-masked copies of #91) on synthetic full history (every slot of the
+window: prices, the zone weather at DK1's four points and, with the option,
+the five neighbours' prices and weather), on one aarch64 core of the
+development container, recorded 2026-10-02:
+
+| Window | Single-stage | Cross-border |
+| ------ | -----------: | -----------: |
+| 60 d   |       0.45 s |        3.3 s |
+| 120 d  |       0.77 s |        6.4 s |
+| 180 d  |        1.1 s |        9.6 s |
+
+A Raspberry Pi 4 core is roughly 5-10 times slower, so expect 5-10 s per
+training at the default there, and 50-100 s with the cross-border model, in
+the executor, a few times a day (whenever an input changed, see
+[Retraining](#retraining)); the [live-accuracy procedure](#live-accuracy-94)
+measures it from the log. The database holds about 8 MB at 60 days and 20
+MB at 180 days with the single-stage model; the cross-border model adds the
+neighbours' prices and weather, about 19 MB at 60 days and 60-70 MB at
+180 days. The rows in memory while training (34,560 × 24 at 180 days, with
+the copies) are a few MB. A new install's backfill fetches three times the
+days of the old default; the sources only request what is missing.
 
 ## Target: Raw Spot Price, VAT at Output
 

@@ -110,7 +110,7 @@ price patterns — the 14:00-14:15 slot can have very different bias than
 - ~2,688 new predictions daily
 - A prediction is matched when its slot arrives
 - Multiple forecast runs for the same timestamp = multiple learning samples
-- Predictions stored longer ago than the training window (default 60 days)
+- Predictions stored longer ago than the training window (default 180 days)
   are pruned automatically. The longest
   lead time is ~8.5 days (7 days past the end of the known prices), so every
   prediction can be matched before it is pruned

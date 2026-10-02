@@ -228,12 +228,12 @@ async def test_options_init_falls_back_to_default_region():
 
 @pytest.mark.asyncio
 async def test_the_training_window_is_configurable() -> None:
-    """Default 60 days (the backtest's best), up to 180 (#24)."""
+    """Default 180 days (the #121 sweep's best), from 30 (#24)."""
     flow = _config_flow()
     await flow.async_step_sensors()
     schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
     key = next(k for k in schema if str(k) == "training_days")
-    assert key.default() == "60"
+    assert key.default() == "180"
     assert schema[key].config["options"] == ["30", "60", "90", "120", "180"]
 
     options = _options_flow()
@@ -248,7 +248,7 @@ async def test_the_training_window_is_configurable() -> None:
     [
         ({"training_days": 120}, {"training_days": 30}, "120"),
         ({}, {"training_days": 30}, "30"),
-        ({}, {}, "60"),
+        ({}, {}, "180"),
     ],
 )
 async def test_the_options_flow_preselects_the_saved_training_window(

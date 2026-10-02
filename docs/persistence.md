@@ -208,7 +208,7 @@ resumes where it stopped.
 
 ### Retention
 
-History is kept for the training window (**Training days**, default 60,
+History is kept for the training window (**Training days**, default 180,
 `max_history_days`, #24) plus
 2 days. Once a day (at midnight) older `weather_history` snapshots,
 `price_history` days, `nordpool_prognoses` rows, `openmeteo_weather` rows,
