@@ -22,10 +22,12 @@ from .const import (
     ATTRIBUTE_FORMAT_COMPACT,
     CONF_ATTRIBUTE_FORMAT,
     CONF_INCLUDE_KNOWN_PRICES,
+    CONF_PREDBAT_SENSORS,
     CONF_PREDICTION_HOURS,
     CONF_REGION,
     DEFAULT_ATTRIBUTE_FORMAT,
     DEFAULT_INCLUDE_KNOWN_PRICES,
+    DEFAULT_PREDBAT_SENSORS,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_REGION,
     DETAILED_MAX_PREDICTION_HOURS,
@@ -36,6 +38,7 @@ from .const import (
 )
 from .evaluation_sensor import ForecastEvaluationSensor
 from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
+from .predbat_sensor import build_predbat_sensors
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
 from .price_source import PriceSettings
@@ -149,6 +152,9 @@ async def async_setup_entry(
         sensors.append(
             ForecastEvaluationSensor(hass, entry, api_data, currency, output)
         )
+    if entry.options.get(CONF_PREDBAT_SENSORS, DEFAULT_PREDBAT_SENSORS):
+        # Predbat's import/export, today/tomorrow rate entities (#124)
+        sensors.extend(build_predbat_sensors(hass, entry, api_data, currency, output))
 
     async_add_entities(sensors, True)
 

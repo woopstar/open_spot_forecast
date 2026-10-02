@@ -21,6 +21,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `sensor.py`              | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                           |
 | `evaluation_sensor.py`   | Diagnostic `Forecast evaluation` sensor (#36): MAE and s/t/a arrays of the day-ahead prediction vs the actual price, last 48 h                              |
 | `accuracy_sensor.py`     | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                    |
+| `predbat_sensor.py`      | Optional Predbat rate entities (#124): import/export × today/tomorrow, Stromligning's `prices_today` / `prices_tomorrow` shape, `kr/kWh`, budget-trimmed    |
 | `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                           |
 | `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                                                                         |
 | `price_series.py`        | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                               |

@@ -30,6 +30,8 @@ from .const import (
     CONF_HOURLY_AVERAGE,
     CONF_INCLUDE_KNOWN_PRICES,
     CONF_PRECISION,
+    CONF_PREDBAT_SENSORS,
+    CONF_PREDBAT_TARIFF,
     CONF_PREDICTION_HOURS,
     CONF_PRICE_SOURCE,
     CONF_PRICE_TYPE,
@@ -52,6 +54,8 @@ from .const import (
     DEFAULT_HOURLY_AVERAGE,
     DEFAULT_INCLUDE_KNOWN_PRICES,
     DEFAULT_PRECISION,
+    DEFAULT_PREDBAT_SENSORS,
+    DEFAULT_PREDBAT_TARIFF,
     DEFAULT_PREDICTION_HOURS,
     DEFAULT_PRICE_SOURCE,
     DEFAULT_PRICE_TYPE,
@@ -355,6 +359,19 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES
                     ),
                 ): bool,
+                # Predbat's rate entities and their tariff fallback (#124)
+                vol.Optional(
+                    CONF_PREDBAT_SENSORS,
+                    default=self.config_entry.options.get(
+                        CONF_PREDBAT_SENSORS, DEFAULT_PREDBAT_SENSORS
+                    ),
+                ): bool,
+                vol.Optional(
+                    CONF_PREDBAT_TARIFF,
+                    default=self.config_entry.options.get(
+                        CONF_PREDBAT_TARIFF, DEFAULT_PREDBAT_TARIFF
+                    ),
+                ): vol.Coerce(float),
                 vol.Optional(
                     CONF_TRAINING_DAYS,
                     default=str(

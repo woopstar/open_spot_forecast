@@ -75,7 +75,9 @@
           "surcharge": "Surcharge per unit (added before VAT)",
           "hourly_average": "Hourly average prices",
           "attribute_format": "Forecast attribute format",
-          "include_known_prices": "Include confirmed prices in the forecast attribute"
+          "include_known_prices": "Include confirmed prices in the forecast attribute",
+          "predbat_sensors": "Predbat rate entities (import/export, today/tomorrow)",
+          "predbat_tariff": "Predbat fixed grid tariff per kWh excl. VAT (when no slot tariffs)"
         },
         "data_description": {
           "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged.",
@@ -83,7 +85,9 @@
           "hourly_average": "Show the mean of each hour's four 15-minute prices, for contracts billed by the hour. Takes effect after the integration reloads.",
           "attribute_format": "Detailed: one entry per interval with start, end, price, unit and confidence (up to 72 hours). Compact: parallel arrays of start times (s, unix seconds), prices (t) and confidences in percent (c), about six times smaller, so up to 168 hours fit Home Assistant's 16 KB attribute limit. Takes effect after the integration reloads.",
           "include_known_prices": "Start the forecast attribute at the current slot with the confirmed spot prices (source: actual), then the predictions (source: predicted), as one continuous series. In the compact format, known_count gives the number of confirmed entries. Takes effect after the integration reloads.",
-          "cross_border": "Two-stage model: learns the neighbouring bidding zones' prices from their weather and gives the forecasts to this zone's model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Lowers the forecast error by about a sixth in the backtest, but trains two extra models per neighbour and stores their prices and weather: each training takes several times longer (tens of seconds on a Raspberry Pi 4). Takes effect after the integration reloads."
+          "cross_border": "Two-stage model: learns the neighbouring bidding zones' prices from their weather and gives the forecasts to this zone's model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Lowers the forecast error by about a sixth in the backtest, but trains two extra models per neighbour and stores their prices and weather: each training takes several times longer (tens of seconds on a Raspberry Pi 4). Takes effect after the integration reloads.",
+          "predbat_sensors": "Add four sensors in the shape of Stromligning's rate entities for Predbat's apps.yaml: import today/tomorrow (the forecast with tariffs, surcharge and VAT, per kWh) and export today/tomorrow (the raw spot price excl. VAT). Today starts with the confirmed prices from midnight; tomorrow carries tomorrow and the following days as far as the attribute limit allows. Takes effect after the integration reloads.",
+          "predbat_tariff": "Grid tariff in your currency per kWh excl. VAT, added to the Predbat import price only when no per-slot tariff is known (the day-ahead source has none; Stromligning's consumer price already contains it, so keep 0 there). Takes effect after the integration reloads."
         }
       }
     }
@@ -116,6 +120,18 @@
       },
       "forecast_evaluation": {
         "name": "Forecast evaluation"
+      },
+      "predbat_import_today": {
+        "name": "Predbat import today"
+      },
+      "predbat_import_tomorrow": {
+        "name": "Predbat import tomorrow"
+      },
+      "predbat_export_today": {
+        "name": "Predbat export today"
+      },
+      "predbat_export_tomorrow": {
+        "name": "Predbat export tomorrow"
       }
     }
   },

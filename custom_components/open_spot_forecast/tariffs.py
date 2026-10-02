@@ -27,9 +27,15 @@ from .spot_prices import slot_prices
 class TariffSchedule:
     """Tariff (consumer − spot price, excl. VAT) by slot and by local time of day."""
 
-    def __init__(self, by_slot: dict[datetime, float]) -> None:
-        """Initialize from the known tariffs, keyed by UTC slot start."""
+    def __init__(self, by_slot: dict[datetime, float], default: float = 0.0) -> None:
+        """Initialize from the known tariffs, keyed by UTC slot start.
+
+        Args:
+            by_slot: The known tariffs by UTC slot start.
+            default: The tariff of every slot when none is known (#124).
+        """
         self._by_slot = by_slot
+        self._default = default
         self._by_time: dict[time, float] = {}
         # In time order, so each local time of day keeps its latest tariff
         for start in sorted(by_slot):
@@ -62,9 +68,14 @@ class TariffSchedule:
             }
         )
 
+    @classmethod
+    def fixed(cls, tariff: float) -> TariffSchedule:
+        """Return a schedule that gives every slot the same tariff (#124)."""
+        return cls({}, default=tariff)
+
     def __bool__(self) -> bool:
-        """Return whether any tariff is known."""
-        return bool(self._by_slot)
+        """Return whether any tariff is known (or a fixed one is set)."""
+        return bool(self._by_slot) or abs(self._default) > 1e-9
 
     def __len__(self) -> int:
         """Return the number of slots with a known tariff."""
@@ -79,14 +90,14 @@ class TariffSchedule:
         Returns:
             The slot's own tariff if it is known; else the latest known
             day's tariff at the same local time of day (or the latest
-            earlier time of day, for an hour a DST change skipped); 0.0 if
-            no tariff is known.
+            earlier time of day, for an hour a DST change skipped); the
+            default (0.0 unless fixed) if no tariff is known.
         """
         utc = start.astimezone(UTC)
         if utc in self._by_slot:
             return self._by_slot[utc]
         if not self._times:
-            return 0.0
+            return self._default
         local = dt_util.as_local(utc).time()
         tariff = self._by_time.get(local)
         if tariff is not None:

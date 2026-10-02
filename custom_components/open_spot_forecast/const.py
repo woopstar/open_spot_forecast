@@ -278,6 +278,23 @@ SOURCE_ACTUAL = "actual"
 SOURCE_PREDICTED = "predicted"
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
+# Predbat rate entities (#124): four sensors in the shape of Stromligning's
+# (attributes prices_today / prices_tomorrow of {start, end, price}), so
+# Predbat's apps.yaml can take OSF's forecast as its import and export rates.
+# Import is what the user pays (spot + tariff + surcharge, incl. VAT), export
+# the raw spot price excl. VAT. Off by default
+CONF_PREDBAT_SENSORS = "predbat_sensors"
+DEFAULT_PREDBAT_SENSORS = False
+# Grid tariff per kWh excl. VAT added to the import price when the slot
+# tariffs are unknown (the day-ahead source has none)
+CONF_PREDBAT_TARIFF = "predbat_tariff"
+DEFAULT_PREDBAT_TARIFF = 0.0
+# Predbat multiplies a price by 100 (to øre) only if its unit contains "kr/";
+# other currencies are exposed in cents with a unit that does not
+PREDBAT_KRONE_CURRENCIES = frozenset({"DKK", "NOK", "SEK"})
+PREDBAT_UNIT_KRONE = "kr/kWh"
+PREDBAT_UNIT_CENT = "ct/kWh"
+
 # Live forecast accuracy per lead time (slot start - time the prediction was
 # stored). Each bucket holds lead times below its upper bound in hours and above
 # the previous bucket's bound. The last bucket is open-ended because forecasts

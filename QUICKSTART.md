@@ -95,6 +95,15 @@ After installation, you'll have:
 - `binary_sensor.open_spot_forecast_tomorrow_available` - Tomorrow's prices ready
 - `binary_sensor.open_spot_forecast_ml_model_trained` - ML model status
 
+### Predbat Sensors (optional)
+
+With the option **Predbat rate entities** (see [Predbat](#predbat)):
+
+- `sensor.open_spot_forecast_<region>_predbat_import_today` - Consumer price today
+- `sensor.open_spot_forecast_<region>_predbat_import_tomorrow` - Consumer price tomorrow and later
+- `sensor.open_spot_forecast_<region>_predbat_export_today` - Raw spot price today
+- `sensor.open_spot_forecast_<region>_predbat_export_tomorrow` - Raw spot price tomorrow and later
+
 ## Common Use Cases
 
 ### 1. Display Current Price
@@ -467,6 +476,69 @@ Notes:
   `chargesZones`.
 - With several regions add `"config_entry_id": "<entry id>"` to `body`.
 - evcc reads the forecast hourly (`interval`, default `1h`).
+
+## Predbat
+
+[Predbat](https://springfall2008.github.io/batpred/) plans a home battery
+from import and export rates. In Denmark it reads them from the
+Stromligning integration's entities, which hold today and tomorrow only, so
+after 13:00 it plans against at most about 35 hours of rates and repeats the
+last known day beyond that. Open Spot Forecast can expose its 7-day forecast
+in the same shape, so Predbat plans against the forecast instead.
+
+1. In the integration's options enable **Predbat rate entities**. With the
+   day-ahead price source there are no Stromligning tariffs: enter your grid
+   tariff per kWh excl. VAT as **Predbat fixed grid tariff** (leave it 0 with
+   the Stromligning source). Reload the integration.
+2. Four sensors appear on the integration's device. Their entity IDs follow
+   the device name (`Open Spot Forecast <region>`); check them under
+   **Settings** → **Devices & services** → **Open Spot Forecast**.
+3. Point Predbat's `apps.yaml` at them instead of the Stromligning entities
+   (DK1 shown):
+
+```yaml
+metric_stromligning_import_today: sensor.open_spot_forecast_dk1_predbat_import_today
+metric_stromligning_import_tomorrow: sensor.open_spot_forecast_dk1_predbat_import_tomorrow
+metric_stromligning_export_today: sensor.open_spot_forecast_dk1_predbat_export_today
+metric_stromligning_export_tomorrow: sensor.open_spot_forecast_dk1_predbat_export_tomorrow
+```
+
+Only `apps.yaml` changes: the integration keeps reading the Stromligning
+entities for its own prices and tariffs.
+
+What Predbat gets:
+
+- **Attributes**: the today entities carry `prices_today`, the tomorrow
+  entities `prices_tomorrow`, each a list of `{"start", "end", "price"}`
+  per 15-minute interval (per hour with **Hourly average prices**) in local
+  time, which is what Predbat reads from the Stromligning entities. The
+  state is the current interval's price (today) or tomorrow's first price.
+- **Import** is what you pay, per kWh: the confirmed prices, then the
+  forecast, as `(spot + tariff + surcharge) × (1 + VAT)`. The tariff is
+  each slot's Stromligning consumer price minus spot price (grid tariff,
+  tax and fees, time of day included); days past the published prices
+  repeat the latest day's tariff at the same time of day. With the
+  day-ahead source the fixed tariff option is used instead.
+- **Export** is the raw spot price excl. VAT, surcharge and tariffs: today's
+  confirmed `spotprice_ex_vat` prices, then the model's raw forecast.
+- **Unit**: `kr/kWh` for DKK, SEK and NOK. Predbat multiplies a price by
+  100 (to øre) only when the unit contains `kr/`, which `DKK/kWh` would
+  not. Other currencies are exposed in cents (`ct/kWh`), which Predbat uses
+  as they are.
+- **Horizon**: `prices_today` runs from local midnight; `prices_tomorrow`
+  holds tomorrow and the following days as far as Home Assistant's 16 KB
+  attribute limit allows: about 45 hours at 15-minute resolution (tomorrow
+  and most of the day after), the whole 7-day forecast with **Hourly
+  average prices**. Predbat keeps the rates for `forecast_days + 1` days
+  from UTC midnight (`forecast_hours: 48` → today, tomorrow and the day
+  after); raise `forecast_hours` in `apps.yaml` to plan further ahead.
+
+Written against Predbat v9.3.3's Stromligning reader
+(`apps/predbat/stromligning.py`, read 2026-10-02): the attribute names, the
+entry shape, the `kr/` scaling and the horizon are taken from it. It has not
+yet been confirmed on a running Predbat install; if you run one, check that
+the plan shows the forecast's prices (in øre) through the day after tomorrow
+and report back in the issue tracker.
 
 ## Understanding the Sensors
 

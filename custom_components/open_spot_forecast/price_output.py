@@ -22,7 +22,7 @@ of prices (min/max) and commutes with the mean.
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -216,6 +216,26 @@ class PriceOutput:
     def unit(self, currency: str) -> str:
         """Return the unit of the exposed prices, e.g. ``DKK/kWh``."""
         return f"{currency}/{self.price_type}"
+
+    def per_kwh(self) -> PriceOutput:
+        """Return these settings with prices per kWh, the surcharge rescaled.
+
+        The surcharge is given per the configured unit, so a surcharge per
+        MWh becomes a thousandth per kWh.
+        """
+        if self.price_type == DEFAULT_PRICE_TYPE:
+            return self
+        factor = PRICE_IN.get(self.price_type, PRICE_IN["kWh"]) / PRICE_IN["kWh"]
+        return replace(
+            self, price_type=DEFAULT_PRICE_TYPE, surcharge=self.surcharge * factor
+        )
+
+    def raw_spot(self) -> PriceOutput:
+        """Return these settings for the raw spot price: per kWh, no surcharge, no VAT.
+
+        The precision and the hourly mean are kept (#124).
+        """
+        return replace(self, price_type=DEFAULT_PRICE_TYPE, surcharge=0.0, vat=0.0)
 
     def convert(self, price: float) -> float:
         """Return the exposed value of one price given in currency/kWh excl. VAT.

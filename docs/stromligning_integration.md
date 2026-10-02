@@ -14,6 +14,13 @@ Open Spot Forecast reads two prices per 15-minute slot from the
 All four `_ex_vat` entities are **disabled by default** in Stromligning:
 enable them under Settings → Devices & services → Stromligning → Entities.
 
+[Predbat](https://springfall2008.github.io/batpred/) reads its Danish rates
+from Stromligning's `_vat` / `spotprice_ex_vat` entities, which hold today
+and tomorrow only. The optional Predbat rate entities expose OSF's 7-day
+forecast in the same shape (import with tariffs and VAT, export the raw spot
+price) as a drop-in for Predbat's `apps.yaml` (#124): see
+[QUICKSTART.md → Predbat](../QUICKSTART.md#predbat).
+
 **The ML model learns and predicts the raw spot price** (#16). Grid tariffs
 are time-of-use and change with the season; in a tariff-inclusive target every
 tariff change would look like market behaviour to the model and like a model
