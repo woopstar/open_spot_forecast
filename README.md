@@ -67,6 +67,9 @@ and continuously improves accuracy via per-slot bias correction.
 - Diagnostic forecast evaluation sensor: the day-ahead prediction next to
   the actual price for the last 48 hours, to chart predicted against actual
 - Binary sensors for tomorrow's price availability and ML model training status
+- Optional Predbat rate entities (import/export, today/tomorrow) in the
+  shape of the Stromligning entities Predbat reads, with the 7-day forecast:
+  see [QUICKSTART.md → Predbat](QUICKSTART.md#predbat)
 
 ### Actions
 
@@ -91,7 +94,7 @@ The response has `known_until` (end of the confirmed prices), `unit`,
 The forecast sensor can show the same continuous series (option "Include
 confirmed prices in the forecast attribute").
 
-### Dashboards and evcc
+### Dashboards, evcc and Predbat
 
 [QUICKSTART.md → Dashboard](QUICKSTART.md#dashboard) has tested
 ApexCharts and Plotly Graph Card examples for the forecast (detailed and
@@ -100,6 +103,10 @@ cheapest window with `get_forecast`.
 [evcc](https://evcc.io/) can use the forecast as a grid tariff through a
 user-defined tariff over Home Assistant's REST API (no built-in template):
 see [QUICKSTART.md → evcc](QUICKSTART.md#evcc).
+[Predbat](https://springfall2008.github.io/batpred/) can plan a battery
+against the forecast through the optional Predbat rate entities, a drop-in
+for the Stromligning entities in its `apps.yaml`: see
+[QUICKSTART.md → Predbat](QUICKSTART.md#predbat).
 
 ### Data Sources
 

@@ -120,3 +120,26 @@ def fit_compact(
             compact[name] = compact[name][:keep]
         if "known_count" in compact:
             compact["known_count"] = min(compact["known_count"], keep)
+
+
+def fit_entries(
+    attributes: dict[str, Any],
+    key: str,
+    interval_minutes: int,
+    budget: int = ATTRIBUTE_BUDGET_BYTES,
+) -> None:
+    """Trim whole hours from the end of a list of entries until attributes fit.
+
+    Args:
+        attributes: The entity's attributes; ``attributes[key]`` is a list of
+            one dict per interval, starting on an hour, trimmed in place.
+        key: The attribute holding the entries.
+        interval_minutes: Length of one interval (15, or 60 when hourly).
+        budget: The largest allowed JSON size of ``attributes``.
+    """
+    entries: list[dict[str, Any]] = attributes[key]
+    per_hour = max(1, HOUR_MINUTES // interval_minutes)
+    while (size := attributes_size(attributes)) > budget and entries:
+        per_entry = max(1, attributes_size({key: entries}) // len(entries))
+        drop = math.ceil(math.ceil((size - budget) / per_entry) / per_hour) * per_hour
+        del entries[max(0, len(entries) - drop) :]
