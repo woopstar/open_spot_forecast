@@ -6,7 +6,8 @@ training window first (from the day-ahead APIs, whatever the displayed price
 source, #24), then for every stored
 price day the zone weather (Open-Meteo's archived forecasts, #23), the
 Nordpool prognoses, with an ENTSO-E key the week-ahead load forecast
-(#30), where it helps the gas price (#28) and, with the cross-border model,
+(#30), where it helps the gas price (#28), in Nord Pool's areas its outage
+messages (#123) and, with the cross-border model,
 the neighbours' prices and zone weather (#29); if anything was added, the
 forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
@@ -34,7 +35,8 @@ if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
     from .api.entsoe_load import EntsoeLoadSource
     from .api.gas_prices import GasPriceSource
-    from .api.time_series_source import TimeSeriesSource
+    from .api.nordpool_umm import NordpoolUmmSource
+    from .api.time_series_source import HistorySource, TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
 
@@ -79,6 +81,7 @@ class HistoryUpdaterMixin:
     weather: OpenMeteoWeatherSource | None
     load: EntsoeLoadSource | None
     gas: GasPriceSource | None
+    outages: NordpoolUmmSource | None
     # The cross-border model's neighbour sources (#29); empty when it is off
     neighbour_prices: list[NeighbourPriceSource]
     neighbour_weather: list[OpenMeteoWeatherSource]
@@ -90,7 +93,7 @@ class HistoryUpdaterMixin:
         raise NotImplementedError
 
     async def _refresh(
-        self, source: TimeSeriesSource, start: datetime, end: datetime, label: str
+        self, source: HistorySource, start: datetime, end: datetime, label: str
     ) -> list[dict[str, Any]] | None:
         """Update a source and return its stored rows (``ForecastUpdater``)."""
         raise NotImplementedError
@@ -135,7 +138,7 @@ class HistoryUpdaterMixin:
         return added
 
     async def _backfill_source(
-        self, source: TimeSeriesSource | None, first: date, label: str
+        self, source: HistorySource | None, first: date, label: str
     ) -> bool:
         """Fetch a source's missing days from ``first`` to today; return if data changed."""
         if source is None:
@@ -153,8 +156,8 @@ class HistoryUpdaterMixin:
 
         Day-ahead price days first, then for the stored price days the zone
         weather, the Nordpool prognoses, the ENTSO-E load forecast, the gas
-        price (#28) and the cross-border model's neighbour prices and weather
-        (#29). If anything was added the forecast is refreshed, so the model
+        price (#28), the UMM outages (#123) and the cross-border model's
+        neighbour prices and weather (#29). If anything was added the forecast is refreshed, so the model
         retrains on it.
         """
         ml_predictor = self.ml_predictor
@@ -170,7 +173,8 @@ class HistoryUpdaterMixin:
             gas = await self._backfill_source(
                 self.gas, first - timedelta(days=GAS_LOOKBACK_DAYS), "Gas price"
             )
-            changed = changed or weather or prognoses or load or gas
+            outages = await self._backfill_source(self.outages, first, "Nord Pool UMM")
+            changed = changed or weather or prognoses or load or gas or outages
             for source in [*self.neighbour_prices, *self.neighbour_weather]:
                 if await self._backfill_source(source, first, source.spec.name):
                     changed = True
@@ -194,6 +198,28 @@ class HistoryUpdaterMixin:
         )
         if rows:
             weather_data["gas_price"] = rows
+
+    async def update_outages(
+        self, weather_data: dict[str, Any], forecast_end: datetime
+    ) -> None:
+        """Refresh the outage messages and attach them for the prediction (#123).
+
+        New publications are fetched, and the messages whose events reach
+        from today to the forecast's end are attached as
+        ``weather_data["outages"]`` (every stored version: the index picks
+        the one current now). With messages stored, a slot nothing is
+        announced for is 0; before the first fetch the input stays unknown.
+        """
+        if self.outages is None:
+            return
+        rows = await self._refresh(
+            self.outages,
+            local_midnight(dt_util.now().date()),
+            forecast_end,
+            "outage messages",
+        )
+        if rows:
+            weather_data["outages"] = rows
 
     async def update_neighbours(self, forecast_end: datetime) -> None:
         """Refresh the neighbours' recent prices and weather forecast (#29).
@@ -255,6 +281,8 @@ class HistoryUpdaterMixin:
                 load = await self.load.async_prune(cutoff)
             if self.gas is not None:
                 await self.gas.async_prune(cutoff - timedelta(days=GAS_LOOKBACK_DAYS))
+            if self.outages is not None:
+                await self.outages.async_prune(cutoff)
             for source in [*self.neighbour_prices, *self.neighbour_weather]:
                 await source.async_prune(cutoff)
         except Exception as err:

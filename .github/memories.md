@@ -48,6 +48,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)         |
 | `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                         |
 | `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                         |
+| `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)      |
+| `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                       |
 | `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)      |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
@@ -77,6 +79,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `gas_prices.py`         | `GasPriceSource` — Instrat's daily TGE gas day-ahead index in `gas_prices`, one row per UTC day (#28)                   |
 | `entsoe.py`             | ENTSO-E request (`async_entsoe_get`) and XML helpers, shared by the price fallback and the load forecast                |
 | `entsoe_load.py`        | `EntsoeLoadSource` — ENTSO-E week-ahead load (A65/A31, daily min/max) as a 15-min curve in `entsoe_load` (#30)          |
+| `nordpool_umm.py`       | `NordpoolUmmSource` / `parse_umm_messages` — Nord Pool UMM outage messages, every version, incremental by publication   |
 | `openmeteo_weather.py`  | `OpenMeteoWeatherSource` — Open-Meteo 15-min weather at the region's `WEATHER_POINTS` as `openmeteo_weather` rows (#22) |
 | `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                                     |
 | `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params            |
@@ -206,7 +209,7 @@ not to `storage.py`.
 Production code uses an epsilon guard (`abs(x) > 1e-9` instead of `x != 0`). Tests use
 `pytest.approx()`.
 
-## Feature Vector (24 features)
+## Feature Vector (26 features)
 
 The canonical feature vector is defined in `docs/ml_documentation.md`. Every row, training
 and prediction alike, comes from `build_feature_row(slot_start, SlotInputs, region)` in
@@ -226,32 +229,34 @@ per side (`_train_models`). Prediction rows are never copied.
 `scripts/backtest.py --nordpool-db .cache/live/<export>.db` measures it on a live DB export.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
-| #   | Feature                | Source       |
-| --- | ---------------------- | ------------ |
-| 0   | `day_of_week`          | Time         |
-| 1   | `is_weekend`           | Time         |
-| 2   | `holiday`              | Calendar     |
-| 3   | `slot_sin`             | Time         |
-| 4   | `slot_cos`             | Time         |
-| 5   | `morning_peak`         | Time         |
-| 6   | `sun_elevation`        | Sun          |
-| 7   | `sun_azimuth`          | Sun          |
-| 8   | `since_sunrise`        | Sun          |
-| 9   | `since_sunset`         | Sun          |
-| 10  | `consumption_forecast` | Nordpool API |
-| 11  | `solar_generation`     | Nordpool API |
-| 12  | `wind_offshore`        | Nordpool API |
-| 13  | `wind_onshore`         | Nordpool API |
-| 14  | `net_demand`           | Derived      |
-| 15  | `wind_share`           | Derived      |
-| 16  | `load_forecast`        | ENTSO-E      |
-| 17  | `gas_price`            | Instrat      |
-| 18  | `zone_wind`            | Open-Meteo   |
-| 19  | `zone_wind_power`      | Open-Meteo   |
-| 20  | `zone_temperature`     | Open-Meteo   |
-| 21  | `zone_irradiance`      | Open-Meteo   |
-| 22  | `zone_pressure`        | Open-Meteo   |
-| 23  | `zone_humidity`        | Open-Meteo   |
+| #   | Feature                    | Source        |
+| --- | -------------------------- | ------------- |
+| 0   | `day_of_week`              | Time          |
+| 1   | `is_weekend`               | Time          |
+| 2   | `holiday`                  | Calendar      |
+| 3   | `slot_sin`                 | Time          |
+| 4   | `slot_cos`                 | Time          |
+| 5   | `morning_peak`             | Time          |
+| 6   | `sun_elevation`            | Sun           |
+| 7   | `sun_azimuth`              | Sun           |
+| 8   | `since_sunrise`            | Sun           |
+| 9   | `since_sunset`             | Sun           |
+| 10  | `consumption_forecast`     | Nordpool API  |
+| 11  | `solar_generation`         | Nordpool API  |
+| 12  | `wind_offshore`            | Nordpool API  |
+| 13  | `wind_onshore`             | Nordpool API  |
+| 14  | `net_demand`               | Derived       |
+| 15  | `wind_share`               | Derived       |
+| 16  | `load_forecast`            | ENTSO-E       |
+| 17  | `gas_price`                | Instrat       |
+| 18  | `unavailable_production`   | Nord Pool UMM |
+| 19  | `unavailable_transmission` | Nord Pool UMM |
+| 20  | `zone_wind`                | Open-Meteo    |
+| 21  | `zone_wind_power`          | Open-Meteo    |
+| 22  | `zone_temperature`         | Open-Meteo    |
+| 23  | `zone_irradiance`          | Open-Meteo    |
+| 24  | `zone_pressure`            | Open-Meteo    |
+| 25  | `zone_humidity`            | Open-Meteo    |
 
 Time features follow the local wall clock per 15-min slot (`slot_time_features()`); sun
 features come from `sun_features()` in `ml/sun.py` (astral, at the region's `zone_centre()`,
@@ -265,9 +270,16 @@ only with an ENTSO-E key and in `ENTSOE_LOAD_REGIONS`; it is its own feature, ne
 Nordpool's `consumption_forecast`. The ENTSO-E key is optional in the config and options flow.
 `gas_price` (#28) is the latest daily gas price dated **before** the slot's local day
 (`GasPriceIndex.before()`, 14-day lookback), in both phases; only `GAS_PRICE_REGIONS` fetch it.
+`unavailable_production` / `unavailable_transmission` (#123) are Nord Pool UMM outages per slot
+(`OutageIndex.for_slot(start, origin)`, `ml/outages.py`), **as known at an origin**: training rows
+use `day_ahead_gate(day)` (12:00 CET the day before), prediction rows now; every message version is
+stored (`umm_messages`/`umm_periods`); only `UMM_REGIONS` (DK1: the backtest found day 1 better and
+days 2-7 unchanged; DK2 got worse at days 2-7) fetch them, `UMM_AREAS` is where the backtest can run
+them; NaN before the first fetch and elsewhere, 0 when nothing is announced. Never aggregate the
+latest versions only.
 The cross-border model (#29, option `cross_border`, regions in `NEIGHBOURS`) lives in
 `ml/cross_border.py`: stage-1 models per neighbour (`Stage1Model`, out-of-sample per
-`local_day_fold`) whose columns follow the 24 features via `ModelMixin._model_inputs()`;
+`local_day_fold`) whose columns follow the 26 features via `ModelMixin._model_inputs()`;
 build model input rows there, never with `build_feature_vector()` alone.
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
@@ -334,16 +346,18 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                   | Content                                                                 |
-| -------------------- | --------------------- | ----------------------------------------------------------------------- |
-| `predictions`        | `id` (autoincrement)  | Pending predictions awaiting comparison                                 |
-| `error_metrics`      | `hour` (0-95)         | Per-slot error arrays                                                   |
-| `bias_correction`    | `(hour, bucket)`      | Additive bias offsets per slot and lead-time bucket (schema v5, v9)     |
-| `spot_prices`        | `timestamp` (UTC key) | The model's price history per UTC slot (#24); `price_history` is legacy |
-| `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
-| `meta`               | `key`                 | Training state, schema version                                          |
-| `lead_time_accuracy` | `(date, bucket)`      | Daily per-lead-time error sums (rolling 30 days)                        |
-| `evaluation`         | `timestamp` (UTC key) | Per scored slot: the ~24 h-ahead prediction and the actual price (#36)  |
+| Table                | Key                                                    | Content                                                                 |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement)                                   | Pending predictions awaiting comparison                                 |
+| `error_metrics`      | `hour` (0-95)                                          | Per-slot error arrays                                                   |
+| `bias_correction`    | `(hour, bucket)`                                       | Additive bias offsets per slot and lead-time bucket (schema v5, v9)     |
+| `spot_prices`        | `timestamp` (UTC key)                                  | The model's price history per UTC slot (#24); `price_history` is legacy |
+| `weather_history`    | `timestamp` (UTC key)                                  | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
+| `meta`               | `key`                                                  | Training state, schema version                                          |
+| `lead_time_accuracy` | `(date, bucket)`                                       | Daily per-lead-time error sums (rolling 30 days)                        |
+| `evaluation`         | `timestamp` (UTC key)                                  | Per scored slot: the ~24 h-ahead prediction and the actual price (#36)  |
+| `umm_messages`       | `(message_id, version)`                                | Every UMM outage message version for the area (#123)                    |
+| `umm_periods`        | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable MW per unit and period                          |
 
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning

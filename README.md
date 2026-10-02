@@ -21,9 +21,11 @@ and continuously improves accuracy via per-slot bias correction.
 
 - **ML-based spot price prediction** — a Gradient Boosting regressor (200 trees)
   predicts the price up to 7 days ahead at 15-minute resolution (96 slots/day)
-- **24-feature model** — 15-minute time of day, public holidays, sun
+- **26-feature model** — 15-minute time of day, public holidays, sun
   position over the bidding zone, ENTSO-E's week-ahead load forecast (with
-  an API key), the natural-gas price (in regions where it helps), zone weather from Open-Meteo (wind at 80 m,
+  an API key), the natural-gas price (in regions where it helps), planned
+  and unplanned outages of plants and interconnectors from Nord Pool's
+  urgent market messages (where they help), zone weather from Open-Meteo (wind at 80 m,
   temperature, irradiance, pressure, humidity across the bidding zone;
   trained on archived forecasts, like the forecasts it predicts from) and
   market-demand features, implemented in pure NumPy (no scikit-learn
@@ -131,6 +133,10 @@ for the Stromligning entities in its `apps.yaml`: see
 - **Gas price** — [Instrat](https://energy.instrat.pl/)'s daily gas
   day-ahead index (CC BY-NC 4.0), in the regions where it improves the
   forecast
+- **Outages** — [Nord Pool's urgent market messages](https://umm.nordpoolgroup.com/)
+  (no key): unavailable plant and interconnector capacity per slot, as
+  known when each price was set, in the regions where it improves the
+  forecast (DK1)
 - **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
   learns the neighbours' day-ahead prices from their weather and feeds the
   forecasts to the region's model (more CPU per training)
@@ -213,7 +219,7 @@ To use this package, you need the following integrations:
 Full documentation is available in the [`docs/`](docs/) directory:
 
 - **[Architecture](docs/architecture.md)** — System overview, data sources, data flow
-- **[ML Documentation](docs/ml_documentation.md)** — Model, 24-feature vector, confidence
+- **[ML Documentation](docs/ml_documentation.md)** — Model, 26-feature vector, confidence
 - **[Self-Learning](docs/self_learning.md)** — Self-learning loop, bias correction
 - **[Persistence](docs/persistence.md)** — SQLite storage schema and migrations
 - **[Stromligning Integration](docs/stromligning_integration.md)** — Price sources (Stromligning, day-ahead)
@@ -231,6 +237,7 @@ Full documentation is available in the [`docs/`](docs/) directory:
 | [European Central Bank](https://data.ecb.europa.eu/)                         | EUR reference exchange rates (day-ahead prices in DKK/SEK/NOK)  | ECB data, reusable with the source acknowledged                                                                                                                                                                                            |
 | [Open-Meteo.com](https://open-meteo.com/)                                    | Zone weather forecasts; archived forecasts for the backtest     | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)                                                                                                                                                                                  |
 | [Nord Pool](https://data.nordpoolgroup.com/)                                 | Consumption and production prognoses                            | Nord Pool's data portal terms                                                                                                                                                                                                              |
+| [Nord Pool UMM](https://umm.nordpoolgroup.com/)                              | Outage messages (planned and unplanned unavailability)          | Nord Pool's UMM terms (REMIT transparency data, public API)                                                                                                                                                                                |
 | Met.no (HA weather), [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Local weather, solar forecast                                   | Their integrations' terms                                                                                                                                                                                                                  |
 
 Every entity credits the sources its value comes from in Home Assistant's
@@ -240,7 +247,8 @@ fallback is configured), and the forecast, confidence, learning and accuracy
 sensors everything the model learns from, e.g. _Prices: energy-charts.info
 (CC BY 4.0, Bundesnetzagentur | SMARD.de) · Weather: Open-Meteo.com (CC BY
 4.0) · Prognoses: Nord Pool_, plus _Load forecast: ENTSO-E Transparency
-Platform_ with an ENTSO-E key. Stromligning's prices are credited by the
+Platform_ with an ENTSO-E key and _Outages: Nord Pool UMM_ in the regions
+that use them. Stromligning's prices are credited by the
 Stromligning integration.
 
 **Credit: [EpexPredictor](https://github.com/b3nn0/EpexPredictor)** (BSD-3-Clause)

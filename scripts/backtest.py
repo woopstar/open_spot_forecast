@@ -67,6 +67,7 @@ from custom_components.open_spot_forecast.const import (
     NEIGHBOURS,
     OPEN_METEO_ARCHIVE_API,
     REGIONS,
+    UMM_AREAS,
     WEATHER_POINTS,
 )
 from custom_components.open_spot_forecast.ml.cross_border import (
@@ -88,12 +89,14 @@ from custom_components.open_spot_forecast.ml.gas_price import (
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
+from custom_components.open_spot_forecast.ml.outages import OutageIndex, day_ahead_gate
 from custom_components.open_spot_forecast.ml.public_holidays import public_holiday
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 from custom_components.open_spot_forecast.time_series import iso_weeks
 
 from .backtest_lags import LagConfig, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
+from .backtest_umm import load_umm_outages
 
 SLOT_SECONDS = 15 * 60
 # Origins with less history than this are skipped (the naive model needs a week).
@@ -479,6 +482,8 @@ def feature_matrix(
     gas: GasPriceIndex | None = None,
     nordpool: NordpoolInputs | None = None,
     nordpool_until: int | None = None,
+    outages: OutageIndex | None = None,
+    outage_origin: int | None = None,
 ) -> np.ndarray:
     """Return the integration's model input for each slot start.
 
@@ -489,14 +494,23 @@ def feature_matrix(
     forecast by slot start (#30) and ``gas`` the gas prices (#28). The local
     weather entity has no year of history, so it is unknown (NaN), and so
     are the Nordpool prognoses unless ``nordpool`` holds a live export's
-    (#91): slots from ``nordpool_until`` on get none.
+    (#91): slots from ``nordpool_until`` on get none. ``outages`` (#123)
+    gives every slot the UMM outages published by ``outage_origin`` (the
+    horizon cutoff, for target rows) or, without one, by the slot's own
+    day-ahead gate (training rows).
     """
     rows = []
     for start in starts.tolist():
         moment = datetime.fromtimestamp(start, tz)
+        origin = (
+            datetime.fromtimestamp(outage_origin, UTC)
+            if outage_origin is not None
+            else day_ahead_gate(moment.date())
+        )
         inputs = SlotInputs(
             **(zone.for_slot(moment) if zone else {}),
             **(nordpool.slot_inputs(start, nordpool_until) if nordpool else {}),
+            **(outages.for_slot(moment, origin) if outages else {}),
             load_forecast=load.get(start) if load else None,
             gas_price=gas.before(moment.date()) if gas else None,
         )
@@ -588,6 +602,7 @@ def _feature_rows(
     gas: Sequence[dict[str, Any]] | None = None,
     nordpool: NordpoolInputs | None = None,
     lags: LagConfig | None = None,
+    outages: OutageIndex | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (training rows, target rows) for the slot times and inputs.
 
@@ -598,7 +613,9 @@ def _feature_rows(
     the horizon cutoff are used, so a target day gets the latest price
     published before the forecast, as in production. With ``nordpool``
     (#91) training rows get their stored prognoses and target rows none,
-    or only the first forecast day with ``nordpool.day1``.
+    or only the first forecast day with ``nordpool.day1``. With ``outages``
+    (#123) training rows get the messages published by their day-ahead gate
+    and target rows those published before the horizon cutoff.
     """
     index = None
     first_target = datetime.fromtimestamp(int(targets.min()), tz)
@@ -610,9 +627,20 @@ def _feature_rows(
     until = int(targets.min())
     if nordpool is not None and nordpool.day1:
         until = local_midnight(first_target.date() + timedelta(days=1), tz)
-    train = feature_matrix(history.starts, tz, zone, region, load, index, nordpool)
+    train = feature_matrix(
+        history.starts, tz, zone, region, load, index, nordpool, outages=outages
+    )
     target = feature_matrix(
-        targets, tz, zone, region, load, index, nordpool, nordpool_until=until
+        targets,
+        tz,
+        zone,
+        region,
+        load,
+        index,
+        nordpool,
+        nordpool_until=until,
+        outages=outages,
+        outage_origin=int(targets.min()),
     )
     if lags is not None:
         lag_index = PriceLagIndex(
@@ -684,6 +712,7 @@ class CurrentModel:
     gas: Sequence[dict[str, Any]] | None = None
     nordpool: NordpoolInputs | None = None
     lags: LagConfig | None = None
+    outages: OutageIndex | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
@@ -698,6 +727,7 @@ class CurrentModel:
             self.gas,
             self.nordpool,
             self.lags,
+            self.outages,
         )
         model = self.model_factory()
         model.fit(*_training_set(train_rows, history.prices, self.nordpool))
@@ -721,6 +751,7 @@ class LightGbmReference:
     gas: Sequence[dict[str, Any]] | None = None
     nordpool: NordpoolInputs | None = None
     lags: LagConfig | None = None
+    outages: OutageIndex | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
@@ -737,6 +768,7 @@ class LightGbmReference:
             self.gas,
             self.nordpool,
             self.lags,
+            self.outages,
         )
         names = [
             *FEATURE_NAMES,
@@ -766,12 +798,13 @@ def build_models(
     gas: Sequence[dict[str, Any]] | None = None,
     nordpool: NordpoolInputs | None = None,
     lags: LagConfig | None = None,
+    outages: OutageIndex | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
     With ``cross`` the GBM rows are two-stage cross-border models (#29);
-    ``nordpool`` gives them a live export's prognoses (#91) and ``lags``
-    the lagged price columns (#119).
+    ``nordpool`` gives them a live export's prognoses (#91), ``lags`` the
+    lagged price columns (#119) and ``outages`` the UMM outages (#123).
     """
     models: list[Forecaster] = []
     skipped: dict[str, str] = {}
@@ -791,6 +824,7 @@ def build_models(
                     gas=gas,
                     nordpool=nordpool,
                     lags=lags,
+                    outages=outages,
                 )
             )
         elif name == "lightgbm":
@@ -806,6 +840,7 @@ def build_models(
                         gas=gas,
                         nordpool=nordpool,
                         lags=lags,
+                        outages=outages,
                     )
                 )
             else:
@@ -1091,6 +1126,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="the daily gas price feature (#28), from Instrat",
     )
     parser.add_argument(
+        "--outages",
+        choices=("none", "umm"),
+        default="none",
+        help="Nord Pool UMM outages (#123) as known at each origin; Nord Pool areas",
+    )
+    parser.add_argument(
         "--cross-border",
         action="store_true",
         help="two-stage model with the neighbouring zones' prices (#29)",
@@ -1137,6 +1178,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--load entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
     if args.cross_border and args.region not in NEIGHBOURS:
         parser.error(f"--cross-border needs a region in {', '.join(NEIGHBOURS)}")
+    if args.outages == "umm" and args.region not in UMM_AREAS:
+        parser.error(f"--outages umm needs a region in {', '.join(sorted(UMM_AREAS))}")
     if (args.nordpool_day1 or args.nordpool_no_copies) and args.nordpool_db is None:
         parser.error("--nordpool-day1 and --nordpool-no-copies need --nordpool-db")
     if args.nordpool_db is not None and not args.nordpool_db.is_file():
@@ -1217,8 +1260,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             day1=args.nordpool_day1,
             copies=not args.nordpool_no_copies,
         )
+    outages = None
+    if args.outages == "umm":
+        print(f"Loading {args.region} outages from Nord Pool UMM ...", file=sys.stderr)
+        outages = load_umm_outages(
+            args.region, data_first, data_last, args.cache_dir, _http_get_json
+        )
     models, skipped = build_models(
-        names, tz, zone, args.region, load, cross, gas, nordpool, args.lags
+        names, tz, zone, args.region, load, cross, gas, nordpool, args.lags, outages
     )
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)

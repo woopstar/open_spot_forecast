@@ -6,7 +6,8 @@ slot (``openmeteo_weather``: archived forecasts, #23, aggregated by
 ``ZoneWeatherIndex`` as at prediction), the Nordpool prognoses for the
 slot's hour (``nordpool_prognoses``), ENTSO-E's week-ahead load forecast
 for the slot (``entsoe_load``, #30) and the gas price known before the
-slot's day (``gas_prices``, #28). All are forecasts or known in advance, like the inputs
+slot's day (``gas_prices``, #28) and the outages Nord Pool's UMMs had
+announced by the slot's day-ahead gate (``umm_messages``, #123). All are forecasts or known in advance, like the inputs
 the model predicts from. The measured weather snapshots (``weather_history``)
 are not training inputs any more (#23); they only score the local weather
 forecast (confidence). The tables are read once per fit and keyed by UTC
@@ -27,6 +28,7 @@ from .features import (
     slot_values,
 )
 from .gas_price import GasPriceIndex
+from .outages import OutageIndex, day_ahead_gate
 from .zone_weather import ZoneWeatherIndex
 
 
@@ -40,6 +42,7 @@ class TrainingInputs:
         zone: ZoneWeatherIndex | None = None,
         load_rows: Iterable[dict[str, Any]] = (),
         gas: GasPriceIndex | None = None,
+        outages: OutageIndex | None = None,
     ) -> None:
         """Index the rows; the first row in an hour wins.
 
@@ -49,11 +52,15 @@ class TrainingInputs:
             zone: The stored Open-Meteo zone weather, if any.
             load_rows: The stored ENTSO-E load forecast (``entsoe_load``, #30).
             gas: The stored gas prices (#28), if any.
+            outages: The stored UMM outage messages (#123), if the region
+                uses them: a slot gets what was published by its day-ahead
+                gate.
         """
         self._tz = tz
         self._zone = zone
         self._load = slot_values(load_rows, "load", tz)
         self._gas = gas
+        self._outages = outages
         self._nordpool: dict[int, dict[str, Any]] = {}
         for row in nordpool_rows:
             key = hour_epoch(row.get("timestamp"), tz)
@@ -71,4 +78,9 @@ class TrainingInputs:
             load_forecast=self._load.get(floor_epoch(start, self._tz)),
             gas_price=self._gas.before(start.date()) if self._gas else None,
             **(self._zone.for_slot(start) if self._zone else {}),
+            **(
+                self._outages.for_slot(start, day_ahead_gate(start.date()))
+                if self._outages
+                else {}
+            ),
         )

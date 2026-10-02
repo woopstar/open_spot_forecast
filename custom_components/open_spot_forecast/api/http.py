@@ -9,7 +9,7 @@ they can hold an API key.
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import aiohttp
@@ -44,7 +44,7 @@ async def async_get(
     url: str,
     label: str,
     *,
-    params: Mapping[str, str] | None = None,
+    params: Mapping[str, str] | Sequence[tuple[str, str]] | None = None,
     headers: Mapping[str, str] | None = None,
     timeout: float = 30,
 ) -> HttpResponse | None:
@@ -54,7 +54,7 @@ async def async_get(
         session: The aiohttp session (Home Assistant's shared one if possible).
         url: The URL, without secrets (those go in ``params``).
         label: Endpoint name for log messages.
-        params: Query parameters.
+        params: Query parameters (a sequence of pairs repeats a key).
         headers: Extra request headers.
         timeout: Total timeout per attempt, in seconds.
 
