@@ -27,38 +27,58 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    c. If found:
       - Calculate error: predicted_price - actual_price
       - Update per-slot error metrics (MAE, bias, sample count)
-      - Update the slot's additive bias offset
+      - Update the slot's additive bias offsets, one per lead-time bucket
       - Add each error to its lead-time bucket (see below)
       - Remove the matched predictions from the queue
    d. If not found: skip (no forecast run covered this slot)
 
 3. On next prediction run (every 6 hours):
    - Bias corrections are applied to raw model outputs
-   - corrected_price = raw_price - offset[slot] (no clamp: prices can be negative)
+   - corrected_price = raw_price - offset[slot][bucket], the bucket being the
+     prediction's own lead time (no clamp: prices can be negative)
 ```
 
 ## Bias Correction
 
-Each 15-minute slot (0-95) has an additive offset, in the price unit
-(currency/kWh), learned via exponential moving average (#15):
+Each 15-minute slot (0-95) has an additive offset per lead-time bucket
+(`day_1`, `day_2`, `day_3`, `day_4_plus`, see
+[Lead-Time Accuracy](#lead-time-accuracy)), in the price unit (currency/kWh),
+learned via exponential moving average (#15, #118):
 
 ```
-mean_error   = mean(predicted - actual)            # the slot's last 100 errors
-raw_bias     = offset[slot] + mean_error
-offset[slot] = 0.9 × offset[slot] + 0.1 × raw_bias
-corrected    = raw_prediction - offset[slot]
+mean_error           = mean(predicted - actual)   # the slot's last 100 errors in the bucket
+raw_bias             = offset[slot][bucket] + mean_error
+offset[slot][bucket] = 0.9 × offset[slot][bucket] + 0.1 × raw_bias
+corrected            = raw_prediction - offset[slot][bucket]
 ```
 
 - `offset > 0` → model overpredicts → subtract
 - `offset < 0` → model underpredicts → add
 - `offset = 0` → no bias; the prediction is unchanged
 
-The update runs once a slot has 3 samples; the first update sets the offset to
-`mean_error`. Stored predictions already had the current offset subtracted, so
-their `mean_error` is what is _left_ of the bias; `offset + mean_error` is the
-raw model's bias. An EMA of `mean_error` alone would settle at half the bias
-(a simulation with a week of forecast lag: 0.48 for a true bias of 1.0, versus
-0.98 with this formula).
+The update runs once a bucket of the slot has 3 samples; the first update
+sets the offset to `mean_error`. Stored predictions already had the offset in
+use subtracted, so their `mean_error` is what is _left_ of the bias;
+`offset + mean_error` is the raw model's bias. An EMA of `mean_error` alone
+would settle at half the bias (a simulation with a week of forecast lag: 0.48
+for a true bias of 1.0, versus 0.98 with this formula).
+
+A slot is predicted by many forecast runs, from under an hour to 8.5 days
+ahead, and the bias differs by lead time: the first DK1 export had a day-1
+bias of −1.75 and a day-2 bias of −3.78 ct/kWh (see
+[Live accuracy](ml_documentation.md#live-accuracy-94)). One offset pooled over
+every lead time under-corrected the long leads and over-corrected the short
+ones, so since #118 each bucket learns its own, from its own errors: a matched
+slot's errors are kept pooled (`errors`, for the MAE and the metrics) and per
+bucket (`bucket_errors`, the last 100 per bucket) in `error_metrics`.
+
+When a prediction is made, its lead time (`slot start − now`,
+`prediction_bucket()` in `ml/lead_time.py`) picks the bucket whose offset is
+subtracted; the slot already under way counts as `day_1`. A bucket that has
+not learned its own offset yet uses the `day_1` offset (`BIAS_FALLBACK_BUCKET`
+in `const.py`), and its first update starts the EMA from that offset, since
+the predictions it learns from had it subtracted. Without any offset the
+prediction is unchanged.
 
 Example: If the model consistently predicts 1.00 but the actual price is 1.30
 for slot 47 (11:45), the offset converges to about -0.30, and future
@@ -74,6 +94,9 @@ load into.
 
 The multiplicative factors of older versions cannot be converted into offsets;
 they are reset once on upgrade (schema v5, see [persistence](persistence.md)).
+The offsets learned before #118, pooled over every lead time, are kept as the
+`day_1` offsets (schema v9), so an upgraded installation corrects every lead
+time as before until the other buckets have learned their own.
 
 ## Slot Granularity
 
@@ -105,8 +128,9 @@ matched, every prediction's error is also bucketed by its lead time,
 | `day_3`      | 48-72 h   |
 | `day_4_plus` | 72 h+     |
 
-Predictions stored after their slot started (negative lead time) are not
-counted. `stored_at` is written with its UTC offset (Home Assistant's time
+The same buckets key the bias offsets (see
+[Bias Correction](#bias-correction)). Predictions stored after their slot
+started (negative lead time) are not counted. `stored_at` is written with its UTC offset (Home Assistant's time
 zone); naive values from older versions are read in Home Assistant's time zone.
 
 Per bucket, the error sums are added to the `lead_time_accuracy` table, one
@@ -170,7 +194,9 @@ Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 | `mean_bias`           | Average systematic error (negative = underpredicting) |
 | `slots_tracked`       | Number of 15-min slots with data                      |
 | `pending_predictions` | Predictions still waiting for their slot to arrive    |
-| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offset (¹)     |
+| `bias_corrections`    | Number of slots with a learned bias offset            |
+| `bias_offsets`        | Per lead-time bucket: slots with an own offset, mean  |
+| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offsets (¹)    |
 | `holdout_mae`         | Latest training's holdout MAE (see below)             |
 | `holdout_rmse`        | Latest training's holdout RMSE                        |
 | `holdout_trained_at`  | When that training ran (UTC ISO)                      |

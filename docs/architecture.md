@@ -5,7 +5,8 @@
 Open Spot Forecast is a Home Assistant integration that predicts electricity
 spot prices using machine learning, weather forecasts, and confirmed market
 data. The system runs a self-learning loop that compares predictions against
-actual prices and continuously improves accuracy via per-slot bias correction.
+actual prices and continuously improves accuracy via per-slot, per-lead-time
+bias correction.
 
 ## Data Sources
 

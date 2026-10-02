@@ -7,7 +7,7 @@ import numpy as np
 
 from ..time_slots import slot_start_in_day
 from .base import PredictorBase
-from .learning import percent_error, predictions_at_instant
+from .learning import add_matched_errors, new_slot_metrics, predictions_at_instant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -79,38 +79,16 @@ class CatchUpMixin(PredictorBase):
                 if not matching:
                     continue
 
-                # Initialize error tracking slot
+                # Pooled and per-lead-time errors of this slot (#118)
                 slot = hour * 4 + minute // 15
-                if slot not in self.error_metrics:
-                    self.error_metrics[slot] = {
-                        "errors": [],
-                        "abs_errors": [],
-                        "pct_errors": [],
-                        "predictions": [],
-                        "actuals": [],
-                        "count": 0,
-                    }
-                metrics = self.error_metrics[slot]
-
-                for prediction in matching:
-                    predicted_price = prediction.get("price", 0)
-                    error = predicted_price - actual_price
-                    abs_error = abs(error)
-                    pct_error = percent_error(error, actual_price)
-
-                    metrics["errors"].append(error)
-                    metrics["abs_errors"].append(abs_error)
-                    metrics["pct_errors"].append(pct_error)
-                    metrics["predictions"].append(predicted_price)
-                    metrics["actuals"].append(actual_price)
-                    metrics["count"] += 1
-
-                    total_learned += 1
+                metrics = self.error_metrics.setdefault(slot, new_slot_metrics())
+                add_matched_errors(metrics, matching, actual_price)
+                total_learned += len(matching)
 
                 self.record_lead_time_accuracy(matching, actual_price)
                 self.record_evaluation(slot_start, matching, actual_price)
 
-                # Update bias correction after processing this slot
+                # Update the slot's bias offsets per lead-time bucket
                 self._update_bias_correction(slot)
 
                 # Initialize volatility for this slot
@@ -121,18 +99,6 @@ class CatchUpMixin(PredictorBase):
                 # Remove matched predictions
                 for p in matching:
                     self.storage.remove_prediction(p["id"])
-
-                # Keep error arrays bounded
-                max_samples = 100
-                for key in [
-                    "errors",
-                    "abs_errors",
-                    "pct_errors",
-                    "predictions",
-                    "actuals",
-                ]:
-                    if len(metrics[key]) > max_samples:
-                        metrics[key] = metrics[key][-max_samples:]
 
         _LOGGER.info(
             "Catch-up learning complete: %d predictions matched across %d slots",

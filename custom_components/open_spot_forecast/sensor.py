@@ -615,6 +615,7 @@ class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
             attrs["learning_confidence"] = metrics.get("learning_confidence")
             attrs["hours_tracked"] = metrics.get("slots_tracked")
             attrs["bias_corrections"] = metrics.get("bias_corrections")
+            attrs["bias_offsets"] = metrics.get("bias_offsets")
             attrs["pending_predictions"] = metrics.get("pending_predictions")
             attrs["hourly_metrics"] = metrics.get("hourly_metrics")
             # Holdout error of the latest training (None before one)

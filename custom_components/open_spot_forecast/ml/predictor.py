@@ -96,7 +96,8 @@ class SpotPricePredictor(
 
         # Self-learning: error tracking (predictions stored in SQLite)
         self.error_metrics = {}  # Track prediction errors by hour
-        self.bias_correction = {}  # Per-slot additive bias offsets
+        # Additive bias offsets per slot and lead-time bucket (#118)
+        self.bias_correction = {}
         self.volatility_mae: dict[int, float] = {}  # Per-slot volatility (EMA of MAE)
         self.learning_rate = 0.1  # Adaptive learning rate
         self.price_history = []  # Store historical prices for multi-day training

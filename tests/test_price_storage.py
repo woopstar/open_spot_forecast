@@ -132,6 +132,6 @@ def test_json_days_are_migrated_to_rows_once(
                 "SELECT value FROM meta WHERE key = 'schema_version'"
             ).fetchone()[0]
         assert legacy == 0
-        assert int(version) == PRICE_ROWS_SCHEMA_VERSION
+        assert int(version) >= PRICE_ROWS_SCHEMA_VERSION
     finally:
         upgraded.close()

@@ -599,6 +599,7 @@ def test_learning_metrics_full_attributes():
         "learning_confidence": 0.9,
         "slots_tracked": 96,
         "bias_corrections": 3,
+        "bias_offsets": {"day_1": {"slots": 3, "mean_offset": 0.1}},
         "pending_predictions": 4,
         "hourly_metrics": {"0": 1.0},
     }
@@ -616,6 +617,7 @@ def test_learning_metrics_full_attributes():
     assert attrs["learning_confidence"] == 0.9
     assert attrs["hours_tracked"] == 96
     assert attrs["bias_corrections"] == 3
+    assert attrs["bias_offsets"] == {"day_1": {"slots": 3, "mean_offset": 0.1}}
     assert attrs["pending_predictions"] == 4
     assert attrs["hourly_metrics"] == {"0": 1.0}
     assert predictor.get_learning_metrics.call_count == 1

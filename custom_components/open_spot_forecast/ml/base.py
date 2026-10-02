@@ -50,7 +50,8 @@ class PredictorBase:
     holdout_rmse: float | None
     holdout_trained_at: datetime | None
     error_metrics: dict[int, dict[str, Any]]
-    bias_correction: dict[int, float]
+    # Additive bias offsets per slot and lead-time bucket (#118)
+    bias_correction: dict[int, dict[str, float]]
     volatility_mae: dict[int, float]
     learning_rate: float
     price_history: list[dict[str, Any]]
@@ -86,6 +87,9 @@ class PredictorBase:
         raise NotImplementedError
 
     def _update_bias_correction(self, slot: int) -> None:
+        raise NotImplementedError
+
+    def _bias_offset(self, slot: int, bucket: str) -> float | None:
         raise NotImplementedError
 
     def record_lead_time_accuracy(

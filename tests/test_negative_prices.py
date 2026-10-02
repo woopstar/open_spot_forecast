@@ -14,6 +14,7 @@ import pytest
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.open_spot_forecast.const import BIAS_FALLBACK_BUCKET
 from custom_components.open_spot_forecast.ml.bias_storage import (
     ADDITIVE_BIAS_SCHEMA_VERSION,
 )
@@ -43,7 +44,9 @@ def predictor(tmp_path: Path) -> Iterator[SpotPricePredictor]:
 
 
 def _metrics(errors: list[float], actuals: list[float]) -> dict:
+    """A slot's metrics with every error in the fallback (day 1) bucket."""
     return {
+        "bucket_errors": {BIAS_FALLBACK_BUCKET: errors},
         "errors": errors,
         "abs_errors": [abs(e) for e in errors],
         "pct_errors": [0.0] * len(errors),
@@ -57,7 +60,7 @@ def _metrics(errors: list[float], actuals: list[float]) -> dict:
 
 
 def test_bias_correction_subtracts_the_offset(predictor: SpotPricePredictor) -> None:
-    predictor.bias_correction = {SLOT: 0.2}
+    predictor.bias_correction = {SLOT: {BIAS_FALLBACK_BUCKET: 0.2}}
 
     assert predictor.apply_bias_correction(1.0, SLOT) == pytest.approx(0.8)
     assert predictor.apply_bias_correction(-0.5, SLOT) == pytest.approx(-0.7)
@@ -73,7 +76,7 @@ def test_zero_offset_never_changes_a_prediction(predictor: SpotPricePredictor) -
     predictor.error_metrics = {SLOT: _metrics([0.0] * 5, [-0.4] * 5)}
     predictor._update_bias_correction(SLOT)
 
-    assert predictor.bias_correction[SLOT] == pytest.approx(0.0)
+    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(0.0)
     assert predictor.apply_bias_correction(-0.4, SLOT) == pytest.approx(-0.4)
     assert predictor.apply_bias_correction(0.4, SLOT) == pytest.approx(0.4)
 
@@ -84,11 +87,11 @@ def test_first_update_sets_the_offset_then_follows_the_ema(
     """offset = 0.9 * old + 0.1 * (old + mean_error), starting at mean_error."""
     predictor.error_metrics = {SLOT: _metrics([0.3, 0.2, 0.4], [-1.0, -1.0, -1.0])}
     predictor._update_bias_correction(SLOT)
-    assert predictor.bias_correction[SLOT] == pytest.approx(0.3)
+    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(0.3)
 
     predictor.error_metrics = {SLOT: _metrics([0.1, 0.1, 0.1], [-1.0, -1.0, -1.0])}
     predictor._update_bias_correction(SLOT)
-    assert predictor.bias_correction[SLOT] == pytest.approx(
+    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(
         0.9 * 0.3 + 0.1 * (0.3 + 0.1)
     )
 
@@ -119,9 +122,11 @@ def test_offset_converges_to_the_model_bias_whatever_the_price_sign(
         errors = (errors + [corrected - actual])[-100:]
         predictor.error_metrics = {SLOT: _metrics(errors, [actual] * len(errors))}
         predictor._update_bias_correction(SLOT)
-        assert abs(predictor.bias_correction.get(SLOT, 0.0)) < 1.0
+        assert abs(predictor._bias_offset(SLOT, BIAS_FALLBACK_BUCKET) or 0.0) < 1.0
 
-    assert predictor.bias_correction[SLOT] == pytest.approx(model_bias, abs=0.03)
+    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(
+        model_bias, abs=0.03
+    )
     assert predictor.apply_bias_correction(actual + model_bias, SLOT) == (
         pytest.approx(actual, abs=0.03)
     )
@@ -198,7 +203,7 @@ def test_negative_prices_survive_model_bias_correction_and_sensor(
     predictor.price_model = NumpyGradientBoosting(n_estimators=50, min_samples_leaf=20)
     with patch.object(predictor, "store_daily_prices"):
         predictor._train_models()
-    predictor.bias_correction = {SLOT: 0.05}
+    predictor.bias_correction = {SLOT: {BIAS_FALLBACK_BUCKET: 0.05}}
     # The day after the training week: its sun and calendar features lie
     # inside the history, so the tree does not extrapolate (#117)
     day = datetime(2026, 9, 21, tzinfo=dt_util.DEFAULT_TIME_ZONE)
@@ -244,7 +249,10 @@ def test_heuristic_predictions_can_be_negative(predictor: SpotPricePredictor) ->
 def test_learning_from_a_negative_actual_updates_the_offset(
     predictor: SpotPricePredictor,
 ) -> None:
-    start = dt_util.now().replace(hour=10, minute=0, second=0, microsecond=0)
+    # Tomorrow's 10:00: a lead time of 10-34 h, whatever the time of day
+    start = dt_util.now().replace(
+        hour=10, minute=0, second=0, microsecond=0
+    ) + timedelta(days=1)
     for _ in range(3):
         predictor.store_prediction_for_learning(start.isoformat(), -0.1, 0.8)
 
@@ -252,17 +260,20 @@ def test_learning_from_a_negative_actual_updates_the_offset(
 
     slot = 40
     assert predictor.error_metrics[slot]["errors"] == pytest.approx([0.3] * 3)
-    assert predictor.bias_correction[slot] == pytest.approx(0.3)
-    assert predictor.apply_bias_correction(-0.1, slot) == pytest.approx(-0.4)
+    (bucket, offset), *others = predictor.bias_correction[slot].items()
+    assert not others
+    assert bucket in ("day_1", "day_2")
+    assert offset == pytest.approx(0.3)
+    assert predictor.apply_bias_correction(-0.1, slot, bucket) == pytest.approx(-0.4)
 
 
 # --- Migration ----------------------------------------------------------------------
 
 
-def _stored_bias(storage: LearningStorage) -> dict[int, float]:
+def _stored_bias(storage: LearningStorage) -> dict[int, dict[str, float]]:
     data = storage.load_all()
     assert data is not None
-    bias: dict[int, float] = data["bias_correction"]
+    bias: dict[int, dict[str, float]] = data["bias_correction"]
     return bias
 
 
@@ -282,7 +293,12 @@ def test_upgrade_resets_multiplicative_factors_once(
     db_path = storage.db_path
     storage.close()
     with closing(sqlite3.connect(db_path)) as conn:
+        # A v4 database: factors per slot only, no lead-time bucket column
         conn.execute("UPDATE meta SET value = '4' WHERE key = 'schema_version'")
+        conn.executescript(
+            "DROP TABLE bias_correction;"
+            "CREATE TABLE bias_correction (hour INTEGER PRIMARY KEY, correction REAL);"
+        )
         conn.executemany(
             "INSERT OR REPLACE INTO bias_correction (hour, correction) VALUES (?, ?)",
             [(SLOT, 1.12), (SLOT + 1, 0.93)],
@@ -295,11 +311,13 @@ def test_upgrade_resets_multiplicative_factors_once(
     assert _schema_version(db_path) >= ADDITIVE_BIAS_SCHEMA_VERSION
     assert "reset 2 multiplicative factors" in caplog.text
 
-    upgraded.save_all({"bias_correction": {SLOT: 0.07}})
+    upgraded.save_all({"bias_correction": {SLOT: {BIAS_FALLBACK_BUCKET: 0.07}}})
     upgraded.close()
     reopened = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        assert _stored_bias(reopened) == {SLOT: pytest.approx(0.07)}
+        assert _stored_bias(reopened) == {
+            SLOT: {BIAS_FALLBACK_BUCKET: pytest.approx(0.07)}
+        }
     finally:
         reopened.close()
 

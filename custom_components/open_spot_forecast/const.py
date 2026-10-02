@@ -307,6 +307,10 @@ LEAD_TIME_BUCKETS: tuple[tuple[str, float], ...] = (
 )
 # Rolling window (days of slots) the per-bucket MAE/RMSE are computed over.
 LEAD_TIME_WINDOW_DAYS = 30
+# The bias offsets are learned per (slot, lead-time bucket) (#118). A bucket
+# without an offset yet uses this bucket's; offsets learned before #118 are
+# migrated into it.
+BIAS_FALLBACK_BUCKET = LEAD_TIME_BUCKETS[0][0]
 
 # Predicted vs actual (#36): per slot, the prediction made closest to this
 # long ahead is kept next to the actual price, for EVALUATION_KEEP_DAYS; the

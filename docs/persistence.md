@@ -12,7 +12,7 @@ All learning data is stored in a single SQLite database:
 | -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                                      |
 | `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                                    |
-| `bias_correction`    | `hour` (0-95)               | Per-slot additive bias offsets (currency/kWh; column `correction`)                                              |
+| `bias_correction`    | `(hour, bucket)`            | Additive bias offsets per slot (0-95) and lead-time bucket (currency/kWh; column `correction`, #118)            |
 | `spot_prices`        | `timestamp` (UTC slot key)  | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                        |
 | `price_history`      | `date` (YYYY-MM-DD)         | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                   |
 | `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
@@ -61,7 +61,7 @@ tables:
 The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
 the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking
 only. The versioned data migrations live next to them in `ml/bias_storage.py`
-(v5) and `ml/spot_migration.py` (v6).
+(v5 and v9) and `ml/spot_migration.py` (v6).
 
 ## Connection Management
 
@@ -75,15 +75,16 @@ only. The versioned data migrations live next to them in `ml/bias_storage.py`
 
 Auto-migration runs at startup (no user intervention):
 
-| Version | Change                                                                             |
-| ------- | ---------------------------------------------------------------------------------- |
-| v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                  |
-| v2 → v3 | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95) |
-| v3 → v4 | Added forecast weather columns to predictions                                      |
-| v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)      |
-| v5 → v6 | Discard consumer-price learning data: the model learns the raw spot price (#16)    |
-| v6 → v7 | Rewrite `weather_history` timestamps as UTC slot keys (#59)                        |
-| v7 → v8 | Move the price history's JSON days into `spot_prices` rows per UTC slot (#24)      |
+| Version | Change                                                                                  |
+| ------- | --------------------------------------------------------------------------------------- |
+| v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                       |
+| v2 → v3 | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95)      |
+| v3 → v4 | Added forecast weather columns to predictions                                           |
+| v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)           |
+| v5 → v6 | Discard consumer-price learning data: the model learns the raw spot price (#16)         |
+| v6 → v7 | Rewrite `weather_history` timestamps as UTC slot keys (#59)                             |
+| v7 → v8 | Move the price history's JSON days into `spot_prices` rows per UTC slot (#24)           |
+| v8 → v9 | Key `bias_correction` by (slot, lead-time bucket); pooled offsets become `day_1` (#118) |
 
 The `meta` table tracks `schema_version` so migrations only run once.
 
@@ -92,6 +93,12 @@ The v6 migration deletes the rows of `price_history`, `predictions`,
 which held (or were learned from) Stromligning's consumer price, and logs how
 many days and predictions it discarded. `weather_history`,
 `nordpool_prognoses` and the hyperparameters in `meta` are kept.
+
+The v9 migration rebuilds `bias_correction` with a `bucket` column and keeps
+every existing offset as the `day_1` offset of its slot (see
+[Bias Correction](self_learning.md#bias-correction)); it logs how many it
+kept. A database created after #118 already has the column, so only the
+version is written.
 
 ## Stored Timestamps
 
