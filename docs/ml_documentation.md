@@ -716,6 +716,27 @@ The naive baseline (same slot last week) is 3.93-4.00 (DK1) and 4.12-4.20
   not tied to the option). The window stays selectable down to 30 days for
   installs that must keep the footprint small.
 
+**LightGBM agrees** (the `lightgbm (reference)` row, `lightgbm==4.7.0`, same
+period; cells are NumPy GBM / LightGBM MAE, for the production
+configurations):
+
+| Configuration           | Window | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | 2-7d MAE    |
+| ----------------------- | ------ | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DK1, single-stage + gas | 60 d   | 2.19 / 2.13 | 2.37 / 2.34 | 2.43 / 2.44 | 2.47 / 2.51 | 2.53 / 2.56 | 2.58 / 2.61 | 2.62 / 2.63 | 2.50 / 2.52 |
+| DK1, single-stage + gas | 120 d  | 2.20 / 2.04 | 2.34 / 2.25 | 2.42 / 2.34 | 2.48 / 2.40 | 2.50 / 2.44 | 2.52 / 2.46 | 2.54 / 2.49 | 2.47 / 2.40 |
+| DK1, single-stage + gas | 180 d  | 2.20 / 2.03 | 2.31 / 2.23 | 2.40 / 2.29 | 2.45 / 2.35 | 2.47 / 2.37 | 2.49 / 2.41 | 2.52 / 2.46 | 2.44 / 2.35 |
+| DK2, single-stage + gas | 60 d   | 2.46 / 2.42 | 2.64 / 2.67 | 2.70 / 2.75 | 2.73 / 2.79 | 2.78 / 2.82 | 2.74 / 2.80 | 2.75 / 2.82 | 2.72 / 2.77 |
+| DK2, single-stage + gas | 120 d  | 2.44 / 2.34 | 2.60 / 2.58 | 2.65 / 2.66 | 2.69 / 2.68 | 2.72 / 2.71 | 2.74 / 2.73 | 2.73 / 2.71 | 2.69 / 2.68 |
+| DK2, single-stage + gas | 180 d  | 2.46 / 2.36 | 2.57 / 2.57 | 2.60 / 2.60 | 2.64 / 2.63 | 2.68 / 2.63 | 2.70 / 2.65 | 2.69 / 2.67 | 2.65 / 2.62 |
+| DK1, cross-border + gas | 60 d   | 1.84 / 1.73 | 1.97 / 1.88 | 2.05 / 1.94 | 2.08 / 2.01 | 2.11 / 2.06 | 2.14 / 2.07 | 2.17 / 2.11 | 2.09 / 2.01 |
+| DK1, cross-border + gas | 180 d  | 1.79 / 1.64 | 1.88 / 1.79 | 1.94 / 1.84 | 1.98 / 1.87 | 1.98 / 1.86 | 2.01 / 1.90 | 2.04 / 1.94 | 1.97 / 1.87 |
+| DK2, cross-border + gas | 60 d   | 2.02 / 1.97 | 2.20 / 2.17 | 2.24 / 2.24 | 2.27 / 2.27 | 2.30 / 2.29 | 2.31 / 2.29 | 2.32 / 2.33 | 2.27 / 2.27 |
+| DK2, cross-border + gas | 180 d  | 1.95 / 1.84 | 2.03 / 1.99 | 2.08 / 2.04 | 2.11 / 2.05 | 2.12 / 2.05 | 2.15 / 2.10 | 2.15 / 2.14 | 2.11 / 2.06 |
+
+180 days lowers the LightGBM days-2-7 MAE under 60 days by 0.15-0.17 with
+the single-stage model and 0.14-0.21 with the cross-border model, more than
+the NumPy model gains, and ranks the windows the same way.
+
 **Footprint.** One training (live fit plus holdout fit, with the
 Nordpool-masked copies of #91) on synthetic full history (every slot of the
 window: prices, the zone weather at DK1's four points and, with the option,
