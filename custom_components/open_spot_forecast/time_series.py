@@ -144,6 +144,35 @@ def day_chunks(
     return requests
 
 
+def iso_weeks(start: datetime, end: datetime, tz: tzinfo) -> list[date]:
+    """Return the Mondays of the ISO weeks in ``tz`` that touch ``[start, end)``."""
+    mondays: list[date] = []
+    if start >= end:
+        return mondays
+    first = start.astimezone(tz).date()
+    monday = first - timedelta(days=first.weekday())
+    while local_midnight(monday, tz) < end:
+        mondays.append(monday)
+        monday += timedelta(weeks=1)
+    return mondays
+
+
+def week_chunks(ranges: Iterable[TimeRange], tz: tzinfo) -> list[TimeRange]:
+    """Return one request per ISO week in ``tz`` that touches ``ranges``.
+
+    A week runs from Monday midnight to the next Monday midnight in ``tz``
+    (one hour shorter or longer on a DST change), returned in UTC.
+    """
+    mondays = sorted({m for start, end in ranges for m in iso_weeks(start, end, tz)})
+    return [
+        (
+            local_midnight(monday, tz).astimezone(UTC),
+            local_midnight(monday + timedelta(weeks=1), tz).astimezone(UTC),
+        )
+        for monday in mondays
+    ]
+
+
 def split_range(time_range: TimeRange, max_span: timedelta) -> list[TimeRange]:
     """Split a range into consecutive chunks no longer than ``max_span``."""
     start, end = time_range

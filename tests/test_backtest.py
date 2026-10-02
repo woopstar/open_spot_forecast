@@ -758,8 +758,14 @@ LOAD_DOCUMENT = """<?xml version="1.0" encoding="utf-8"?>
 </GL_MarketDocument>"""
 
 
+NO_LOAD = """<?xml version="1.0" encoding="utf-8"?>
+<Acknowledgement_MarketDocument xmlns="urn:iec62325.351:tc57wg16:451-1:acknowledgementdocument:7:0">
+  <Reason><code>999</code><text>No matching data found</text></Reason>
+</Acknowledgement_MarketDocument>"""
+
+
 def _load_document(url: str) -> str:
-    """One month of daily minima 2000 and maxima 4000 for the requested period."""
+    """Daily minima 2000 and maxima 4000 for the requested period (one week)."""
     query = dict(pair.split("=", 1) for pair in url.split("?", 1)[1].split("&"))
     start = datetime.strptime(query["periodStart"], "%Y%m%d%H%M")
     end = datetime.strptime(query["periodEnd"], "%Y%m%d%H%M")
@@ -779,7 +785,8 @@ def _load_document(url: str) -> str:
     )
 
 
-def test_entsoe_load_is_fetched_per_month_and_cached(tmp_path: Path) -> None:
+def test_entsoe_load_is_fetched_per_iso_week_and_cached(tmp_path: Path) -> None:
+    """ENTSO-E answers the ISO week of periodStart: one request per week."""
     urls: list[str] = []
 
     def fetch(url: str) -> str:
@@ -805,16 +812,46 @@ def test_entsoe_load_is_fetched_per_month_and_cached(tmp_path: Path) -> None:
         date(2026, 9, 1),
     )
 
-    assert len(urls) == 2  # January and February, then from the cache
+    # The weeks of Monday 2026-01-26 and Monday 2026-02-02, then from the cache
+    assert len(urls) == 2
     assert "documentType=A65" in urls[0] and "processType=A31" in urls[0]
     assert "outBiddingZone_Domain=10YDK-1--------W" in urls[0]
-    assert "periodStart=202512312300" in urls[0]
+    assert "periodStart=202601252300" in urls[0] and "periodEnd=202602012300" in urls[0]
+    assert "periodStart=202602012300" in urls[1] and "periodEnd=202602082300" in urls[1]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "entsoe_load_DK1_2026-W05.json",
+        "entsoe_load_DK1_2026-W06.json",
+    ]
     assert again == load
     assert "tok" not in "".join(p.read_text() for p in tmp_path.iterdir())
     three_am = int(datetime(2026, 2, 1, 3, tzinfo=TZ).timestamp())
     seven_pm = int(datetime(2026, 2, 1, 19, tzinfo=TZ).timestamp())
     assert load[three_am] == pytest.approx(2000.0)
     assert load[seven_pm] == pytest.approx(4000.0)
+    # The curve runs across the week boundary
+    assert int(datetime(2026, 2, 2, 0, tzinfo=TZ).timestamp()) in load
+
+
+def test_a_week_entsoe_has_no_load_for_is_a_gap(tmp_path: Path) -> None:
+    def fetch(url: str) -> str:
+        if "periodStart=202602012300" in url:
+            return NO_LOAD
+        return _load_document(url)
+
+    load = backtest.load_entsoe_load(
+        "DK1",
+        date(2026, 1, 30),
+        date(2026, 2, 8),
+        tmp_path,
+        "tok",
+        fetch,
+        date(2026, 9, 1),
+    )
+
+    assert int(datetime(2026, 2, 1, 12, tzinfo=TZ).timestamp()) in load
+    assert int(datetime(2026, 2, 4, 12, tzinfo=TZ).timestamp()) not in load
+    # The current week is not cached, a complete past week without data is
+    assert (tmp_path / "entsoe_load_DK1_2026-W06.json").read_text() == "{}"
 
 
 def test_feature_rows_carry_the_load_forecast() -> None:

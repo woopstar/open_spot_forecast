@@ -90,6 +90,7 @@ from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 from custom_components.open_spot_forecast.ml.public_holidays import public_holiday
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
+from custom_components.open_spot_forecast.time_series import iso_weeks
 
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 
@@ -327,43 +328,45 @@ def load_entsoe_load(
 ) -> dict[int, float]:
     """Load ENTSO-E's week-ahead load forecast for the local days ``first``..``last``.
 
-    One request per calendar month (A65/A31), turned into the integration's
-    15-minute curve (``load_curve``) and keyed by slot start (UTC epoch).
-    Complete past months are cached in ``cache_dir`` as the daily (min, max)
-    values; the token is never cached or printed.
+    ENTSO-E answers one week-ahead document per request, the ISO week of
+    ``periodStart``, so there is one request per ISO week (A65/A31). The
+    daily (minimum, maximum) values of complete past weeks are cached in
+    ``cache_dir``; the token is never cached or printed. The days become the
+    integration's 15-minute curve (``load_curve``), keyed by slot start (UTC
+    epoch). A week ENTSO-E has no data for (an acknowledgement) has no days.
     """
     zone = REGIONS[region]
     tz = ZoneInfo(str(zone["tz"]))
     today = today or date.today()
     days: dict[date, tuple[float, float]] = {}
-    for month_start, month_end in _month_chunks(first, last):
-        cache_file = cache_dir / f"entsoe_load_{region}_{month_start:%Y-%m}.json"
+    for monday in iso_weeks(
+        datetime.combine(first, datetime.min.time(), tz),
+        datetime.combine(last + timedelta(days=1), datetime.min.time(), tz),
+        tz,
+    ):
+        cache_file = cache_dir / f"entsoe_load_{region}_{monday:%G-W%V}.json"
         if cache_file.exists():
             cached = json.loads(cache_file.read_text(encoding="utf-8"))
-            month = {date.fromisoformat(k): (v[0], v[1]) for k, v in cached.items()}
+            week = {date.fromisoformat(k): (v[0], v[1]) for k, v in cached.items()}
         else:
+            week_start = datetime.combine(monday, datetime.min.time(), tz)
             query = urllib.parse.urlencode(
                 {
                     "documentType": "A65",
                     "processType": "A31",
                     "outBiddingZone_Domain": str(zone["entsoe"]),
-                    **entsoe_period(
-                        datetime.combine(month_start, datetime.min.time(), tz),
-                        datetime.combine(
-                            month_end + timedelta(days=1), datetime.min.time(), tz
-                        ),
-                    ),
+                    **entsoe_period(week_start, week_start + timedelta(weeks=1)),
                     "securityToken": api_key,
                 }
             )
-            month = parse_entsoe_load(fetch(f"{ENTSOE_API}?{query}"), tz)
-            if month_end < today:
+            week = parse_entsoe_load(fetch(f"{ENTSOE_API}?{query}"), tz)
+            if monday + timedelta(weeks=1) <= today:
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(
-                    json.dumps({k.isoformat(): list(v) for k, v in month.items()}),
+                    json.dumps({k.isoformat(): list(v) for k, v in week.items()}),
                     encoding="utf-8",
                 )
-        days.update(month)
+        days.update(week)
     return {
         int(datetime.fromisoformat(row["timestamp"]).timestamp()): row["load"]
         for row in load_curve(days, tz)

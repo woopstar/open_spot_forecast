@@ -225,6 +225,18 @@ EpexPredictor's backtests found it hurts; `ENTSOE_LOAD_REGIONS` in
 `const.py`), it is NaN in every row. A week-ahead forecast published once
 a week may not reach day 7; those slots are NaN too.
 
+ENTSO-E answers **one week-ahead document per request**, the ISO week of
+`periodStart` (clipped to it), whatever `periodEnd` says, so the source
+requests whole ISO weeks (`week_chunks()` in `time_series.py`, Monday to
+Monday local time) and, for the curve's edges, the weeks on each side, each
+week once per update (#114). The documents are variable sized blocks
+(`curveType` A03): a day whose value equals the day before is left out and
+`parse_entsoe_load()` repeats the previous value. A day published as `0`
+(no forecast; DK1 had them on the Monday and Sunday of recent weeks) is
+treated as missing, so the curve splits there instead of dipping below
+zero. ENTSO-E also has whole weeks without data (e.g. DK1's weeks of
+2026-09-07 and 2026-09-28); the feature is NaN for them.
+
 **Gas price** (#28). Gas-fired plants often set the marginal price, so
 the gas price level moves the electricity price. `gas_price`
 (`ml/gas_price.py`) is the latest daily gas price dated **before the
@@ -777,8 +789,9 @@ pipeline:
   Only origins inside the export's history are meaningful.
 - **ENTSO-E load only with a key.** `--load entsoe` (token in the
   `ENTSOE_API_KEY` environment variable, never cached or printed) adds
-  feature 16 from ENTSO-E's week-ahead forecasts, one request per month,
-  cached as daily min/max in `.cache/backtest/`; otherwise it is NaN. A
+  feature 16 from ENTSO-E's week-ahead forecasts, one request per ISO week
+  (ENTSO-E answers one week per request, #114), cached as daily min/max in
+  `.cache/backtest/` once the week is over; otherwise it is NaN. A
   target day gets the forecast ENTSO-E keeps for it, which for the last
   days of a week can be newer than the origin (optimistic, like the
   weather archive).
