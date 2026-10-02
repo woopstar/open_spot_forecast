@@ -217,5 +217,9 @@ the live errors of stored predictions against actual prices.
 
 ## Reset
 
-Call `reset_learning()` to clear all accumulated metrics and start fresh.
-This drops all tables and recreates the schema.
+The `open_spot_forecast.reset_learning` action (`services.py`, #132) calls
+`reset_learning()`, which clears the in-memory error metrics, bias offsets,
+lead-time accuracy and evaluation and drops every table of the learning
+database — including the stored predictions and the price history the model
+trains on — before recreating the schema. The learning and accuracy entities
+are refreshed at once; the model retrains on the data collected afterwards.

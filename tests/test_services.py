@@ -1,8 +1,8 @@
-"""The ``open_spot_forecast.get_forecast`` action (#37)."""
+"""The ``open_spot_forecast.get_forecast`` (#37) and ``reset_learning`` (#132) actions."""
 
 from datetime import UTC, date, datetime
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -10,16 +10,20 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import SupportsResponse
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.util import slugify as util_slugify
 
 from custom_components.open_spot_forecast import CONFIG_SCHEMA, async_setup
-from custom_components.open_spot_forecast.const import DOMAIN
+from custom_components.open_spot_forecast.const import DOMAIN, UPDATE_SIGNAL
 from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
 from custom_components.open_spot_forecast.services import (
     GET_FORECAST_SCHEMA,
+    RESET_LEARNING_SCHEMA,
     SERVICE_GET_FORECAST,
+    SERVICE_RESET_LEARNING,
     _async_get_forecast,
+    _async_reset_learning,
     forecast_response,
 )
 from custom_components.open_spot_forecast.time_slots import (
@@ -102,15 +106,18 @@ async def _call(hass: Mock, **data: Any) -> Any:
 
 
 @pytest.mark.asyncio
-async def test_the_action_is_registered_once_in_async_setup() -> None:
+async def test_the_actions_are_registered_once_in_async_setup() -> None:
     hass = Mock()
 
     assert await async_setup(hass, {}) is True
 
-    hass.services.async_register.assert_called_once()
-    args, kwargs = hass.services.async_register.call_args
-    assert args[:2] == (DOMAIN, SERVICE_GET_FORECAST)
-    assert kwargs["supports_response"] is SupportsResponse.ONLY
+    assert hass.services.async_register.call_count == 2
+    (forecast, reset) = hass.services.async_register.call_args_list
+    assert forecast.args[:2] == (DOMAIN, SERVICE_GET_FORECAST)
+    assert forecast.kwargs["supports_response"] is SupportsResponse.ONLY
+    assert reset.args[:2] == (DOMAIN, SERVICE_RESET_LEARNING)
+    assert reset.kwargs["schema"] is RESET_LEARNING_SCHEMA
+    assert "supports_response" not in reset.kwargs
     # Config entries only: YAML is logged and ignored
     assert CONFIG_SCHEMA({}) == {}
 
@@ -283,3 +290,91 @@ async def test_without_ml_there_is_no_forecast() -> None:
     assert err.value.translation_placeholders == {
         "entry_title": "Open Spot Forecast DK1"
     }
+
+
+# --- Reset learning ------------------------------------------------------------------
+
+
+async def _reset(hass: Mock, **data: Any) -> None:
+    call = Mock()
+    call.hass = hass
+    call.data = RESET_LEARNING_SCHEMA(data)
+    await _async_reset_learning(call)
+
+
+def test_the_reset_schema_only_takes_the_entry() -> None:
+    assert RESET_LEARNING_SCHEMA({}) == {}
+    assert RESET_LEARNING_SCHEMA({"config_entry_id": "entry"}) == {
+        "config_entry_id": "entry"
+    }
+    with pytest.raises(vol.Invalid):
+        RESET_LEARNING_SCHEMA({"hours": 1})
+
+
+@pytest.mark.asyncio
+async def test_reset_learning_clears_the_entry_and_refreshes_the_entities() -> None:
+    predictor = _predictor([])
+    predictor.reset_learning = AsyncMock(return_value=True)
+    hass = _hass(ml_predictor=predictor)
+
+    with patch(
+        "custom_components.open_spot_forecast.services.async_dispatcher_send"
+    ) as send:
+        await _reset(hass, config_entry_id="entry")
+
+    predictor.reset_learning.assert_awaited_once_with()
+    send.assert_called_once_with(hass, util_slugify(UPDATE_SIGNAL))
+
+
+@pytest.mark.asyncio
+async def test_reset_learning_finds_the_only_entry() -> None:
+    predictor = _predictor([])
+    predictor.reset_learning = AsyncMock(return_value=True)
+    hass = _hass(ml_predictor=predictor)
+
+    with patch("custom_components.open_spot_forecast.services.async_dispatcher_send"):
+        await _reset(hass)
+
+    predictor.reset_learning.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reset_is_a_translated_error() -> None:
+    predictor = _predictor([])
+    predictor.reset_learning = AsyncMock(return_value=False)
+    hass = _hass(ml_predictor=predictor)
+
+    with (
+        patch(
+            "custom_components.open_spot_forecast.services.async_dispatcher_send"
+        ) as send,
+        pytest.raises(HomeAssistantError) as err,
+    ):
+        await _reset(hass, config_entry_id="entry")
+
+    assert err.value.translation_domain == DOMAIN
+    assert err.value.translation_key == "reset_learning_failed"
+    assert err.value.translation_placeholders == {
+        "entry_title": "Open Spot Forecast DK1"
+    }
+    send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reset_learning_without_ml_is_a_validation_error() -> None:
+    hass = _hass(ml_predictor=None)
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _reset(hass, config_entry_id="entry")
+
+    assert err.value.translation_key == "ml_prediction_disabled"
+
+
+@pytest.mark.asyncio
+async def test_reset_learning_of_an_unknown_entry_is_a_validation_error() -> None:
+    hass = _hass(ml_predictor=_predictor([]))
+
+    with pytest.raises(ServiceValidationError) as err:
+        await _reset(hass, config_entry_id="missing")
+
+    assert err.value.translation_key == "service_config_entry_not_found"

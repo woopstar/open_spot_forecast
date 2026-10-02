@@ -23,3 +23,9 @@ get_forecast:
     evaluation:
       selector:
         boolean:
+reset_learning:
+  fields:
+    config_entry_id:
+      selector:
+        config_entry:
+          integration: open_spot_forecast

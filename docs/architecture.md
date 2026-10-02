@@ -233,6 +233,13 @@ Prices go through the entry's `PriceOutput`, so the action and the forecast
 sensor always agree; the action has no 16 KB attribute limit. Without the ML
 model it raises `ml_prediction_disabled`.
 
+`open_spot_forecast.reset_learning` (#132) is registered next to it with the
+same `config_entry_id` lookup. It awaits `SpotPricePredictor.reset_learning()`
+(clears the in-memory learned state and drops and recreates the learning
+database), raises a translated `HomeAssistantError` when the database could
+not be cleared, and sends `UPDATE_SIGNAL` so the learning and accuracy
+entities refresh at once.
+
 ## Data Flow
 
 ```

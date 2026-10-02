@@ -179,11 +179,24 @@
           "description": "Returnér også, for de seneste 7 dages intervaller, prognosen lavet cirka et døgn i forvejen sammen med den faktiske pris (evaluation: start, end, predicted, actual, lead_hours)."
         }
       }
+    },
+    "reset_learning": {
+      "name": "Nulstil selvlæring",
+      "description": "Sletter en posts læringsdatabase: de lærte korrektioner, nøjagtighedsmålinger, gemte forudsigelser og den prishistorik, modellen trænes på. Modellen trænes igen på de data, der indsamles herefter.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Konfigurationspost",
+          "description": "Den Open Spot Forecast-post (region), der skal nulstilles. Kan udelades, når der kun er én."
+        }
+      }
     }
   },
   "exceptions": {
     "ml_prediction_disabled": {
       "message": "ML-prognoser er slået fra for {entry_title}, så der er ingen prognose"
+    },
+    "reset_learning_failed": {
+      "message": "Læringsdataene for {entry_title} kunne ikke slettes"
     }
   }
 }
