@@ -83,7 +83,8 @@ def test_training_stores_the_holdout_metrics_in_meta(
     assert predictor.holdout_rmse >= predictor.holdout_mae >= 0
     assert predictor.holdout_trained_at is not None
     assert predictor.holdout_trained_at >= before
-    meta = predictor.storage.load_meta_dict()
+    meta = predictor.storage.load_all()
+    assert meta is not None
     assert float(meta["holdout_mae"]) == pytest.approx(predictor.holdout_mae)
     assert float(meta["holdout_rmse"]) == pytest.approx(predictor.holdout_rmse)
     assert meta["holdout_trained_at"] == predictor.holdout_trained_at.isoformat()
@@ -162,7 +163,7 @@ def test_a_failed_training_clears_the_holdout_metrics(
 
     assert predictor.is_trained is False
     assert predictor.holdout_metrics() == dict.fromkeys(HOLDOUT_META_KEYS)
-    assert not set(HOLDOUT_META_KEYS) & set(predictor.storage.load_meta_dict())
+    assert not set(HOLDOUT_META_KEYS) & set(predictor.storage.load_all() or {})
 
 
 def test_a_storage_error_does_not_fail_the_training(
@@ -235,6 +236,7 @@ def test_delete_meta_keys_leaves_other_keys(
 
     storage.delete_meta_keys(("holdout_mae", "missing"))
 
-    meta = storage.load_meta_dict()
+    meta = storage.load_all()
+    assert meta is not None
     assert "holdout_mae" not in meta
     assert meta["holdout_rmse"] == "3"
