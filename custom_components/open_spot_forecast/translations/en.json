@@ -179,11 +179,24 @@
           "description": "Also return, for the last 7 days of slots, the prediction made about a day ahead next to the actual price (evaluation: start, end, predicted, actual, lead_hours)."
         }
       }
+    },
+    "reset_learning": {
+      "name": "Reset learning",
+      "description": "Deletes an entry's learning database: the learned corrections, accuracy metrics, stored predictions and the price history the model trains on. The model retrains on the data collected afterwards.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Config entry",
+          "description": "The Open Spot Forecast entry (region) to reset. Can be left out when only one is set up."
+        }
+      }
     }
   },
   "exceptions": {
     "ml_prediction_disabled": {
       "message": "ML predictions are disabled for {entry_title}, so it has no forecast"
+    },
+    "reset_learning_failed": {
+      "message": "The learning data of {entry_title} could not be deleted"
     }
   }
 }

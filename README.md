@@ -94,6 +94,17 @@ The response has `known_until` (end of the confirmed prices), `unit`,
 The forecast sensor can show the same continuous series (option "Include
 confirmed prices in the forecast attribute").
 
+`open_spot_forecast.reset_learning` deletes an entry's learning database —
+the learned corrections, accuracy metrics, stored predictions and the price
+history the model trains on — so the self-learning starts over. The entities
+refresh at once and the model retrains on the data collected afterwards:
+
+```yaml
+action: open_spot_forecast.reset_learning
+# data:
+#   config_entry_id: ...  # optional with one entry
+```
+
 ### Dashboards, evcc and Predbat
 
 [QUICKSTART.md → Dashboard](QUICKSTART.md#dashboard) has tested

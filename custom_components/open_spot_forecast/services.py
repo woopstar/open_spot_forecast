@@ -1,10 +1,14 @@
-"""The ``open_spot_forecast.get_forecast`` action (#37).
+"""The ``open_spot_forecast.get_forecast`` (#37) and ``reset_learning`` (#132) actions.
 
 Entity attributes are capped by Home Assistant's 16 KB limit, so the sensor
-shows at most 72 hours of the 7-day forecast. The action returns the whole
-forecast, or a window of it, as response data. Prices are converted exactly
-as the sensor converts them (``PriceOutput``: tariffs, unit, surcharge, VAT,
-hourly mean), so both always agree.
+shows at most 72 hours of the 7-day forecast. ``get_forecast`` returns the
+whole forecast, or a window of it, as response data. Prices are converted
+exactly as the sensor converts them (``PriceOutput``: tariffs, unit, surcharge,
+VAT, hourly mean), so both always agree.
+
+``reset_learning`` deletes an entry's learning database through
+``SpotPricePredictor.reset_learning()`` and refreshes the entities, so the
+self-learning starts over without a restart or a manual file deletion.
 """
 
 from __future__ import annotations
@@ -15,6 +19,7 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     HomeAssistant,
     ServiceCall,
@@ -22,11 +27,17 @@ from homeassistant.core import (
     SupportsResponse,
     callback,
 )
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, service
-from homeassistant.util import dt as dt_util
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.util import dt as dt_util, slugify as util_slugify
 
-from .const import CONF_INCLUDE_KNOWN_PRICES, DEFAULT_INCLUDE_KNOWN_PRICES, DOMAIN
+from .const import (
+    CONF_INCLUDE_KNOWN_PRICES,
+    DEFAULT_INCLUDE_KNOWN_PRICES,
+    DOMAIN,
+    UPDATE_SIGNAL,
+)
 from .price_output import PriceOutput
 from .price_source import PriceSettings
 from .spot_prices import known_until, with_known_prices
@@ -34,6 +45,7 @@ from .tariffs import TariffSchedule
 from .time_slots import floor_to_slot, parse_utc
 
 SERVICE_GET_FORECAST = "get_forecast"
+SERVICE_RESET_LEARNING = "reset_learning"
 ATTR_CONFIG_ENTRY_ID = "config_entry_id"
 ATTR_START = "start"
 ATTR_HOURS = "hours"
@@ -55,6 +67,13 @@ GET_FORECAST_SCHEMA = vol.Schema(
         vol.Optional(ATTR_HOURLY): cv.boolean,
         vol.Optional(ATTR_INCLUDE_KNOWN): cv.boolean,
         vol.Optional(ATTR_EVALUATION, default=False): cv.boolean,
+    }
+)
+
+RESET_LEARNING_SCHEMA = vol.Schema(
+    {
+        # Optional with a single loaded entry
+        vol.Optional(ATTR_CONFIG_ENTRY_ID): cv.string,
     }
 )
 
@@ -105,6 +124,22 @@ def forecast_response(
     }
 
 
+def _ml_predictor(hass: HomeAssistant, entry: ConfigEntry) -> Any:
+    """Return the entry's predictor.
+
+    Raises:
+        ServiceValidationError: ML predictions are disabled for the entry.
+    """
+    ml_predictor = hass.data[DOMAIN][entry.entry_id].get("ml_predictor")
+    if ml_predictor is None:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="ml_prediction_disabled",
+            translation_placeholders={"entry_title": entry.title},
+        )
+    return ml_predictor
+
+
 async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     """Return an entry's forecast (see ``forecast_response``)."""
     hass = call.hass
@@ -112,13 +147,7 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
         hass, DOMAIN, call.data.get(ATTR_CONFIG_ENTRY_ID)
     )
     api_data = hass.data[DOMAIN][entry.entry_id]
-    ml_predictor = api_data.get("ml_predictor")
-    if ml_predictor is None:
-        raise ServiceValidationError(
-            translation_domain=DOMAIN,
-            translation_key="ml_prediction_disabled",
-            translation_placeholders={"entry_title": entry.title},
-        )
+    ml_predictor = _ml_predictor(hass, entry)
     settings = PriceSettings.from_entry(entry)
     output = settings.output
     if ATTR_HOURLY in call.data:
@@ -152,6 +181,27 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     return response
 
 
+async def _async_reset_learning(call: ServiceCall) -> None:
+    """Delete an entry's learning database and refresh its entities.
+
+    Raises:
+        HomeAssistantError: The database could not be cleared.
+    """
+    hass = call.hass
+    entry = service.async_get_config_entry(
+        hass, DOMAIN, call.data.get(ATTR_CONFIG_ENTRY_ID)
+    )
+    ml_predictor = _ml_predictor(hass, entry)
+    if not await ml_predictor.reset_learning():
+        raise HomeAssistantError(
+            translation_domain=DOMAIN,
+            translation_key="reset_learning_failed",
+            translation_placeholders={"entry_title": entry.title},
+        )
+    # The learning and accuracy entities read the predictor's state directly
+    async_dispatcher_send(hass, util_slugify(UPDATE_SIGNAL))
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     """Register the integration's actions (once, not per config entry)."""
@@ -161,4 +211,10 @@ def async_setup_services(hass: HomeAssistant) -> None:
         _async_get_forecast,
         schema=GET_FORECAST_SCHEMA,
         supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RESET_LEARNING,
+        _async_reset_learning,
+        schema=RESET_LEARNING_SCHEMA,
     )

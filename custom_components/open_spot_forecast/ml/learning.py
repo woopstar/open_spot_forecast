@@ -549,10 +549,13 @@ class LearningMixin(PredictorBase):
             }
         return summary
 
-    async def reset_learning(self) -> None:
+    async def reset_learning(self) -> bool:
         """Reset all learning data and start fresh.
 
-        Use this if you want to clear accumulated learning and start over.
+        Called by the ``open_spot_forecast.reset_learning`` action (#132).
+
+        Returns:
+            Whether the learning database was cleared.
         """
         self.error_metrics = {}
         self.bias_correction = {}
@@ -560,9 +563,10 @@ class LearningMixin(PredictorBase):
         self.evaluation = []
 
         # Clear storage file
-        await self.storage.async_clear_storage()
+        cleared = await self.storage.async_clear_storage()
 
         _LOGGER.info("Self-learning data has been reset")
+        return cleared
 
     async def save_learning_data(self) -> bool:
         """Save current learning data to persistent storage."""

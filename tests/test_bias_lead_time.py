@@ -325,7 +325,7 @@ async def test_reset_learning_clears_the_offsets(predictor: SpotPricePredictor) 
     with patch.object(
         predictor.storage, "async_clear_storage", AsyncMock(return_value=True)
     ):
-        await predictor.reset_learning()
+        assert await predictor.reset_learning() is True
 
     assert predictor.bias_correction == {}
 
