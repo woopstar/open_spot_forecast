@@ -313,8 +313,9 @@ def test_learning_metrics_report_the_offsets_per_bucket(
     }
     # A slot without a day_1 offset reports 0.0 as before, plus its buckets
     assert metrics["hourly_metrics"]["50"]["bias_correction"] == pytest.approx(0.0)
-    report = {row["slot"]: row for row in predictor.get_hourly_error_report()}
-    assert report[50]["bias_offsets"] == {"day_2": pytest.approx(0.5)}
+    assert metrics["hourly_metrics"]["50"]["bias_offsets"] == {
+        "day_2": pytest.approx(0.5)
+    }
 
 
 @pytest.mark.asyncio
@@ -330,6 +331,14 @@ async def test_reset_learning_clears_the_offsets(predictor: SpotPricePredictor) 
 
 
 # --- Migration ---------------------------------------------------------------------
+
+
+def _bias_offsets(storage: LearningStorage) -> dict[int, dict[str, float]]:
+    """Return the stored bias offsets through the bulk loader."""
+    data = storage.load_all()
+    assert data is not None
+    offsets: dict[int, dict[str, float]] = data["bias_correction"]
+    return offsets
 
 
 def _schema_version(db_path: Path) -> int:
@@ -362,7 +371,7 @@ def test_upgrade_keeps_the_pooled_offsets_as_day_1(
     with caplog.at_level(logging.INFO):
         upgraded = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        assert upgraded.load_bias_correction() == {
+        assert _bias_offsets(upgraded) == {
             SLOT: {BIAS_FALLBACK_BUCKET: pytest.approx(0.12)},
             SLOT + 1: {BIAS_FALLBACK_BUCKET: pytest.approx(-0.05)},
         }
@@ -370,12 +379,12 @@ def test_upgrade_keeps_the_pooled_offsets_as_day_1(
         assert "kept 2 offsets as the day_1 offsets" in caplog.text
 
         # The other buckets are stored next to the migrated ones
-        upgraded.save_bias_correction({SLOT: {"day_2": 0.3}})
+        upgraded.save_all({"bias_correction": {SLOT: {"day_2": 0.3}}})
     finally:
         upgraded.close()
     reopened = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        assert reopened.load_bias_correction()[SLOT] == {
+        assert _bias_offsets(reopened)[SLOT] == {
             BIAS_FALLBACK_BUCKET: pytest.approx(0.12),
             "day_2": pytest.approx(0.3),
         }
@@ -397,7 +406,7 @@ def test_new_database_starts_at_the_lead_time_bias_schema(tmp_path: Path) -> Non
 def test_every_lead_time_bucket_can_hold_an_offset(tmp_path: Path) -> None:
     storage = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        storage.save_bias_correction({SLOT: dict.fromkeys(BUCKETS, 0.1)})
-        assert set(storage.load_bias_correction()[SLOT]) == set(BUCKETS)
+        storage.save_all({"bias_correction": {SLOT: dict.fromkeys(BUCKETS, 0.1)}})
+        assert set(_bias_offsets(storage)[SLOT]) == set(BUCKETS)
     finally:
         storage.close()

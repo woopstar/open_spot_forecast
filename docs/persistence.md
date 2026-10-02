@@ -63,6 +63,12 @@ the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking
 only. The versioned data migrations live next to them in `ml/bias_storage.py`
 (v5 and v9) and `ml/spot_migration.py` (v6).
 
+`LearningStateStorageMixin` exposes only the bulk `save_all()` / `load_all()`
+pair (plus their async wrappers) and the `meta` key writers `save_meta_dict()`
+and `delete_meta_keys()`. There is no per-table save/load accessor: the
+predictor persists and restores all learned state in one transaction, and tests
+go through the same pair (#130).
+
 ## Connection Management
 
 - Single persistent connection per integration lifetime

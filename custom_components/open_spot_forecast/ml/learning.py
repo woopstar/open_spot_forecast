@@ -549,49 +549,6 @@ class LearningMixin(PredictorBase):
             }
         return summary
 
-    def get_hourly_error_report(self) -> list[dict]:
-        """Get detailed error report for each 15-minute slot.
-
-        Returns:
-            List of dictionaries with per-slot error statistics
-        """
-        report = []
-
-        for slot in range(96):
-            metrics = self.error_metrics.get(slot)
-            hour = slot // 4
-            minute = (slot % 4) * 15
-
-            if metrics and metrics["count"] > 0:
-                report.append(
-                    {
-                        "slot": slot,
-                        "hour": hour,
-                        "minute": minute,
-                        "samples": metrics["count"],
-                        "mae": float(np.mean(metrics["abs_errors"])),
-                        "mean_error": float(np.mean(metrics["errors"])),
-                        "std_error": float(np.std(metrics["errors"])),
-                        "bias_correction": self._bias_offset(slot, BIAS_FALLBACK_BUCKET)
-                        or 0.0,
-                        "bias_offsets": dict(self.bias_correction.get(slot, {})),
-                        "overpredicts": sum(1 for e in metrics["errors"] if e > 0),
-                        "underpredicts": sum(1 for e in metrics["errors"] if e < 0),
-                    }
-                )
-            else:
-                report.append(
-                    {
-                        "slot": slot,
-                        "hour": hour,
-                        "minute": minute,
-                        "samples": 0,
-                        "message": "No data yet",
-                    }
-                )
-
-        return report
-
     async def reset_learning(self) -> None:
         """Reset all learning data and start fresh.
 

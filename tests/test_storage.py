@@ -102,16 +102,8 @@ def storage(tmp_path: Path) -> Iterator[LearningStorage]:
         (
             LearningStateStorageMixin,
             (
-                "save_volatility",
-                "load_volatility",
-                "save_error_metrics",
-                "load_error_metrics",
-                "save_bias_correction",
-                "load_bias_correction",
-                "save_meta",
                 "save_meta_dict",
-                "load_meta_dict",
-                "load_meta",
+                "delete_meta_keys",
                 "save_all",
                 "async_save_all",
                 "load_all",
@@ -316,31 +308,49 @@ def test_error_metrics_bias_and_volatility_round_trip(
             "bucket_errors": {"day_2": [0.1]},
         }
     }
-    storage.save_error_metrics(metrics)
-    storage.save_bias_correction(
-        {40: {"day_1": -0.05, "day_2": 0.1}, 41: {"day_1": 0.2}}
+    storage.save_all(
+        {
+            "error_metrics": metrics,
+            "bias_correction": {40: {"day_1": -0.05, "day_2": 0.1}, 41: {"day_1": 0.2}},
+            "volatility_mae": {40: 0.2},
+        }
     )
-    storage.save_volatility({40: 0.2})
 
-    assert storage.load_error_metrics() == metrics
-    assert storage.load_bias_correction() == {
+    data = storage.load_all()
+    assert data is not None
+    assert data["error_metrics"] == {
+        40: {
+            "errors": [pytest.approx(0.1)],
+            "abs_errors": [pytest.approx(0.1)],
+            "pct_errors": [pytest.approx(10.0)],
+            "predictions": [pytest.approx(1.1)],
+            "actuals": [pytest.approx(1.0)],
+            "count": 1,
+            "bucket_errors": {"day_2": [pytest.approx(0.1)]},
+        }
+    }
+    assert data["bias_correction"] == {
         40: {"day_1": pytest.approx(-0.05), "day_2": pytest.approx(0.1)},
         41: {"day_1": pytest.approx(0.2)},
     }
-    assert storage.load_volatility() == {40: pytest.approx(0.2)}
+    assert data["volatility_mae"] == {40: pytest.approx(0.2)}
 
 
 def test_meta_round_trip(storage: LearningStorage) -> None:
-    storage.save_meta(120, True)
+    storage.save_all({"training_samples": 120, "is_trained": True})
     storage.save_meta_dict({"holdout_mae": 0.12, "source_state": "x"})
 
-    meta = storage.load_meta()
+    meta = storage.load_all()
+    assert meta is not None
     assert meta["training_samples"] == 120
     assert meta["is_trained"] is True
     assert meta["source_state"] == "x"
-    raw = storage.load_meta_dict()
-    assert raw["is_trained"] == "1"
-    assert raw["holdout_mae"] == "0.12"
+    assert meta["holdout_mae"] == "0.12"
+    storage.delete_meta_keys(("holdout_mae",))
+    meta = storage.load_all()
+    assert meta is not None
+    assert "holdout_mae" not in meta
+    assert meta["source_state"] == "x"
 
 
 @pytest.mark.asyncio
@@ -386,7 +396,9 @@ async def test_failed_save_all_rolls_back(storage: LearningStorage) -> None:
     )
 
     assert saved is False
-    assert storage.load_bias_correction() == {}
+    data = storage.load_all()
+    assert data is not None
+    assert data["bias_correction"] == {}
 
 
 @pytest.mark.asyncio
@@ -398,8 +410,10 @@ async def test_clear_storage_empties_every_table(storage: LearningStorage) -> No
 
     assert await storage.async_clear_storage() is True
     assert storage.count_predictions() == 0
-    assert storage.load_bias_correction() == {}
-    assert "training_samples" not in storage.load_meta_dict()
+    data = storage.load_all()
+    assert data is not None
+    assert data["bias_correction"] == {}
+    assert data["training_samples"] == 0
 
 
 def test_legacy_json_training_state_is_imported(tmp_path: Path) -> None:
@@ -412,7 +426,8 @@ def test_legacy_json_training_state_is_imported(tmp_path: Path) -> None:
 
     storage = LearningStorage(_hass(tmp_path), "DK1")
     try:
-        meta = storage.load_meta()
+        meta = storage.load_all()
+        assert meta is not None
         assert meta["training_samples"] == 7
         assert meta["is_trained"] is True
         assert not json_path.exists()

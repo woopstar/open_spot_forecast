@@ -1,11 +1,11 @@
 """SQLite persistence for the predictor's learned state.
 
 Mixed into ``LearningStorage`` so the learning database keeps a single
-connection and write lock. Covers the per-slot ``error_metrics``, the
-``bias_correction`` offsets per slot and lead-time bucket (#118) and
-``volatility``, the ``meta`` key/value table,
-and the bulk ``save_all`` / ``load_all`` the predictor uses to persist and
-restore all of it in one transaction.
+connection and write lock. The bulk ``save_all`` / ``load_all`` the predictor
+uses persist and restore the per-slot ``error_metrics``, the ``bias_correction``
+offsets per slot and lead-time bucket (#118), ``volatility`` and the ``meta``
+key/value table in one transaction; ``save_meta_dict`` / ``delete_meta_keys``
+write individual ``meta`` keys (holdout metrics, hyperparameters, source state).
 """
 
 import contextlib
@@ -48,112 +48,11 @@ def nest_bias_rows(rows: list[tuple[int, str, float]]) -> dict[int, dict[str, fl
 
 
 class LearningStateStorageMixin(StorageMixinBase):
-    """Error metrics, bias, volatility, meta and bulk I/O for ``LearningStorage``."""
-
-    # ------------------------------------------------------------------
-    # Volatility operations
-    # ------------------------------------------------------------------
-
-    def save_volatility(self, volatility: dict[int, float]) -> None:
-        """Save per-slot volatility MAE values (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            for slot, value in volatility.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO volatility (slot, mae) VALUES (?, ?)",
-                    (int(slot), float(value)),
-                )
-            conn.commit()
-
-    def load_volatility(self) -> dict[int, float]:
-        """Load per-slot volatility MAE values (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute("SELECT slot, mae FROM volatility").fetchall()
-        return {row[0]: row[1] for row in rows}
-
-    # ------------------------------------------------------------------
-    # Error metrics operations
-    # ------------------------------------------------------------------
-
-    def save_error_metrics(self, error_metrics: dict[int, dict]) -> None:
-        """Persist all error metrics to the database (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            for hour, metrics in error_metrics.items():
-                data_json = json.dumps(
-                    {
-                        "errors": metrics.get("errors", []),
-                        "abs_errors": metrics.get("abs_errors", []),
-                        "pct_errors": metrics.get("pct_errors", []),
-                        "predictions": metrics.get("predictions", []),
-                        "actuals": metrics.get("actuals", []),
-                        "count": metrics.get("count", 0),
-                        "bucket_errors": metrics.get("bucket_errors", {}),
-                    }
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO error_metrics (hour, data) VALUES (?, ?)",
-                    (int(hour), data_json),
-                )
-            conn.commit()
-
-    def load_error_metrics(self) -> dict[int, dict]:
-        """Load all error metrics from the database (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute("SELECT hour, data FROM error_metrics").fetchall()
-        result: dict[int, dict] = {}
-        for hour, data_json in rows:
-            metrics = json.loads(data_json)
-            result[hour] = {
-                "errors": metrics.get("errors", []),
-                "abs_errors": metrics.get("abs_errors", []),
-                "pct_errors": metrics.get("pct_errors", []),
-                "predictions": metrics.get("predictions", []),
-                "actuals": metrics.get("actuals", []),
-                "count": metrics.get("count", 0),
-                "bucket_errors": metrics.get("bucket_errors", {}),
-            }
-        return result
-
-    # ------------------------------------------------------------------
-    # Bias correction operations
-    # ------------------------------------------------------------------
-
-    def save_bias_correction(
-        self, bias_correction: dict[int, dict[str, float]]
-    ) -> None:
-        """Persist the bias offsets, ``{slot: {bucket: offset}}`` (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            conn.executemany(_BIAS_INSERT, bias_rows(bias_correction))
-            conn.commit()
-
-    def load_bias_correction(self) -> dict[int, dict[str, float]]:
-        """Load the bias offsets as ``{slot: {bucket: offset}}`` (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute(_BIAS_SELECT).fetchall()
-        return nest_bias_rows(rows)
+    """Bulk learned-state I/O and ``meta`` key writes for ``LearningStorage``."""
 
     # ------------------------------------------------------------------
     # Meta operations
     # ------------------------------------------------------------------
-
-    def save_meta(self, training_samples: int, is_trained: bool) -> None:
-        """Save metadata key/value pairs (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-                ("training_samples", str(training_samples)),
-            )
-            conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-                ("is_trained", "1" if is_trained else "0"),
-            )
-            conn.commit()
 
     def save_meta_dict(self, extra_meta: dict) -> None:
         """Save arbitrary key/value pairs to the meta table (blocking).
@@ -180,30 +79,8 @@ class LearningStateStorageMixin(StorageMixinBase):
             conn.executemany("DELETE FROM meta WHERE key = ?", [(k,) for k in keys])
             conn.commit()
 
-    def load_meta_dict(self) -> dict[str, str]:
-        """Load all meta key/value pairs as strings (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute("SELECT key, value FROM meta").fetchall()
-        return {row[0]: row[1] for row in rows}
-
-    def load_meta(self) -> dict[str, Any]:
-        """Load all metadata from the database (blocking)."""
-        with self._lock:
-            conn = self._ensure_conn()
-            rows = conn.execute("SELECT key, value FROM meta").fetchall()
-        meta = {}
-        for key, value in rows:
-            if key == "training_samples":
-                meta["training_samples"] = int(value)
-            elif key == "is_trained":
-                meta["is_trained"] = value == "1"
-            else:
-                meta[key] = value
-        return meta
-
     # ------------------------------------------------------------------
-    # Bulk operations (backward-compatible)
+    # Bulk operations
     # ------------------------------------------------------------------
 
     def save_all(self, data: dict[str, Any]) -> None:

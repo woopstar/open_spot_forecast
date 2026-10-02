@@ -285,7 +285,8 @@ async def test_stored_tuned_hyperparameters_are_dropped_at_startup(
         await restarted._load_learning_data()
 
         assert restarted.price_model.get_params() == create_price_model().get_params()
-        meta = restarted.storage.load_meta_dict()
+        meta = restarted.storage.load_all()
+        assert meta is not None
         assert not set(meta) & set(models.OBSOLETE_HPO_META_KEYS)
         assert meta["holdout_mae"] == "0.1"
     finally:

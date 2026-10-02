@@ -257,7 +257,7 @@ def test_retraining_keeps_the_production_hyperparameters(
     assert train.call_count == 1
     assert predictor.is_trained is True
     assert predictor.price_model.get_params() == defaults
-    assert not any(key.startswith("hpo_") for key in predictor.storage.load_meta_dict())
+    assert not any(key.startswith("hpo_") for key in predictor.storage.load_all() or {})
 
 
 # --- Model refit ----------------------------------------------------------------
