@@ -100,6 +100,8 @@ SLOT_SECONDS = 15 * 60
 MIN_HISTORY_SLOTS = 7 * 96
 
 HTTP_ATTEMPTS = 5
+# First wait before retrying a transient failure; doubles per attempt.
+TRANSIENT_BACKOFF_SECONDS = 2.0
 # OSF regions and their energy-charts bidding zones (``REGIONS``, #27)
 ENERGY_CHARTS_ZONES: dict[str, str] = {
     region: str(zone["energy_charts"]) for region, zone in REGIONS.items()
@@ -236,7 +238,14 @@ def _retry_after_seconds(value: str | None) -> float:
 def _http_get_json(
     url: str, sleep: Callable[[float], None] = time.sleep
 ) -> dict[str, Any]:
-    """Fetch and decode a JSON document, waiting out HTTP 429 rate limits."""
+    """Fetch and decode a JSON document, retrying transient failures.
+
+    HTTP 429 waits out the server's ``Retry-After``; a truncated or invalid
+    body, a connection error or timeout and an HTTP 5xx are retried with a
+    doubling back-off (``TRANSIENT_BACKOFF_SECONDS`` first). Other HTTP
+    errors (404, 400, ...) are raised at once. At most ``HTTP_ATTEMPTS``
+    attempts, then the last error propagates.
+    """
     request = urllib.request.Request(
         url, headers={"User-Agent": "open-spot-forecast-backtest"}
     )
@@ -247,12 +256,56 @@ def _http_get_json(
                 payload: dict[str, Any] = json.load(response)
                 return payload
         except urllib.error.HTTPError as err:
-            if err.code != 429 or attempt >= HTTP_ATTEMPTS:
+            if err.code == 429:
+                reason = "rate limited"
+                wait = _retry_after_seconds(err.headers.get("Retry-After"))
+            elif err.code >= 500:
+                reason = f"HTTP {err.code}"
+                wait = TRANSIENT_BACKOFF_SECONDS * 2 ** (attempt - 1)
+            else:
                 raise
-            wait = _retry_after_seconds(err.headers.get("Retry-After"))
-            print(f"  rate limited, retrying in {wait:.0f} s", file=sys.stderr)
-            sleep(wait)
-            attempt += 1
+            if attempt >= HTTP_ATTEMPTS:
+                raise
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as err:
+            if attempt >= HTTP_ATTEMPTS:
+                raise
+            reason = (
+                "truncated response"
+                if isinstance(err, json.JSONDecodeError)
+                else str(err)
+            )
+            wait = TRANSIENT_BACKOFF_SECONDS * 2 ** (attempt - 1)
+        print(f"  {reason}, retrying in {wait:.0f} s", file=sys.stderr)
+        sleep(wait)
+        attempt += 1
+
+
+def _read_cache(cache_file: Path) -> Any | None:
+    """Return a cached JSON document, or None when it is missing or unreadable.
+
+    A file an interrupted run left truncated is deleted and fetched again
+    instead of failing every later run.
+    """
+    if not cache_file.exists():
+        return None
+    try:
+        return json.loads(cache_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        print(f"  discarding unreadable cache file {cache_file.name}", file=sys.stderr)
+        cache_file.unlink()
+        return None
+
+
+def _write_cache(cache_file: Path, document: Any) -> None:
+    """Write a JSON document atomically: a temp file next to it, then a rename.
+
+    The final name only appears once the content is complete, so a run killed
+    while writing (Ctrl-C, a time limit) cannot leave a half-written file.
+    """
+    cache_file.parent.mkdir(parents=True, exist_ok=True)
+    temp_file = cache_file.with_name(cache_file.name + ".tmp")
+    temp_file.write_text(json.dumps(document), encoding="utf-8")
+    os.replace(temp_file, cache_file)
 
 
 def load_energy_charts_prices(
@@ -276,9 +329,8 @@ def load_energy_charts_prices(
     parts = []
     for month_start, month_end in _month_chunks(first, last):
         cache_file = cache_dir / f"energy_charts_{zone}_{month_start:%Y-%m}.json"
-        if cache_file.exists():
-            payload = json.loads(cache_file.read_text(encoding="utf-8"))
-        else:
+        payload = _read_cache(cache_file)
+        if payload is None:
             query = urllib.parse.urlencode(
                 {
                     "bzn": zone,
@@ -294,8 +346,7 @@ def load_energy_charts_prices(
                 print(f"  no {zone} prices for {month_start:%Y-%m}", file=sys.stderr)
                 continue
             if month_end < today:
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+                _write_cache(cache_file, payload)
         parts.append(parse_energy_charts(payload))
     return merge_series(parts)
 
@@ -346,8 +397,8 @@ def load_entsoe_load(
         tz,
     ):
         cache_file = cache_dir / f"entsoe_load_{region}_{monday:%G-W%V}.json"
-        if cache_file.exists():
-            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+        cached = _read_cache(cache_file)
+        if cached is not None:
             week = {date.fromisoformat(k): (v[0], v[1]) for k, v in cached.items()}
         else:
             week_start = datetime.combine(monday, datetime.min.time(), tz)
@@ -362,10 +413,8 @@ def load_entsoe_load(
             )
             week = parse_entsoe_load(fetch(f"{ENTSOE_API}?{query}"), tz)
             if monday + timedelta(weeks=1) <= today:
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(
-                    json.dumps({k.isoformat(): list(v) for k, v in week.items()}),
-                    encoding="utf-8",
+                _write_cache(
+                    cache_file, {k.isoformat(): list(v) for k, v in week.items()}
                 )
         days.update(week)
     return {
@@ -396,16 +445,14 @@ def load_open_meteo_weather(
     while chunk_start <= last:
         chunk_end = min(chunk_start + timedelta(days=OPEN_METEO_REQUEST_DAYS - 1), last)
         cache_file = cache_dir / f"openmeteo_{region}_{chunk_start}_{chunk_end}.json"
-        if cache_file.exists():
-            payload = json.loads(cache_file.read_text(encoding="utf-8"))
-        else:
+        payload = _read_cache(cache_file)
+        if payload is None:
             query = urllib.parse.urlencode(
                 open_meteo_query(points, chunk_start, chunk_end)
             )
             payload = fetch(f"{OPEN_METEO_ARCHIVE_API}?{query}")
             if chunk_end < today - timedelta(days=2):
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+                _write_cache(cache_file, payload)
         rows.extend(parse_open_meteo(payload, points))
         chunk_start = chunk_end + timedelta(days=1)
     return ZoneWeatherIndex(rows)
@@ -428,9 +475,8 @@ def load_gas_prices(
     rows: list[dict[str, Any]] = []
     for month_start, month_end in _month_chunks(first, last):
         cache_file = cache_dir / f"gas_instrat_{month_start:%Y-%m}.json"
-        if cache_file.exists():
-            payload = json.loads(cache_file.read_text(encoding="utf-8"))
-        else:
+        payload = _read_cache(cache_file)
+        if payload is None:
             start = datetime.combine(month_start, datetime.min.time(), UTC)
             end = datetime.combine(
                 month_end + timedelta(days=1), datetime.min.time(), UTC
@@ -438,8 +484,7 @@ def load_gas_prices(
             query = urllib.parse.urlencode(instrat_query(start, end))
             payload = fetch(f"{INSTRAT_GAS_API}?{query}")
             if month_end < today - timedelta(days=2):
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file.write_text(json.dumps(payload), encoding="utf-8")
+                _write_cache(cache_file, payload)
         rows.extend(parse_instrat_gas(payload))
     return rows
 
