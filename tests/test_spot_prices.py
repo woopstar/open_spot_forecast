@@ -186,7 +186,7 @@ def test_upgrade_discards_consumer_price_history_and_logs_it(
                 {"start": "2026-09-26T10:00:00+02:00", "price": 2.5, "confidence": 0.8}
             ],
             "error_metrics": {40: {"errors": [0.1], "count": 1}},
-            "bias_correction": {40: 0.1},
+            "bias_correction": {40: {"day_1": 0.1}},
         }
     )
     storage.insert_weather_snapshot(

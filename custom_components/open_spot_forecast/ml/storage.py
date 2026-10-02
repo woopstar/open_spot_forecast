@@ -18,7 +18,11 @@ from pathlib import Path
 from homeassistant.core import HomeAssistant
 
 from .accuracy_storage import LeadTimeAccuracyStorageMixin
-from .bias_storage import migrate_bias_to_additive
+from .bias_storage import (
+    BIAS_TABLE_SQL,
+    migrate_bias_to_additive,
+    migrate_bias_to_lead_time_buckets,
+)
 from .evaluation_storage import EvaluationStorageMixin
 from .history_storage import HistoryStorageMixin
 from .prediction_storage import PredictionStorageMixin
@@ -49,7 +53,7 @@ class LearningStorage(
       predictions     — per-interval forecasts awaiting self-learning
                         comparison (prediction_storage.py)
       error_metrics   — per-hour error tracking (JSON-serialized arrays)
-      bias_correction — per-slot additive bias offsets (0-95)
+      bias_correction — additive bias offsets per slot (0-95) and lead-time bucket
       volatility      — per-slot volatility MAE
       meta            — key/value pairs (training_samples, is_trained,
                         holdout metrics) (all four: state_storage.py)
@@ -228,11 +232,6 @@ class LearningStorage(
                 data        TEXT    NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS bias_correction (
-                hour        INTEGER PRIMARY KEY,
-                correction  REAL    NOT NULL
-            );
-
             CREATE TABLE IF NOT EXISTS price_history (
                 date        TEXT    PRIMARY KEY,
                 prices      TEXT    NOT NULL
@@ -311,6 +310,7 @@ class LearningStorage(
             );
             """
         )
+        conn.execute(BIAS_TABLE_SQL)
 
         # Schema migration: old DBs had start as PRIMARY KEY without id column
         cols = [c[1] for c in conn.execute("PRAGMA table_info(predictions)").fetchall()]
@@ -405,6 +405,7 @@ class LearningStorage(
         migrate_to_spot_prices(conn)
         migrate_weather_to_utc(conn)
         migrate_price_history_to_rows(conn)
+        migrate_bias_to_lead_time_buckets(conn)
         conn.commit()
 
     def __del__(self) -> None:

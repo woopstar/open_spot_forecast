@@ -1,8 +1,9 @@
 """SQLite persistence for the predictor's learned state.
 
 Mixed into ``LearningStorage`` so the learning database keeps a single
-connection and write lock. Covers the per-slot ``error_metrics``,
-``bias_correction`` offsets and ``volatility``, the ``meta`` key/value table,
+connection and write lock. Covers the per-slot ``error_metrics``, the
+``bias_correction`` offsets per slot and lead-time bucket (#118) and
+``volatility``, the ``meta`` key/value table,
 and the bulk ``save_all`` / ``load_all`` the predictor uses to persist and
 restore all of it in one transaction.
 """
@@ -16,6 +17,34 @@ from .price_storage import read_days, write_changed_days
 from .storage_base import StorageMixinBase
 
 _LOGGER = logging.getLogger(__name__)
+
+_BIAS_INSERT = (
+    "INSERT OR REPLACE INTO bias_correction (hour, bucket, correction) VALUES (?, ?, ?)"
+)
+_BIAS_SELECT = "SELECT hour, bucket, correction FROM bias_correction"
+
+
+def bias_rows(
+    bias_correction: dict[int, dict[str, float]],
+) -> list[tuple[int, str, float]]:
+    """Return ``(slot, bucket, offset)`` rows of nested bias offsets.
+
+    Raises:
+        TypeError, ValueError: A slot, bucket or offset of the wrong type.
+    """
+    return [
+        (int(slot), str(bucket), float(offset))
+        for slot, offsets in bias_correction.items()
+        for bucket, offset in offsets.items()
+    ]
+
+
+def nest_bias_rows(rows: list[tuple[int, str, float]]) -> dict[int, dict[str, float]]:
+    """Return ``{slot: {bucket: offset}}`` from ``(slot, bucket, offset)`` rows."""
+    bias_correction: dict[int, dict[str, float]] = {}
+    for slot, bucket, offset in rows:
+        bias_correction.setdefault(slot, {})[bucket] = offset
+    return bias_correction
 
 
 class LearningStateStorageMixin(StorageMixinBase):
@@ -60,6 +89,7 @@ class LearningStateStorageMixin(StorageMixinBase):
                         "predictions": metrics.get("predictions", []),
                         "actuals": metrics.get("actuals", []),
                         "count": metrics.get("count", 0),
+                        "bucket_errors": metrics.get("bucket_errors", {}),
                     }
                 )
                 conn.execute(
@@ -83,6 +113,7 @@ class LearningStateStorageMixin(StorageMixinBase):
                 "predictions": metrics.get("predictions", []),
                 "actuals": metrics.get("actuals", []),
                 "count": metrics.get("count", 0),
+                "bucket_errors": metrics.get("bucket_errors", {}),
             }
         return result
 
@@ -90,25 +121,21 @@ class LearningStateStorageMixin(StorageMixinBase):
     # Bias correction operations
     # ------------------------------------------------------------------
 
-    def save_bias_correction(self, bias_correction: dict[int, float]) -> None:
-        """Persist all bias corrections to the database (blocking)."""
+    def save_bias_correction(
+        self, bias_correction: dict[int, dict[str, float]]
+    ) -> None:
+        """Persist the bias offsets, ``{slot: {bucket: offset}}`` (blocking)."""
         with self._lock:
             conn = self._ensure_conn()
-            for hour, correction in bias_correction.items():
-                conn.execute(
-                    "INSERT OR REPLACE INTO bias_correction (hour, correction) VALUES (?, ?)",
-                    (int(hour), float(correction)),
-                )
+            conn.executemany(_BIAS_INSERT, bias_rows(bias_correction))
             conn.commit()
 
-    def load_bias_correction(self) -> dict[int, float]:
-        """Load all bias corrections from the database (blocking)."""
+    def load_bias_correction(self) -> dict[int, dict[str, float]]:
+        """Load the bias offsets as ``{slot: {bucket: offset}}`` (blocking)."""
         with self._lock:
             conn = self._ensure_conn()
-            rows = conn.execute(
-                "SELECT hour, correction FROM bias_correction"
-            ).fetchall()
-        return {hour: correction for hour, correction in rows}
+            rows = conn.execute(_BIAS_SELECT).fetchall()
+        return nest_bias_rows(rows)
 
     # ------------------------------------------------------------------
     # Meta operations
@@ -196,13 +223,9 @@ class LearningStateStorageMixin(StorageMixinBase):
                         (int(hour), json.dumps(metrics, default=str)),
                     )
 
-                # Bias correction
+                # Bias correction, per slot and lead-time bucket
                 bias_correction = data.get("bias_correction", {})
-                for hour, correction in bias_correction.items():
-                    conn.execute(
-                        "INSERT OR REPLACE INTO bias_correction (hour, correction) VALUES (?, ?)",
-                        (int(hour), float(correction)),
-                    )
+                conn.executemany(_BIAS_INSERT, bias_rows(bias_correction))
 
                 # Price history: only the days that changed (#24)
                 price_history = data.get("price_history", [])
@@ -330,12 +353,8 @@ class LearningStateStorageMixin(StorageMixinBase):
                         restored[k] = v
                 error_metrics[hour] = restored
 
-            # Bias correction
-            bias_correction: dict[int, float] = {}
-            for hour, correction in conn.execute(
-                "SELECT hour, correction FROM bias_correction"
-            ).fetchall():
-                bias_correction[hour] = correction
+            # Bias correction, per slot and lead-time bucket
+            bias_correction = nest_bias_rows(conn.execute(_BIAS_SELECT).fetchall())
 
             # Price history, stored per UTC slot (#24)
             price_history = read_days(conn)

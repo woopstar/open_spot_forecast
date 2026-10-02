@@ -139,8 +139,8 @@ inline a feature list. Adding/removing a feature is a model change — see the
 ### Bias Correction Formula
 
 ```python
-raw_bias = offset[slot] + mean_error      # mean_error = mean(predicted - actual)
-offset[slot] = 0.9 * offset[slot] + 0.1 * raw_bias
+raw_bias = offset[slot][bucket] + mean_error      # mean_error = mean(predicted - actual) in the bucket
+offset[slot][bucket] = 0.9 * offset[slot][bucket] + 0.1 * raw_bias   # bucket: the prediction's lead time (#118)
 corrected_price = raw_price - offset[slot]
 ```
 

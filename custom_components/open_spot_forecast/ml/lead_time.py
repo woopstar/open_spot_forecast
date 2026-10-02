@@ -20,6 +20,7 @@ from typing import Any
 from homeassistant.util import dt as dt_util
 
 from ..const import (
+    BIAS_FALLBACK_BUCKET,
     EVALUATION_KEEP_DAYS,
     EVALUATION_LEAD_HOURS,
     LEAD_TIME_BUCKETS,
@@ -67,6 +68,25 @@ def lead_time_bucket(lead_hours: float) -> str | None:
         if lead_hours < upper_hours:
             return bucket
     return None
+
+
+def prediction_bucket(slot_start: str, now: datetime) -> str:
+    """Return the lead-time bucket of a prediction made ``now`` for a slot.
+
+    Used to pick the bias offset of the lead time at prediction time (#118),
+    the bucket the prediction's error is later learned in.
+
+    Args:
+        slot_start: ISO start of the predicted slot.
+        now: When the prediction is made (``stored_at``).
+
+    Returns:
+        The bucket key; ``BIAS_FALLBACK_BUCKET`` for the slot already under
+        way (negative lead time) or an unreadable start.
+    """
+    lead = lead_time_hours(slot_start, now.isoformat())
+    bucket = lead_time_bucket(lead) if lead is not None else None
+    return bucket or BIAS_FALLBACK_BUCKET
 
 
 def bucket_errors(

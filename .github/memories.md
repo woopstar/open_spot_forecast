@@ -291,19 +291,21 @@ never round with `dt.replace(minute=...)` or add minutes to a local datetime inl
 
 ## Bias Correction Formula
 
-Each 15-minute slot has an additive offset (currency/kWh) learned via EMA (#15):
+Each 15-minute slot has an additive offset (currency/kWh) per lead-time bucket (`day_1` …
+`day_4_plus`, `LEAD_TIME_BUCKETS`), learned via EMA (#15, #118):
 
 ```
-raw_bias = offset[slot] + mean_error      # mean_error = mean(predicted - actual)
-offset[slot] = 0.9 * offset[slot] + 0.1 * raw_bias
-corrected_price = raw_price - offset[slot]
+raw_bias = offset[slot][bucket] + mean_error      # mean_error = mean(predicted - actual) in the bucket
+offset[slot][bucket] = 0.9 * offset[slot][bucket] + 0.1 * raw_bias
+corrected_price = raw_price - offset[slot][bucket]  # bucket = the prediction's own lead time
 ```
 
 `offset > 0` → model overpredicts → subtract. `offset < 0` → model underpredicts → add.
 `mean_error` comes from stored (already corrected) predictions, so `offset + mean_error` is
 the raw model's bias; an EMA of `mean_error` alone would settle at half the bias. The first
-update sets the offset to `mean_error`. Prices can be negative: never clamp predictions at
-0 and never divide by a price. Never invent a different correction scheme.
+update sets the offset to `mean_error`. A bucket without an offset uses the `day_1` offset
+(`BIAS_FALLBACK_BUCKET`) and starts its EMA from it. Prices can be negative: never clamp
+predictions at 0 and never divide by a price. Never invent a different correction scheme.
 
 ## Solar Scaling Factor
 
@@ -331,7 +333,7 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 | -------------------- | --------------------- | ----------------------------------------------------------------------- |
 | `predictions`        | `id` (autoincrement)  | Pending predictions awaiting comparison                                 |
 | `error_metrics`      | `hour` (0-95)         | Per-slot error arrays                                                   |
-| `bias_correction`    | `hour` (0-95)         | Per-slot additive bias offsets (schema v5)                              |
+| `bias_correction`    | `(hour, bucket)`      | Additive bias offsets per slot and lead-time bucket (schema v5, v9)     |
 | `spot_prices`        | `timestamp` (UTC key) | The model's price history per UTC slot (#24); `price_history` is legacy |
 | `weather_history`    | `timestamp` (UTC key) | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
 | `meta`               | `key`                 | Training state, schema version                                          |
@@ -341,7 +343,8 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning
 data (`ml/spot_migration.py`), v7 rewrites weather snapshot timestamps as UTC slot keys
-(`ml/weather_migration.py`), v8 stores the price history per UTC slot (`ml/price_storage.py`). The legacy JSON format
+(`ml/weather_migration.py`), v8 stores the price history per UTC slot (`ml/price_storage.py`),
+v9 keys the bias offsets by lead-time bucket (`ml/bias_storage.py`). The legacy JSON format
 (`open_spot_forecast_DK1_learning.json`) only contributes its training state.
 
 ## File Size Rules

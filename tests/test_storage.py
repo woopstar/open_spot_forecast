@@ -313,14 +313,20 @@ def test_error_metrics_bias_and_volatility_round_trip(
             "predictions": [1.1],
             "actuals": [1.0],
             "count": 1,
+            "bucket_errors": {"day_2": [0.1]},
         }
     }
     storage.save_error_metrics(metrics)
-    storage.save_bias_correction({40: -0.05})
+    storage.save_bias_correction(
+        {40: {"day_1": -0.05, "day_2": 0.1}, 41: {"day_1": 0.2}}
+    )
     storage.save_volatility({40: 0.2})
 
     assert storage.load_error_metrics() == metrics
-    assert storage.load_bias_correction() == {40: pytest.approx(-0.05)}
+    assert storage.load_bias_correction() == {
+        40: {"day_1": pytest.approx(-0.05), "day_2": pytest.approx(0.1)},
+        41: {"day_1": pytest.approx(0.2)},
+    }
     assert storage.load_volatility() == {40: pytest.approx(0.2)}
 
 
@@ -342,7 +348,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
     saved = await storage.async_save_all(
         {
             "error_metrics": {5: {"errors": [0.2], "count": 1}},
-            "bias_correction": {5: 0.02},
+            "bias_correction": {5: {"day_3": 0.02}},
             "price_history": [{"date": "2026-09-24", "prices": [0.4, None]}],
             "prediction_history": [
                 {"start": "2026-09-24T10:00:00+02:00", "price": 0.4, "hour": 10},
@@ -361,7 +367,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
     data = await storage.async_load_all()
     assert data is not None
     assert data["error_metrics"] == {5: {"errors": [pytest.approx(0.2)], "count": 1}}
-    assert data["bias_correction"] == {5: pytest.approx(0.02)}
+    assert data["bias_correction"] == {5: {"day_3": pytest.approx(0.02)}}
     assert data["price_history"] == [{"date": "2026-09-24", "prices": _day(0.4)}]
     assert data["prediction_count"] == 1
     assert data["volatility_mae"] == {5: pytest.approx(0.3)}
@@ -376,7 +382,7 @@ async def test_save_all_and_load_all_round_trip(storage: LearningStorage) -> Non
 @pytest.mark.asyncio
 async def test_failed_save_all_rolls_back(storage: LearningStorage) -> None:
     saved = await storage.async_save_all(
-        {"bias_correction": {1: 0.1, 2: "not a number"}}
+        {"bias_correction": {1: {"day_1": 0.1}, 2: {"day_1": "not a number"}}}
     )
 
     assert saved is False
@@ -385,7 +391,7 @@ async def test_failed_save_all_rolls_back(storage: LearningStorage) -> None:
 
 @pytest.mark.asyncio
 async def test_clear_storage_empties_every_table(storage: LearningStorage) -> None:
-    storage.save_all({"bias_correction": {1: 0.1}, "training_samples": 5})
+    storage.save_all({"bias_correction": {1: {"day_1": 0.1}}, "training_samples": 5})
     storage.insert_prediction(
         "2026-09-24T10:00:00+02:00", 0.4, 0.8, 10, 0, dt_util.now().isoformat()
     )

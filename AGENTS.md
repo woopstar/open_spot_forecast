@@ -111,7 +111,9 @@ Key invariants to verify for every ML PR:
 
 - Feature vector stays at 24 canonical features (any add/remove is a model change).
 - Slot granularity is 96 (15-min), never hourly (0-23).
-- Bias correction is an additive offset: `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset`.
+- Bias correction is an additive offset per (slot, lead-time bucket):
+  `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset` of the
+  prediction's own lead time (`day_1` when a bucket has no offset yet).
 - Predictions are never clamped at 0 (prices can be negative).
 - Solar scaling uses the EMA of `actual_power / solcast_estimate` (learned, not a price-model input).
 - Training and prediction rows both come from `build_feature_row()`; unknown inputs are NaN.

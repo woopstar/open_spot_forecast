@@ -715,15 +715,16 @@ Every 15 minutes:
 1. Read the current raw spot price (excl. VAT)
 2. Look up every stored prediction for the current slot (all forecast runs)
 3. Calculate error, update per-slot metrics
-4. Update the slot's additive bias offset via EMA (see
-   [self-learning](self_learning.md#bias-correction))
+4. Update the slot's additive bias offsets, one per lead-time bucket, via EMA
+   (see [self-learning](self_learning.md#bias-correction))
 5. Compare stored forecast weather vs actual → forecast accuracy tracking
 6. Remove matched predictions from pending queue
 7. Add each error to its lead-time bucket (day 1/2/3/4+) → rolling 30-day
    MAE/RMSE per lead time (see [self-learning](self_learning.md))
 
 **96 slots** (15-min intervals), not 24 hours. Each slot has independent
-bias correction.
+bias offsets, one per lead-time bucket (#118), and a prediction gets the
+offset of its own lead time.
 
 ## Backtesting
 
@@ -795,7 +796,7 @@ pipeline:
   target day gets the forecast ENTSO-E keeps for it, which for the last
   days of a week can be newer than the origin (optimistic, like the
   weather archive).
-- **Raw model output.** Per-slot bias correction (which needs live
+- **Raw model output.** The per-slot, per-lead-time bias correction (which needs live
   self-learning state) is not applied. The hyperparameters are the
   production defaults, as in the integration.
 - **Gas price only with `--gas`.** Feature 17 comes from Instrat's daily

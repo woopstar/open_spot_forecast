@@ -9,17 +9,61 @@ import numpy as np
 
 from homeassistant.util import dt as dt_util
 
+from ..const import BIAS_FALLBACK_BUCKET, LEAD_TIME_BUCKETS
 from ..price_series import is_invalid_price_series
 from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
 from .gas_price import GAS_LOOKBACK_DAYS, GasPriceIndex
+from .lead_time import bucket_errors
 from .models import OBSOLETE_HPO_META_KEYS
 from .series_storage import ENTSOE_LOAD, GAS_PRICES, OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
 from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
+
+# Errors kept per slot: the pooled lists and each lead-time bucket's list
+MAX_ERROR_SAMPLES = 100
+_POOLED_KEYS = ("errors", "abs_errors", "pct_errors", "predictions", "actuals")
+
+
+def new_slot_metrics() -> dict[str, Any]:
+    """Return the empty error metrics of a 15-minute slot."""
+    return {key: [] for key in _POOLED_KEYS} | {"count": 0, "bucket_errors": {}}
+
+
+def add_matched_errors(
+    metrics: dict[str, Any], predictions: list[dict[str, Any]], actual_price: float
+) -> None:
+    """Add the matched predictions' errors to a slot's error metrics.
+
+    Each error (predicted - actual) goes into the slot's pooled lists and,
+    by the prediction's lead time, into ``bucket_errors`` (#118), which the
+    bias offsets are learned from. Every list keeps its last
+    ``MAX_ERROR_SAMPLES`` errors.
+
+    Args:
+        metrics: The slot's error metrics (see ``new_slot_metrics``).
+        predictions: Stored prediction rows matched for the slot.
+        actual_price: The slot's actual price.
+    """
+    for prediction in predictions:
+        predicted_price = float(prediction.get("price", 0))
+        error = predicted_price - actual_price
+        metrics["errors"].append(error)
+        metrics["abs_errors"].append(abs(error))
+        metrics["pct_errors"].append(percent_error(error, actual_price))
+        metrics["predictions"].append(predicted_price)
+        metrics["actuals"].append(actual_price)
+        metrics["count"] += 1
+
+    per_bucket = metrics.setdefault("bucket_errors", {})
+    for bucket, errors in bucket_errors(predictions, actual_price).items():
+        per_bucket[bucket] = (per_bucket.get(bucket, []) + errors)[-MAX_ERROR_SAMPLES:]
+    for key in _POOLED_KEYS:
+        if len(metrics[key]) > MAX_ERROR_SAMPLES:
+            metrics[key] = metrics[key][-MAX_ERROR_SAMPLES:]
 
 
 def percent_error(error: float, actual_price: float) -> float:
@@ -267,7 +311,7 @@ class LearningMixin(PredictorBase):
         This is the core of the self-learning loop. It:
         1. Finds the prediction made for this timestamp (from SQLite)
         2. Calculates the error (predicted vs actual)
-        3. Updates the additive bias offset for this 15-min slot
+        3. Updates the slot's additive bias offsets, one per lead-time bucket
         4. Adapts the model based on recent errors
         5. Records each error in its lead-time bucket, and keeps the
            day-ahead prediction next to the actual price (#36)
@@ -305,40 +349,12 @@ class LearningMixin(PredictorBase):
                 return False
 
             # Learn from ALL matching predictions (multiple forecast runs
-            # for the same timestamp = more training data)
-            if target_slot not in self.error_metrics:
-                self.error_metrics[target_slot] = {
-                    "errors": [],
-                    "abs_errors": [],
-                    "pct_errors": [],
-                    "predictions": [],
-                    "actuals": [],
-                    "count": 0,
-                }
-            metrics = self.error_metrics[target_slot]
+            # for the same timestamp = more training data), pooled and per
+            # lead-time bucket
+            metrics = self.error_metrics.setdefault(target_slot, new_slot_metrics())
+            add_matched_errors(metrics, matching_predictions, actual_price)
 
-            for prediction in matching_predictions:
-                predicted_price = prediction.get("price", 0)
-
-                # Calculate error for this prediction
-                error = predicted_price - actual_price
-                abs_error = abs(error)
-                pct_error = percent_error(error, actual_price)
-
-                metrics["errors"].append(error)
-                metrics["abs_errors"].append(abs_error)
-                metrics["pct_errors"].append(pct_error)
-                metrics["predictions"].append(predicted_price)
-                metrics["actuals"].append(actual_price)
-                metrics["count"] += 1
-
-            # Keep only recent errors (last 100 per slot)
-            max_samples = 100
-            for key in ["errors", "abs_errors", "pct_errors", "predictions", "actuals"]:
-                if len(metrics[key]) > max_samples:
-                    metrics[key] = metrics[key][-max_samples:]
-
-            # Update bias correction for this 15-min slot
+            # Update the slot's bias offsets, one per lead-time bucket (#118)
             self._update_bias_correction(target_slot)
 
             # --- Forecast accuracy: compare stored forecast vs actual weather ---
@@ -492,7 +508,9 @@ class LearningMixin(PredictorBase):
                     "mae": float(np.mean(metrics["abs_errors"])),
                     "bias": float(np.mean(metrics["errors"])),
                     "samples": metrics["count"],
-                    "bias_correction": self.bias_correction.get(slot, 0.0),
+                    "bias_correction": self._bias_offset(slot, BIAS_FALLBACK_BUCKET)
+                    or 0.0,
+                    "bias_offsets": dict(self.bias_correction.get(slot, {})),
                     "volatility": self.volatility_mae.get(slot),
                 }
 
@@ -511,9 +529,25 @@ class LearningMixin(PredictorBase):
             "learning_confidence": learning_confidence,
             "slots_tracked": len(self.error_metrics),
             "bias_corrections": len(self.bias_correction),
+            "bias_offsets": self._bias_offset_summary(),
             "hourly_metrics": slot_metrics,
             "pending_predictions": pending,
         }
+
+    def _bias_offset_summary(self) -> dict[str, dict[str, float | int | None]]:
+        """Return, per lead-time bucket, how many slots have an offset and their mean."""
+        summary: dict[str, dict[str, float | int | None]] = {}
+        for bucket, _upper_hours in LEAD_TIME_BUCKETS:
+            offsets = [
+                offsets[bucket]
+                for offsets in self.bias_correction.values()
+                if bucket in offsets
+            ]
+            summary[bucket] = {
+                "slots": len(offsets),
+                "mean_offset": float(np.mean(offsets)) if offsets else None,
+            }
+        return summary
 
     def get_hourly_error_report(self) -> list[dict]:
         """Get detailed error report for each 15-minute slot.
@@ -538,7 +572,9 @@ class LearningMixin(PredictorBase):
                         "mae": float(np.mean(metrics["abs_errors"])),
                         "mean_error": float(np.mean(metrics["errors"])),
                         "std_error": float(np.std(metrics["errors"])),
-                        "bias_correction": self.bias_correction.get(slot, 0.0),
+                        "bias_correction": self._bias_offset(slot, BIAS_FALLBACK_BUCKET)
+                        or 0.0,
+                        "bias_offsets": dict(self.bias_correction.get(slot, {})),
                         "overpredicts": sum(1 for e in metrics["errors"] if e > 0),
                         "underpredicts": sum(1 for e in metrics["errors"] if e < 0),
                     }
