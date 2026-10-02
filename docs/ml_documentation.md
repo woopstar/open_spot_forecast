@@ -1285,6 +1285,13 @@ What the numbers say:
   2-3 days. Without the age column it is the closest variant: 0.02 better
   at 1-2 days and within ±0.02 of `before` at 3-7 days in both regions,
   which is noise, not a gain.
+- **The cross-border model shows the same shape.** DK1 two-stage
+  (`--cross-border`) with yesterday's slot price alone scores
+  1.85 / 2.01 / 2.07 / 2.12 / 2.14 / 2.13 / 2.19 against
+  1.91 / 2.03 / 2.08 / 2.10 / 2.11 / 2.15 / 2.18 without it: better at
+  1-3 days, worse at 4, 5 and 7. The neighbours' stage-1 prices already
+  carry the level, so the swings are smaller, but the lag still does not
+  lower the error at every horizon.
 - **Nothing passes the issue's rule** (lower MAE at every horizon in both
   regions), so the integration keeps its 24 features. The day-1 gain is
   real and is the subject of #135 (a near-term model for forecast days
