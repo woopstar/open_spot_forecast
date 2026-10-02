@@ -316,6 +316,22 @@ prediction:
   prognosis (`solar_generation`), the same source and unit in both phases.
   Irradiance came with #22 (`zone_irradiance`).
 
+**Tested and not kept** (#119): lagged prices. The vector has no realised
+price in it, and the naive "same slot last week" baseline was within
+0.2 ct/kWh of a time-only model, so #119 tried origin-relative lags that
+never leak the target: the same wall-clock slot on the slot's **reference
+day** (the last day with known prices before the slot's day: the day before
+a training row's day, the last known day at the origin for every forecast
+day), the mean price of the week ending on it, the same slot one week
+earlier, and a variant whose training rows lag 1-7 days with the lag's age
+as a feature. The backtest ([Lagged prices](#lagged-prices-119)) found that
+yesterday's slot price lowers the 1-day error by 4-6 % but raises the
+3-7-day error, because the model learns from one-day-old lags and is given
+up to seven-day-old ones, and that no variant lowered the MAE at every
+horizon in DK1 and DK2. The experiment stays reproducible in the dev
+backtest (`--lags`, `scripts/backtest_lags.py`); the integration has no
+lagged price features.
+
 ## Cross-Border Model (#29)
 
 European day-ahead markets are coupled: an interconnector pulls a zone's
@@ -796,6 +812,12 @@ pipeline:
   target day gets the forecast ENTSO-E keeps for it, which for the last
   days of a week can be newer than the origin (optimistic, like the
   weather archive).
+- **Lagged prices only with `--lags`** (#119, tested and not kept). The
+  columns of `scripts/backtest_lags.py` follow the features: computed from
+  `PriceSeries.between(window_start, cutoff)`, the only prices a model
+  receives, so a target row's reference day is the day before the origin,
+  whatever its horizon, and a training row's the day before its own
+  (`--lag-ages`: 1-7 days, hashed per day, next to `price_lag_days`).
 - **Raw model output.** The per-slot, per-lead-time bias correction (which needs live
   self-learning state) is not applied. The hyperparameters are the
   production defaults, as in the integration.
@@ -821,6 +843,7 @@ python -m scripts.backtest --region DK1 --window-days 60 --cross-border
 python -m scripts.backtest --region DK1 --window-days 60 --gas
 python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --nordpool-db .cache/live/dk1_live.db
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day [--lag-ages]
 ```
 
 `--region` accepts every OSF region. `--horizon-days` scores more forecast
@@ -1197,6 +1220,79 @@ so little, as far as the data shows:
 ```bash
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load none
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
+```
+
+### Lagged prices (#119)
+
+DK1 and DK2, 365 daily origins from 2025-09-30 to 2026-09-29, 60-day window,
+`--horizon-days 7`, retrained daily, with the zone weather. `before` is main
+(24 features); the variants add lagged price columns computed from the
+visible history (`--lags`, `scripts/backtest_lags.py`), relative to the
+slot's **reference day**: the day before a training row's day, the day
+before the origin for every target row. MAE in EUR ct/kWh, NumPy GBM.
+Recorded 2026-10-02.
+
+**DK1**
+
+| Variant                                      |   1d |   2d |   3d |   4d |   5d |   6d |   7d |
+| -------------------------------------------- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before (24 features)                         | 2.30 | 2.47 | 2.52 | 2.54 | 2.54 | 2.56 | 2.59 |
+| all three lags                               | 2.21 | 2.45 | 2.56 | 2.65 | 2.64 | 2.66 | 2.75 |
+| `price_same_slot_last_known_day`             | 2.17 | 2.41 | 2.54 | 2.62 | 2.62 | 2.61 | 2.60 |
+| `price_mean_last_7_known_days`               | 2.33 | 2.50 | 2.57 | 2.59 | 2.56 | 2.57 | 2.62 |
+| `price_same_slot_last_week`                  | 2.31 | 2.48 | 2.53 | 2.53 | 2.55 | 2.57 | 2.59 |
+| mean + last week                             | 2.32 | 2.52 | 2.58 | 2.58 | 2.57 | 2.58 | 2.63 |
+| same slot, mixed ages 1-7 + `price_lag_days` | 2.35 | 2.44 | 2.53 | 2.57 | 2.59 | 2.53 | 2.60 |
+| same slot, mixed ages + age + last week      | 2.34 | 2.42 | 2.50 | 2.55 | 2.58 | 2.54 | 2.64 |
+| same slot, mixed ages, no age column         | 2.28 | 2.45 | 2.53 | 2.58 | 2.57 | 2.55 | 2.59 |
+
+**DK2**
+
+| Variant                                      |   1d |   2d |   3d |   4d |   5d |   6d |   7d |
+| -------------------------------------------- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| before (24 features)                         | 2.55 | 2.71 | 2.74 | 2.76 | 2.76 | 2.75 | 2.78 |
+| all three lags                               | 2.50 | 2.76 | 2.89 | 2.94 | 3.00 | 2.96 | 3.02 |
+| `price_same_slot_last_known_day`             | 2.46 | 2.71 | 2.84 | 2.91 | 2.92 | 2.90 | 2.87 |
+| `price_mean_last_7_known_days`               | 2.58 | 2.77 | 2.83 | 2.83 | 2.82 | 2.80 | 2.82 |
+| `price_same_slot_last_week`                  | 2.55 | 2.72 | 2.75 | 2.77 | 2.78 | 2.78 | 2.80 |
+| mean + last week                             | 2.58 | 2.80 | 2.84 | 2.83 | 2.84 | 2.82 | 2.84 |
+| same slot, mixed ages 1-7 + `price_lag_days` | 2.56 | 2.69 | 2.76 | 2.78 | 2.80 | 2.79 | 2.82 |
+| same slot, mixed ages + age + last week      | 2.55 | 2.67 | 2.71 | 2.76 | 2.79 | 2.79 | 2.89 |
+| same slot, mixed ages, no age column         | 2.53 | 2.69 | 2.75 | 2.76 | 2.77 | 2.77 | 2.78 |
+
+LightGBM with all three lags, before / after: DK1 2.29 / 2.15, 2.51 / 2.43,
+2.58 / 2.58, 2.60 / 2.72, 2.62 / 2.71, 2.63 / 2.76, 2.67 / 2.84; DK2
+2.58 / 2.51, 2.76 / 2.81, 2.83 / 2.92, 2.85 / 3.02, 2.82 / 3.07, 2.83 / 3.06,
+2.87 / 3.11. The naive row is 3.97-4.00 (DK1) and 4.18-4.21 (DK2) at every
+horizon.
+
+What the numbers say:
+
+- **Yesterday's slot price is a strong day-1 input and a harmful day-3+
+  one.** Alone it lowers the 1d MAE by 6 % in DK1 (2.30 → 2.17) and 4 % in
+  DK2 (2.55 → 2.46) and helps or ties at 2d, then raises the 3-7d MAE by up
+  to 0.08 (DK1) and 0.17 (DK2). One model serves days 1-7: it learns from
+  one-day-old lags and is given up to seven-day-old ones at prediction,
+  which is the #17 `price_mean` finding per row.
+- **The level (7-day mean) hurts everywhere**, by 0.02-0.09. It is constant
+  over a day's 96 slots, so the trees can separate days with it and fit
+  day-level noise, and at prediction it is up to a week stale.
+- **Last week's slot price adds nothing**: within 0.01-0.03 of `before`,
+  mostly above it. The model already has what the naive baseline knows.
+- **Mixed-age training lags do not rescue it.** Lagging each training day by
+  a hashed 1-7 days, with the age as a feature, makes day 1 _worse_ (only a
+  seventh of the rows then show a one-day-old lag) and gains 0.03-0.05 at
+  2-3 days. Without the age column it is the closest variant: 0.02 better
+  at 1-2 days and within ±0.02 of `before` at 3-7 days in both regions,
+  which is noise, not a gain.
+- **Nothing passes the issue's rule** (lower MAE at every horizon in both
+  regions), so the integration keeps its 24 features. The day-1 gain is
+  real and is the subject of #135 (a near-term model for forecast days
+  1-2 next to the plain one for days 3-7).
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags all
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day,price_lag_days --lag-ages
 ```
 
 ### Baseline

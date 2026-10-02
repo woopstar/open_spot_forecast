@@ -92,6 +92,7 @@ from custom_components.open_spot_forecast.ml.public_holidays import public_holid
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 from custom_components.open_spot_forecast.time_series import iso_weeks
 
+from .backtest_lags import LagConfig, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 
 SLOT_SECONDS = 15 * 60
@@ -586,10 +587,13 @@ def _feature_rows(
     cross: CrossBorderInputs | None = None,
     gas: Sequence[dict[str, Any]] | None = None,
     nordpool: NordpoolInputs | None = None,
+    lags: LagConfig | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return (training rows, target rows) for the slot times and inputs.
 
-    With ``cross`` the stage-1 price columns (#29) follow the features.
+    With ``lags`` the lagged price columns (#119, ``PriceLagIndex`` on the
+    visible history) and with ``cross`` the stage-1 price columns (#29)
+    follow the features, in that order.
     ``gas`` holds the daily gas price rows (#28); only those dated before
     the horizon cutoff are used, so a target day gets the latest price
     published before the forecast, as in production. With ``nordpool``
@@ -610,6 +614,14 @@ def _feature_rows(
     target = feature_matrix(
         targets, tz, zone, region, load, index, nordpool, nordpool_until=until
     )
+    if lags is not None:
+        lag_index = PriceLagIndex(
+            dict(zip(history.starts.tolist(), history.prices.tolist(), strict=True)),
+            tz,
+            lags.mixed_ages,
+        )
+        train = np.column_stack([train, lag_index.columns(history.starts, lags.names)])
+        target = np.column_stack([target, lag_index.columns(targets, lags.names)])
     if cross is None:
         return train, target
     train_columns, target_columns = cross.columns(history, targets)
@@ -671,6 +683,7 @@ class CurrentModel:
     cross: CrossBorderInputs | None = None
     gas: Sequence[dict[str, Any]] | None = None
     nordpool: NordpoolInputs | None = None
+    lags: LagConfig | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh model on ``history`` and predict the targets."""
@@ -684,6 +697,7 @@ class CurrentModel:
             self.cross,
             self.gas,
             self.nordpool,
+            self.lags,
         )
         model = self.model_factory()
         model.fit(*_training_set(train_rows, history.prices, self.nordpool))
@@ -706,6 +720,7 @@ class LightGbmReference:
     cross: CrossBorderInputs | None = None
     gas: Sequence[dict[str, Any]] | None = None
     nordpool: NordpoolInputs | None = None
+    lags: LagConfig | None = None
 
     def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
         """Fit a fresh LightGBM booster on ``history`` and predict the targets."""
@@ -721,8 +736,13 @@ class LightGbmReference:
             self.cross,
             self.gas,
             self.nordpool,
+            self.lags,
         )
-        names = [*FEATURE_NAMES, *(self.cross.names if self.cross else ())]
+        names = [
+            *FEATURE_NAMES,
+            *(self.lags.names if self.lags else ()),
+            *(self.cross.names if self.cross else ()),
+        ]
         rows, prices = _training_set(train_rows, history.prices, self.nordpool)
         dataset = lightgbm.Dataset(rows, label=prices, feature_name=names)
         booster = lightgbm.train(
@@ -745,11 +765,13 @@ def build_models(
     cross: CrossBorderInputs | None = None,
     gas: Sequence[dict[str, Any]] | None = None,
     nordpool: NordpoolInputs | None = None,
+    lags: LagConfig | None = None,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
     With ``cross`` the GBM rows are two-stage cross-border models (#29);
-    ``nordpool`` gives them a live export's prognoses (#91).
+    ``nordpool`` gives them a live export's prognoses (#91) and ``lags``
+    the lagged price columns (#119).
     """
     models: list[Forecaster] = []
     skipped: dict[str, str] = {}
@@ -768,6 +790,7 @@ def build_models(
                     cross=cross,
                     gas=gas,
                     nordpool=nordpool,
+                    lags=lags,
                 )
             )
         elif name == "lightgbm":
@@ -782,6 +805,7 @@ def build_models(
                         cross=cross,
                         gas=gas,
                         nordpool=nordpool,
+                        lags=lags,
                     )
                 )
             else:
@@ -1093,6 +1117,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="with --nordpool-db: no Nordpool-masked training copies (before #91)",
     )
+    parser.add_argument(
+        "--lags",
+        help="lagged price columns (#119, tested and not kept): 'all' or a "
+        "comma-separated subset of price_same_slot_last_known_day, "
+        "price_mean_last_7_known_days, price_same_slot_last_week, price_lag_days",
+    )
+    parser.add_argument(
+        "--lag-ages",
+        action="store_true",
+        help="with --lags: training rows lag 1-7 days (hashed per day) instead of 1",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -1106,6 +1141,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error("--nordpool-day1 and --nordpool-no-copies need --nordpool-db")
     if args.nordpool_db is not None and not args.nordpool_db.is_file():
         parser.error(f"--nordpool-db: no file {args.nordpool_db}")
+    if args.lag_ages and args.lags is None:
+        parser.error("--lag-ages needs --lags")
+    if args.lags is not None:
+        try:
+            args.lags = LagConfig.parse(args.lags, args.lag_ages)
+        except ValueError as err:
+            parser.error(str(err))
     return args
 
 
@@ -1176,7 +1218,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             copies=not args.nordpool_no_copies,
         )
     models, skipped = build_models(
-        names, tz, zone, args.region, load, cross, gas, nordpool
+        names, tz, zone, args.region, load, cross, gas, nordpool, args.lags
     )
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)

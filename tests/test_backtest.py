@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pytest
 
+from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 from scripts import backtest
@@ -43,6 +44,7 @@ from scripts.backtest import (
     run_backtest,
     target_slots,
 )
+from scripts.backtest_lags import LAG_NAMES, LagConfig
 from scripts.backtest_nordpool import load_nordpool_db
 
 TZ = ZoneInfo("Europe/Copenhagen")
@@ -235,6 +237,14 @@ def test_run_backtest_never_passes_prices_at_or_after_the_cutoff():
         pytest.param(lambda: NaiveLastWeek(TZ), id="naive"),
         pytest.param(lambda: CurrentModel(TZ, _small_gbm), id="current-small"),
         pytest.param(lambda: CurrentModel(TZ), id="current-production"),
+        pytest.param(
+            lambda: CurrentModel(TZ, _small_gbm, lags=LagConfig(LAG_NAMES)),
+            id="current-lags",
+        ),
+        pytest.param(
+            lambda: CurrentModel(TZ, _small_gbm, lags=LagConfig(LAG_NAMES, True)),
+            id="current-lags-mixed-ages",
+        ),
         pytest.param(lambda: LightGbmReference(TZ), id="lightgbm"),
     ],
 )
@@ -263,6 +273,50 @@ def test_future_prices_cannot_change_the_forecast(make_model):
     assert np.all(np.isfinite(forecasts[0]))
     np.testing.assert_array_equal(forecasts[0], forecasts[1])
     np.testing.assert_array_equal(forecasts[0], forecasts[2])
+
+
+def test_lag_columns_follow_the_features_and_come_from_the_visible_history():
+    """With --lags (#119) every forecast day lags to the day before the cutoff."""
+    origin = date(2026, 6, 15)
+    series = _noisy_series(date(2026, 5, 20), 30)
+    config = _config(origin, window_days=21, horizon_days=7)
+    history = history_for(series, origin, config)
+    targets, horizon = target_slots(origin, config)
+    lags = LagConfig(("price_same_slot_last_known_day", "price_lag_days"))
+    last_day = np.arange(
+        local_midnight(origin - timedelta(days=1), TZ),
+        local_midnight(origin, TZ),
+        SLOT_SECONDS,
+        dtype=np.int64,
+    )
+
+    train, target = backtest._feature_rows(history, targets, TZ, lags=lags)
+
+    assert train.shape[1] == target.shape[1] == len(FEATURE_NAMES) + 2
+    same_slot, age = len(FEATURE_NAMES), len(FEATURE_NAMES) + 1
+    for day in range(1, 8):
+        rows = target[horizon == day]
+        assert rows[:, same_slot] == pytest.approx(series.prices_at(last_day))
+        assert rows[:, age] == pytest.approx(np.full(len(rows), float(day)))
+    # Training rows look one day back from their own day
+    day_before = history.prices_at(history.starts - 86400)
+    known = ~np.isnan(day_before)
+    assert train[known, same_slot] == pytest.approx(day_before[known])
+    assert np.isnan(train[~known, same_slot]).all()
+    assert train[:, age] == pytest.approx(np.ones(len(train)))
+
+
+def test_parse_args_lags():
+    """--lags takes 'all' or a subset; --lag-ages needs it; bad names are errors."""
+    args = backtest.parse_args(["--lags", "all", "--lag-ages"])
+    assert args.lags == LagConfig(LAG_NAMES, True)
+    args = backtest.parse_args(["--lags", "price_same_slot_last_week"])
+    assert args.lags == LagConfig(("price_same_slot_last_week",), False)
+    assert backtest.parse_args([]).lags is None
+    with pytest.raises(SystemExit):
+        backtest.parse_args(["--lag-ages"])
+    with pytest.raises(SystemExit):
+        backtest.parse_args(["--lags", "price_yesterday"])
 
 
 # --- Horizons, naive baseline, runner ---------------------------------------------

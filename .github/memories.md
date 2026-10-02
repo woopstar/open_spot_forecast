@@ -245,12 +245,13 @@ Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 | 14  | `net_demand`           | Derived      |
 | 15  | `wind_share`           | Derived      |
 | 16  | `load_forecast`        | ENTSO-E      |
-| 17  | `zone_wind`            | Open-Meteo   |
-| 18  | `zone_wind_power`      | Open-Meteo   |
-| 19  | `zone_temperature`     | Open-Meteo   |
-| 20  | `zone_irradiance`      | Open-Meteo   |
-| 21  | `zone_pressure`        | Open-Meteo   |
-| 22  | `zone_humidity`        | Open-Meteo   |
+| 17  | `gas_price`            | Instrat      |
+| 18  | `zone_wind`            | Open-Meteo   |
+| 19  | `zone_wind_power`      | Open-Meteo   |
+| 20  | `zone_temperature`     | Open-Meteo   |
+| 21  | `zone_irradiance`      | Open-Meteo   |
+| 22  | `zone_pressure`        | Open-Meteo   |
+| 23  | `zone_humidity`        | Open-Meteo   |
 
 Time features follow the local wall clock per 15-min slot (`slot_time_features()`); sun
 features come from `sun_features()` in `ml/sun.py` (astral, at the region's `zone_centre()`,
@@ -271,6 +272,10 @@ build model input rows there, never with `build_feature_vector()` alone.
 
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.
+Lagged prices (same slot yesterday / last week, 7-day mean) were backtested in #119 and not
+kept: they help at 1-2 days and hurt at 3-7 days (`docs/ml_documentation.md` → Lagged prices).
+The experiment lives in `scripts/backtest_lags.py` (`--lags`), never in `ml/`; the follow-up
+is #135 (a near-term model for forecast days 1-2).
 
 ## Slot Granularity — 96 Slots
 
