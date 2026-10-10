@@ -22,6 +22,7 @@ from .storage import LearningStorage
 
 if TYPE_CHECKING:
     from .cross_border import CrossBorderModels
+    from .outages import OutageIndex
 
 
 class PredictorBase:
@@ -109,6 +110,9 @@ class PredictorBase:
         raise NotImplementedError
 
     def holdout_metrics(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def _outage_index(self, rows: list[dict[str, Any]] | None) -> OutageIndex | None:
         raise NotImplementedError
 
     def _restore_holdout_metrics(self, data: dict[str, Any]) -> None:

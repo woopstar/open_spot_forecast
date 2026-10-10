@@ -182,7 +182,7 @@ results:
   config entry, sent as a query parameter and never logged. It can be
   entered at setup or added later in the options, and it also gives the
   model ENTSO-E's week-ahead load forecast (see
-  [ML documentation](ml_documentation.md#feature-vector-24-features), #30).
+  [ML documentation](ml_documentation.md#feature-vector-26-features), #30).
   The options take effect when the integration is reloaded.
 - Requests span whole local days of the region, so zones east of UTC (e.g.
   FI and EE, whose day starts at 21:00/22:00 UTC) are not cut off. Hourly

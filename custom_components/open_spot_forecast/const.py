@@ -253,6 +253,16 @@ ENTSOE_LOAD_REGIONS = frozenset(REGIONS) - {"DE", "NL"}
 # horizon; off in SE3 and the Baltics, where it did not (docs/ml_documentation.md)
 GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
 
+# Nord Pool publishes urgent market messages (UMMs, #123: planned and
+# unplanned outages of production units and interconnectors) for its own
+# delivery areas, the Nordics and the Baltics; DE, NL, BE and FR publish on
+# the ENTSO-E platform instead (a follow-up). The backtest can measure every
+# area; the model uses them only in UMM_REGIONS, where the backtest found a
+# lower day-1 error and no higher error later (DK1; in DK2 days 2-7 got
+# worse, see docs/ml_documentation.md)
+UMM_AREAS = frozenset({"DK1", "DK2", "SE3", "SE4", "NO2", "FI", "EE", "LT", "LV"})
+UMM_REGIONS = frozenset({"DK1"})
+
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions
 # are surfaced as entity attributes: up to 72 hours in the detailed format, up
@@ -368,6 +378,10 @@ INSTRAT_USER_AGENT = (
 
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
+# Nord Pool's UMM (urgent market messages) public API (#123): outages of
+# production units and interconnectors, JSON, no key, every message version
+# back to 2015 (verified 2026-10-02; Home Assistant's User-Agent is accepted)
+NORDPOOL_UMM_API = "https://ummapi.nordpoolgroup.com/messages"
 # Nordpool's delivery day (the API's ``date``) is the CET/CEST calendar day,
 # for every delivery area
 NORDPOOL_MARKET_TZ = "Europe/Berlin"

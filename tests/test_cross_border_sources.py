@@ -36,6 +36,9 @@ def _predictor(zones: tuple[str, ...] | None) -> Mock:
     predictor.price_history = [{"date": "2026-09-20"}]
     predictor.storage.delete_old_weather.return_value = 0
     predictor.storage.delete_old_prices.return_value = 0
+    # The region's own sources read this storage too; nothing is stored
+    predictor.storage.load_series.return_value = []
+    predictor.storage.load_umm_rows.return_value = []
     return predictor
 
 

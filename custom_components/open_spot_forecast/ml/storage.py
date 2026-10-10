@@ -25,6 +25,7 @@ from .bias_storage import (
 )
 from .evaluation_storage import EvaluationStorageMixin
 from .history_storage import HistoryStorageMixin
+from .outage_storage import UMM_SCHEMA_SQL, OutageStorageMixin
 from .prediction_storage import PredictionStorageMixin
 from .price_storage import migrate_price_history_to_rows
 from .series_storage import SeriesStorageMixin
@@ -42,6 +43,7 @@ class LearningStorage(
     LearningStateStorageMixin,
     LeadTimeAccuracyStorageMixin,
     EvaluationStorageMixin,
+    OutageStorageMixin,
 ):
     """Handles persistence of learning data to a SQLite database.
 
@@ -72,6 +74,9 @@ class LearningStorage(
                         series_storage.py)
       neighbour_prices — neighbouring zones' raw day-ahead prices, EUR/MWh
                         per zone and UTC 15-min slot (#29; series_storage.py)
+      umm_messages, umm_periods — Nord Pool UMM outage message versions and
+                        their unavailable-capacity periods (#123;
+                        outage_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 
@@ -311,6 +316,7 @@ class LearningStorage(
             """
         )
         conn.execute(BIAS_TABLE_SQL)
+        conn.executescript(UMM_SCHEMA_SQL)
 
         # Schema migration: old DBs had start as PRIMARY KEY without id column
         cols = [c[1] for c in conn.execute("PRAGMA table_info(predictions)").fetchall()]

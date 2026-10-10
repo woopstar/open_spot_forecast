@@ -11,7 +11,7 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS
+from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS, UMM_REGIONS
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
@@ -21,6 +21,7 @@ from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
 from .models import ModelMixin, create_price_model
 from .numpy_models import NumpyRandomForest
+from .outages import OutageIndex
 from .retraining import RetrainMixin
 from .storage import LearningStorage
 from .zone_weather import ZoneWeatherIndex, zone_points
@@ -197,6 +198,7 @@ class SpotPricePredictor(
                 weather_data,
                 self._zone_index(weather_data),
                 GasPriceIndex(weather_data.get("gas_price") or []),
+                self._outage_index(weather_data.get("outages")),
             )
 
             _LOGGER.info(
@@ -260,6 +262,18 @@ class SpotPricePredictor(
         return ZoneWeatherIndex(
             weather_data.get("zone_weather") or [], zone_points(self.region)
         )
+
+    def _outage_index(self, rows: list[dict[str, Any]] | None) -> OutageIndex | None:
+        """Return the UMM outages (#123) of stored rows; None where not used.
+
+        Only regions in ``UMM_REGIONS`` (where the backtest found it helps)
+        have the source, in training and prediction alike, so elsewhere both
+        phases leave the features unknown rather than 0; so do both before
+        any message is stored.
+        """
+        if not rows or self.region not in UMM_REGIONS:
+            return None
+        return OutageIndex(rows)
 
     def _update_solar_scale(self, weather_data: dict) -> None:
         """Update the EMA of actual solar output / Solcast's estimate for today."""

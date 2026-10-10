@@ -8,22 +8,24 @@ All learning data is stored in a single SQLite database:
 
 ## Schema
 
-| Table                | Key                         | Content                                                                                                         |
-| -------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `predictions`        | `id` (autoincrement)        | Pending predictions awaiting comparison with actual prices                                                      |
-| `error_metrics`      | `hour` (0-95 = 15-min slot) | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                                    |
-| `bias_correction`    | `(hour, bucket)`            | Additive bias offsets per slot (0-95) and lead-time bucket (currency/kWh; column `correction`, #118)            |
-| `spot_prices`        | `timestamp` (UTC slot key)  | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                        |
-| `price_history`      | `date` (YYYY-MM-DD)         | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                   |
-| `dayahead_prices`    | `timestamp` (UTC slot key)  | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
-| `openmeteo_weather`  | `(timestamp, point)`        | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
-| `entsoe_load`        | `timestamp` (UTC slot key)  | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                |
-| `gas_prices`         | `timestamp` (UTC day)       | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                        |
-| `neighbour_prices`   | `(timestamp, zone)`         | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)      |
-| `weather_history`    | `timestamp` (UTC slot key)  | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
-| `meta`               | `key`                       | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)  |
-| `lead_time_accuracy` | `(date, bucket)`            | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
-| `evaluation`         | `timestamp` (UTC slot key)  | Per scored slot: the prediction made closest to 24 h ahead, the actual price and its lead time (#36)            |
+| Table                | Key                                                    | Content                                                                                                         |
+| -------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `predictions`        | `id` (autoincrement)                                   | Pending predictions awaiting comparison with actual prices                                                      |
+| `error_metrics`      | `hour` (0-95 = 15-min slot)                            | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals)                                    |
+| `bias_correction`    | `(hour, bucket)`                                       | Additive bias offsets per slot (0-95) and lead-time bucket (currency/kWh; column `correction`, #118)            |
+| `spot_prices`        | `timestamp` (UTC slot key)                             | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                        |
+| `price_history`      | `date` (YYYY-MM-DD)                                    | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                   |
+| `dayahead_prices`    | `timestamp` (UTC slot key)                             | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                            |
+| `openmeteo_weather`  | `(timestamp, point)`                                   | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22) |
+| `entsoe_load`        | `timestamp` (UTC slot key)                             | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                |
+| `gas_prices`         | `timestamp` (UTC day)                                  | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                        |
+| `neighbour_prices`   | `(timestamp, zone)`                                    | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)      |
+| `umm_messages`       | `(message_id, version)`                                | Every version of Nord Pool's UMM outage messages for the area: `published`, `message_type`, `status` (#123)     |
+| `umm_periods`        | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable capacity per unit and period: `kind`, `unavailable_mw`, `installed_mw` (#123)           |
+| `weather_history`    | `timestamp` (UTC slot key)                             | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23) |
+| `meta`               | `key`                                                  | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)  |
+| `lead_time_accuracy` | `(date, bucket)`                                       | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error            |
+| `evaluation`         | `timestamp` (UTC slot key)                             | Per scored slot: the prediction made closest to 24 h ahead, the actual price and its lead time (#36)            |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -35,8 +37,8 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
-`lead_time_accuracy`, `evaluation`, `entsoe_load`, `gas_prices` and `neighbour_prices` are created with `CREATE
-TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
+`lead_time_accuracy`, `evaluation`, `entsoe_load`, `gas_prices`, `neighbour_prices`, `umm_messages` and
+`umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
 whenever it is written or reloaded; about 700 rows). Rows
 older than the 30-day rolling window are pruned whenever the metrics are
@@ -197,6 +199,22 @@ source fetches only what it is missing:
   so it is retried at the next update. `horizon_cutoff` hides everything
   after a moment, for backtests.
 
+Nord Pool's outage messages (#123, `ml/outage_storage.py`) are not grid
+rows: `NordpoolUmmSource` (`api/nordpool_umm.py`) stores every published
+**version** of every production or transmission message naming a unit in
+the region's area (a version that dropped the area's units is kept too, as
+a header without periods, so it supersedes the earlier ones), and its
+periods of unavailable capacity. A version never changes once published,
+so rows are only added (`INSERT OR IGNORE`); a new version moves
+`last_data_write`. The source's coverage — the event window fetched and the
+publication time it is complete up to — is kept in `meta`
+(`source_state_umm_outages`, JSON): an update fetches the parts of the
+wanted event window not covered yet with every version, and the covered
+part only with what was published since, paged with `skip`/`limit`. A
+failed request leaves the coverage, so the window is asked for again.
+`load_umm_rows(start, end)` returns every stored version with its periods
+overlapping the range, the rows `OutageIndex` aggregates per origin.
+
 Nordpool revises the current days' prognoses, so its refresh window starts
 at today's delivery day: each forecast run re-fetches today and tomorrow
 (the upsert tells whether anything changed) and reads them from the table.
@@ -215,7 +233,9 @@ History is kept for the training window (**Training days**, default 180,
 `entsoe_load` rows, `dayahead_prices` rows, the cross-border model's
 `neighbour_prices` rows (#29) and remembered holes are deleted. `gas_prices`
 keeps 14 more days (`GAS_LOOKBACK_DAYS`, #28): the training window's first
-day uses the latest price published before it. Without the ML model only `dayahead_prices` is
+day uses the latest price published before it. `umm_periods` ending before
+the cutoff are deleted, and with them the message versions published before
+it that have no period left (#123). Without the ML model only `dayahead_prices` is
 stored, and only the margin is kept. Before #32 only `weather_history` was pruned, to a fixed 30 days,
 whenever the snapshot count was a multiple of 100.
 

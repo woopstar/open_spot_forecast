@@ -5,6 +5,7 @@ import json
 import math
 import sqlite3
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,9 +18,11 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pytest
 
+from custom_components.open_spot_forecast.api.nordpool_umm import parse_umm_messages
 from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
+from custom_components.open_spot_forecast.ml.outages import OutageIndex
 from scripts import backtest
 from scripts.backtest import (
     SLOT_SECONDS,
@@ -46,6 +49,9 @@ from scripts.backtest import (
 )
 from scripts.backtest_lags import LAG_NAMES, LagConfig
 from scripts.backtest_nordpool import load_nordpool_db
+from scripts.backtest_umm import load_umm_outages
+
+EIC = "10YDK-1--------W"
 
 TZ = ZoneInfo("Europe/Copenhagen")
 
@@ -1182,6 +1188,145 @@ def test_gas_prices_are_loaded_per_month_and_cached(tmp_path: Path) -> None:
 def test_the_gas_flag_is_parsed() -> None:
     assert backtest.parse_args(["--gas"]).gas is True
     assert backtest.parse_args([]).gas is False
+
+
+# --- Nord Pool UMM outages (#123) -----------------------------------------------------
+
+
+def _umm_message(
+    message_id: str,
+    published: str,
+    start: str,
+    stop: str,
+    unavailable: int,
+    version: int = 1,
+) -> dict[str, Any]:
+    return {
+        "messageId": message_id,
+        "version": version,
+        "publicationDate": f"{published}T08:00:00.0000000Z",
+        "eventStatus": 1,
+        "messageType": 1,
+        "unavailabilityType": 2,
+        "productionUnits": [
+            {
+                "eic": "45W0",
+                "fuelType": 5,
+                "areaEic": "10YDK-1--------W",
+                "installedCapacity": 412,
+                "timePeriods": [
+                    {
+                        "eventStart": f"{start}T00:00:00.0000000Z",
+                        "eventStop": f"{stop}T00:00:00.0000000Z",
+                        "unavailableCapacity": unavailable,
+                        "availableCapacity": 0,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def test_outages_published_at_or_after_the_cutoff_cannot_change_the_forecast() -> None:
+    """Target rows see the messages published before the horizon cutoff only,
+    training rows those published by their own day-ahead gate."""
+    origin = date(2026, 6, 15)
+    series = _noisy_series(date(2026, 5, 20), 30)
+    config = _config(origin, window_days=21)
+    targets, _ = target_slots(origin, config)
+    history = history_for(series, origin, config)
+    known = [
+        _umm_message("a", "2026-05-01", "2026-05-25", "2026-06-20", 300),
+        _umm_message("b", "2026-06-10", "2026-06-15", "2026-06-17", 100),
+    ]
+    poison = [
+        # A revision published after the cutoff (midnight at the start of the 15th)
+        _umm_message("a", "2026-06-15", "2026-05-25", "2026-06-20", 10_000, version=2),
+        _umm_message("c", "2026-06-16", "2026-06-15", "2026-06-18", 10_000),
+    ]
+
+    forecasts = [
+        CurrentModel(
+            TZ, outages=OutageIndex(parse_umm_messages({"items": items}, EIC))
+        ).forecast(history, targets)
+        for items in (known, known + poison)
+    ]
+
+    np.testing.assert_array_equal(forecasts[0], forecasts[1])
+    index = OutageIndex(parse_umm_messages({"items": known + poison}, EIC))
+    train, target = backtest._feature_rows(history, targets, TZ, outages=index)
+    column = list(backtest.FEATURE_NAMES).index("unavailable_production")
+    # Target day 1 (the 15th): a (300) and, from 00:00Z on, b (100, published on
+    # the 10th); never c or v2
+    assert target[:8, column] == pytest.approx(300.0)
+    assert target[8:96, column] == pytest.approx(400.0)
+    # Training slots on 2026-06-14 (gate: 13th 12:00 CEST): a and b
+    starts = [datetime.fromtimestamp(int(s), TZ).date() for s in history.starts]
+    june_14 = np.array([day == date(2026, 6, 14) for day in starts])
+    assert train[june_14, column] == pytest.approx(300.0)
+    # ... on 2026-06-10 (gate: 9th 12:00): only a was published; b not yet
+    june_10 = np.array([day == date(2026, 6, 10) for day in starts])
+    assert train[june_10, column] == pytest.approx(300.0)
+    may_24 = np.array([day == date(2026, 5, 24) for day in starts])
+    assert train[may_24, column] == pytest.approx(0.0)
+    assert not np.isnan(train[:, column]).any()
+
+
+def test_outages_are_loaded_per_month_paged_and_cached(tmp_path: Path) -> None:
+    calls: list[str] = []
+    message = _umm_message("a", "2026-05-01", "2026-05-25", "2026-06-20", 300)
+
+    def fetch(url: str) -> dict[str, Any]:
+        calls.append(url)
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        # June answers two pages of one message each; May one page
+        if query["eventStartDate"] == ["2026-06-01T00:00:00Z"]:
+            page = {"0": [message], "1": [message | {"version": 2}]}[query["skip"][0]]
+            return {"items": page, "total": 2}
+        return {"items": [message], "total": 1}
+
+    index = load_umm_outages(
+        "DK1",
+        date(2026, 5, 20),
+        date(2026, 6, 5),
+        tmp_path,
+        fetch,
+        today=date(2026, 9, 1),
+    )
+    again = load_umm_outages(
+        "DK1",
+        date(2026, 5, 20),
+        date(2026, 6, 5),
+        tmp_path,
+        fetch,
+        today=date(2026, 9, 1),
+    )
+
+    assert len(calls) == 3  # May, June page 1 and 2; then from the cache
+    assert urllib.parse.parse_qs(urllib.parse.urlparse(calls[2]).query)["skip"] == ["1"]
+    first = urllib.parse.parse_qs(urllib.parse.urlparse(calls[0]).query)
+    assert first["areas"] == [EIC]
+    assert first["messageTypes"] == ["1", "3"]
+    assert first["includeOutdated"] == ["true"]
+    assert first["eventStopDate"] == ["2026-06-01T00:00:00Z"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "umm_DK1_2026-05.json",
+        "umm_DK1_2026-06.json",
+    ]
+    slot = datetime(2026, 6, 1, 12, tzinfo=TZ)
+    origin = datetime(2026, 6, 10, tzinfo=TZ)
+    assert index.for_slot(slot, origin)["unavailable_production"] == pytest.approx(
+        300.0
+    )
+    assert again.for_slot(slot, origin) == index.for_slot(slot, origin)
+
+
+def test_the_outages_flag_is_parsed() -> None:
+    assert backtest.parse_args(["--outages", "umm"]).outages == "umm"
+    assert backtest.parse_args([]).outages == "none"
+    assert backtest.parse_args(["--outages", "umm", "--region", "DK2"]).outages == "umm"
+    with pytest.raises(SystemExit):
+        backtest.parse_args(["--outages", "umm", "--region", "DE"])
 
 
 # --- Nordpool prognoses from a live export (#91) ------------------------------------

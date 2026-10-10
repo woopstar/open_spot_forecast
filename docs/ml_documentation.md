@@ -126,39 +126,41 @@ At startup the old results (`hpo_n_estimators`, `hpo_learning_rate`,
 are deleted from `meta` and never applied. Change the defaults only with a
 backtest.
 
-## Feature Vector (24 features)
+## Feature Vector (26 features)
 
-| #   | Feature                | Source             | Description                                      |
-| --- | ---------------------- | ------------------ | ------------------------------------------------ |
-| 0   | `day_of_week`          | Time               | 0=Mon, 6=Sun                                     |
-| 1   | `is_weekend`           | Time               | 1 if Saturday/Sunday                             |
-| 2   | `holiday`              | Calendar           | 1 on Sundays/public holidays; share of states    |
-| 3   | `slot_sin`             | Time               | sin(2π × local minute of day / 1440)             |
-| 4   | `slot_cos`             | Time               | cos(2π × local minute of day / 1440)             |
-| 5   | `morning_peak`         | Time               | Seconds from 08:00 local time (negative before)  |
-| 6   | `sun_elevation`        | Sun (zone centre)  | Sun elevation at the slot's middle (degrees)     |
-| 7   | `sun_azimuth`          | Sun (zone centre)  | Sun azimuth at the slot's middle (degrees)       |
-| 8   | `since_sunrise`        | Sun (zone centre)  | Seconds from the day's sunrise to the slot       |
-| 9   | `since_sunset`         | Sun (zone centre)  | Seconds from the day's sunset to the slot        |
-| 10  | `consumption_forecast` | Nordpool prognosis | Demand prognosis for the slot's hour (MW)        |
-| 11  | `solar_generation`     | Nordpool prognosis | Solar prognosis at the slot's hour start (MW)    |
-| 12  | `wind_offshore`        | Nordpool prognosis | Offshore wind prognosis, same hour start (MW)    |
-| 13  | `wind_onshore`         | Nordpool prognosis | Onshore wind prognosis, same hour start (MW)     |
-| 14  | `net_demand`           | Derived            | consumption - solar - offshore - onshore (MW)    |
-| 15  | `wind_share`           | Derived            | (offshore + onshore) / consumption               |
-| 16  | `load_forecast`        | ENTSO-E (API key)  | Week-ahead load forecast curve for the slot (MW) |
-| 17  | `gas_price`            | Instrat (#28)      | Gas price known before the slot's day (PLN/MWh)  |
-| 18  | `zone_wind`            | Open-Meteo zone    | Mean wind at 80 m over the zone's points (m/s)   |
-| 19  | `zone_wind_power`      | Derived            | Mean power curve of the points' 80 m wind, 0-1   |
-| 20  | `zone_temperature`     | Open-Meteo zone    | Mean temperature at 2 m (°C)                     |
-| 21  | `zone_irradiance`      | Open-Meteo zone    | Mean global horizontal irradiance (W/m²)         |
-| 22  | `zone_pressure`        | Open-Meteo zone    | Mean sea-level pressure (hPa)                    |
-| 23  | `zone_humidity`        | Open-Meteo zone    | Mean relative humidity at 2 m (%)                |
+| #   | Feature                    | Source               | Description                                                 |
+| --- | -------------------------- | -------------------- | ----------------------------------------------------------- |
+| 0   | `day_of_week`              | Time                 | 0=Mon, 6=Sun                                                |
+| 1   | `is_weekend`               | Time                 | 1 if Saturday/Sunday                                        |
+| 2   | `holiday`                  | Calendar             | 1 on Sundays/public holidays; share of states               |
+| 3   | `slot_sin`                 | Time                 | sin(2π × local minute of day / 1440)                        |
+| 4   | `slot_cos`                 | Time                 | cos(2π × local minute of day / 1440)                        |
+| 5   | `morning_peak`             | Time                 | Seconds from 08:00 local time (negative before)             |
+| 6   | `sun_elevation`            | Sun (zone centre)    | Sun elevation at the slot's middle (degrees)                |
+| 7   | `sun_azimuth`              | Sun (zone centre)    | Sun azimuth at the slot's middle (degrees)                  |
+| 8   | `since_sunrise`            | Sun (zone centre)    | Seconds from the day's sunrise to the slot                  |
+| 9   | `since_sunset`             | Sun (zone centre)    | Seconds from the day's sunset to the slot                   |
+| 10  | `consumption_forecast`     | Nordpool prognosis   | Demand prognosis for the slot's hour (MW)                   |
+| 11  | `solar_generation`         | Nordpool prognosis   | Solar prognosis at the slot's hour start (MW)               |
+| 12  | `wind_offshore`            | Nordpool prognosis   | Offshore wind prognosis, same hour start (MW)               |
+| 13  | `wind_onshore`             | Nordpool prognosis   | Onshore wind prognosis, same hour start (MW)                |
+| 14  | `net_demand`               | Derived              | consumption - solar - offshore - onshore (MW)               |
+| 15  | `wind_share`               | Derived              | (offshore + onshore) / consumption                          |
+| 16  | `load_forecast`            | ENTSO-E (API key)    | Week-ahead load forecast curve for the slot (MW)            |
+| 17  | `gas_price`                | Instrat (#28)        | Gas price known before the slot's day (PLN/MWh)             |
+| 18  | `unavailable_production`   | Nord Pool UMM (#123) | Production capacity announced unavailable for the slot (MW) |
+| 19  | `unavailable_transmission` | Nord Pool UMM (#123) | Interconnector capacity announced unavailable (MW)          |
+| 20  | `zone_wind`                | Open-Meteo zone      | Mean wind at 80 m over the zone's points (m/s)              |
+| 21  | `zone_wind_power`          | Derived              | Mean power curve of the points' 80 m wind, 0-1              |
+| 22  | `zone_temperature`         | Open-Meteo zone      | Mean temperature at 2 m (°C)                                |
+| 23  | `zone_irradiance`          | Open-Meteo zone      | Mean global horizontal irradiance (W/m²)                    |
+| 24  | `zone_pressure`            | Open-Meteo zone      | Mean sea-level pressure (hPa)                               |
+| 25  | `zone_humidity`            | Open-Meteo zone      | Mean relative humidity at 2 m (%)                           |
 
 Column order is `FEATURE_NAMES` in `ml/features.py`. With the cross-border
 model (#29, option) the price model's input has one more column per
-neighbour after these 24: `cross_price_<zone>`, stage 1's price for the
-slot (see [Cross-Border Model](#cross-border-model-29)). The 24 stay the
+neighbour after these 26: `cross_price_<zone>`, stage 1's price for the
+slot (see [Cross-Border Model](#cross-border-model-29)). The 26 stay the
 canonical vector; stage 1 uses them too.
 
 **Time of day and the sun** (#25). Since October 2025 the day-ahead market
@@ -316,6 +318,33 @@ prediction:
   prognosis (`solar_generation`), the same source and unit in both phases.
   Irradiance came with #22 (`zone_irradiance`).
 
+**Outages** (#123). A planned or unplanned outage of a large plant, or a
+limitation on an interconnector, moves the price more than anything in the
+weather or the prognoses, and it is not periodic, so bias correction cannot
+learn it either. Nord Pool's **urgent market messages** (UMM API,
+`ummapi.nordpoolgroup.com`, JSON, no key) announce them per unit with the
+unavailable capacity in time periods. `unavailable_production` is the MW of
+production and generation units in the region's area announced unavailable
+for the slot, `unavailable_transmission` the MW of interconnector capacity
+into or out of it (both directions, every connection of the area), each
+the sum over the messages in force. Messages are revised in numbered
+versions and can be dismissed, and the API serves every version with its
+publication time, so the stored archive keeps them all (`umm_messages`,
+`umm_periods`, `api/nordpool_umm.py`) and `OutageIndex` (`ml/outages.py`)
+aggregates them **as known at an origin**: the latest version of each
+message published by then, nothing for a dismissed one. Training rows use
+the slot's day-ahead gate (12:00 CET the day before: what the auction that
+set the price knew), prediction rows the forecast run's time, so a
+revision published after the fact never reaches a training row. With
+messages stored a slot nothing is announced for is 0; before the first
+fetch, and outside `UMM_REGIONS`, the two features are NaN in both phases.
+Nord Pool publishes UMMs for its own delivery areas (`UMM_AREAS`: DK, SE,
+NO, FI and the Baltics; DE, NL, BE and FR publish on the ENTSO-E platform,
+a follow-up), and the backtest can measure every one of them, but the model
+uses them only where the backtest found they help: DK1 (see
+[Nord Pool UMM outages](#nord-pool-umm-outages-123); in DK2 they lower the
+day-1 error and raise the error at days 2-7).
+
 **Tested and not kept** (#119): lagged prices. The vector has no realised
 price in it, and the naive "same slot last week" baseline was within
 0.2 ct/kWh of a time-only model, so #119 tried origin-relative lags that
@@ -354,7 +383,7 @@ reimplemented in `ml/cross_border.py`):
    the region itself and are NaN. It is the production price model
    (`create_price_model()`).
 2. **Stage 2**: the region's price model, with a `cross_price_<zone>` column
-   per neighbour after the 24 features: stage 1's price for the slot.
+   per neighbour after the 26 features: stage 1's price for the slot.
 
 **Stage-1 values in training rows are out of sample.** A model's fitted
 values are much closer to the actual prices than its forecasts: on DK1's
@@ -403,25 +432,26 @@ per neighbour), not because of accuracy.
 
 ## Data Sources
 
-| Source                                              | Type                | Resolution    | Used for                                               |
-| --------------------------------------------------- | ------------------- | ------------- | ------------------------------------------------------ |
-| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow) | Raw spot price      | 15-min        | Training target, self-learning actuals (excl. VAT)     |
-| `dayahead_prices` (SQLite, #27, #24)                | Raw spot price      | 15-min        | `dayahead` source; the training window's history (all) |
-| `weather.get_forecasts`                             | Weather forecast    | Hourly        | Recorded with predictions (forecast accuracy)          |
-| `weather.forecast_*` (state)                        | Current weather     | Every 15 min  | `weather_history` snapshots (forecast accuracy)        |
-| `Nordpool Consumption API`                          | Demand forecast     | Hourly        | Market demand prognosis (MW), both phases              |
-| `Nordpool Production API`                           | Generation forecast | 15-min        | Solar, wind offshore/onshore (MW), both phases         |
-| `sensor.solcast_*`                                  | Solar forecast      | Daily total   | Solar scaling factor only (not a model input)          |
-| `sensor.power_inverter_*`                           | Actual solar        | Scalar        | Solar scaling factor only (not a model input)          |
-| `weather_history` (SQLite)                          | Actual weather      | 15-min        | Scores the local forecast (confidence); not training   |
-| `nordpool_prognoses` (SQLite)                       | Stored prognoses    | Hourly        | Training inputs                                        |
-| Open-Meteo (`api.open-meteo.com`, #22)              | Zone weather        | 15-min        | `openmeteo_weather`: zone features, both phases        |
-| Open-Meteo archive (`historical-forecast-api`, #23) | Past zone forecasts | 15-min        | `openmeteo_weather` days before yesterday (training)   |
-| ENTSO-E week-ahead load (A65/A31, API key, #30)     | Load forecast       | Daily min/max | `entsoe_load` curve: `load_forecast`, both phases      |
-| Instrat TGE gas day-ahead index (#28)               | Gas price           | Daily         | `gas_prices`: `gas_price`, both phases                 |
-| `holidays` package (#26)                            | Public holidays     | Daily         | `holiday` feature, both phases                         |
-| energy-charts.info, neighbouring zones (#29)        | Raw spot price      | 15-min        | `neighbour_prices`: stage-1 targets (cross-border)     |
-| Open-Meteo at the neighbours' points (#29)          | Zone weather        | 15-min        | `openmeteo_weather`: stage-1 inputs (cross-border)     |
+| Source                                               | Type                | Resolution    | Used for                                                   |
+| ---------------------------------------------------- | ------------------- | ------------- | ---------------------------------------------------------- |
+| `sensor.stromligning_spotprice_ex_vat` (+ tomorrow)  | Raw spot price      | 15-min        | Training target, self-learning actuals (excl. VAT)         |
+| `dayahead_prices` (SQLite, #27, #24)                 | Raw spot price      | 15-min        | `dayahead` source; the training window's history (all)     |
+| `weather.get_forecasts`                              | Weather forecast    | Hourly        | Recorded with predictions (forecast accuracy)              |
+| `weather.forecast_*` (state)                         | Current weather     | Every 15 min  | `weather_history` snapshots (forecast accuracy)            |
+| `Nordpool Consumption API`                           | Demand forecast     | Hourly        | Market demand prognosis (MW), both phases                  |
+| `Nordpool Production API`                            | Generation forecast | 15-min        | Solar, wind offshore/onshore (MW), both phases             |
+| `sensor.solcast_*`                                   | Solar forecast      | Daily total   | Solar scaling factor only (not a model input)              |
+| `sensor.power_inverter_*`                            | Actual solar        | Scalar        | Solar scaling factor only (not a model input)              |
+| `weather_history` (SQLite)                           | Actual weather      | 15-min        | Scores the local forecast (confidence); not training       |
+| `nordpool_prognoses` (SQLite)                        | Stored prognoses    | Hourly        | Training inputs                                            |
+| Open-Meteo (`api.open-meteo.com`, #22)               | Zone weather        | 15-min        | `openmeteo_weather`: zone features, both phases            |
+| Open-Meteo archive (`historical-forecast-api`, #23)  | Past zone forecasts | 15-min        | `openmeteo_weather` days before yesterday (training)       |
+| ENTSO-E week-ahead load (A65/A31, API key, #30)      | Load forecast       | Daily min/max | `entsoe_load` curve: `load_forecast`, both phases          |
+| Nord Pool UMM API (`ummapi.nordpoolgroup.com`, #123) | Outage messages     | Per message   | `umm_messages`/`umm_periods`: `unavailable_*`, both phases |
+| Instrat TGE gas day-ahead index (#28)                | Gas price           | Daily         | `gas_prices`: `gas_price`, both phases                     |
+| `holidays` package (#26)                             | Public holidays     | Daily         | `holiday` feature, both phases                             |
+| energy-charts.info, neighbouring zones (#29)         | Raw spot price      | 15-min        | `neighbour_prices`: stage-1 targets (cross-border)         |
+| Open-Meteo at the neighbours' points (#29)           | Zone weather        | 15-min        | `openmeteo_weather`: stage-1 inputs (cross-border)         |
 
 Wind speed is converted to m/s from the weather entity's `wind_speed_unit`
 (default km/h) by `wind_speed_to_ms()` in `sensor_reader.py`, for the stored
@@ -492,6 +522,13 @@ the training window's days, the week-ahead forecasts ENTSO-E published for
 them (backfilled with the rest of the history), and from yesterday on the
 latest forecast, re-fetched at every forecast run.
 
+The outage messages (#123) are stored as **every published version** of
+every message (`umm_messages`, `umm_periods`), so both phases rebuild what
+was known at their origin: a training row takes the versions published by
+its day's day-ahead gate (12:00 CET the day before, `day_ahead_gate()`),
+a prediction row those published by the forecast run. Neither phase sees a
+later revision or dismissal.
+
 The zone weather is one stored table for both phases:
 
 - Days before yesterday come from Open-Meteo's **archive of past forecasts**
@@ -504,7 +541,7 @@ The zone weather is one stored table for both phases:
   fetched for it.
 
 The local weather entity is no longer a model input (see
-[Feature Vector](#feature-vector-24-features)). Its snapshots
+[Feature Vector](#feature-vector-26-features)). Its snapshots
 (`weather_history`) only score its forecast: the confidence's
 forecast-error penalty compares the forecast recorded with a prediction
 with the snapshot taken in the slot. They do not trigger a retrain.
@@ -830,7 +867,7 @@ solar_scale = EMA(actual_power / solcast_estimate)
 
 Updated every prediction run (`_update_solar_scale`) and persisted. Since
 #17 it is **not applied to the price model**: the model no longer has a site
-solar feature (see [Feature Vector](#feature-vector-24-features)), and a
+solar feature (see [Feature Vector](#feature-vector-26-features)), and a
 factor applied to prediction rows only would make them differ from training
 rows again.
 
@@ -966,6 +1003,12 @@ pipeline:
   origin only sees prices dated before its horizon cutoff, so all target
   days get the latest price published before the forecast, as in
   production. Without the flag it is NaN.
+- **Outages only with `--outages umm`.** Features 18-19 come from Nord
+  Pool's UMM API (every message version, one request series per calendar
+  month, cached in `.cache/backtest/` once the month is over), for a region
+  in `UMM_AREAS`. Training rows get the messages published by their
+  day-ahead gate and target rows those published before the horizon
+  cutoff, exactly as in production: no row sees a later revision.
 - **Cross-border model only with `--cross-border`.** The `current` and
   `lightgbm` rows then become two-stage models (#29) for a region in
   `NEIGHBOURS`: stage 1 is the integration's `Stage1Model` per neighbour,
@@ -984,6 +1027,7 @@ python -m scripts.backtest --region DK1 --window-days 60 --gas
 python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --nordpool-db .cache/live/dk1_live.db
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day [--lag-ages]
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
 ```
 
 `--region` accepts every OSF region. `--horizon-days` scores more forecast
@@ -1119,7 +1163,7 @@ forecasts have an archive: the whole training window's zone weather is
 available on the first day, from the same kind of source the model
 predicts from, where measured weather would have to accumulate first.
 The local weather entity's features were removed for the same reason (see
-[Feature Vector](#feature-vector-24-features)); the backtest never had them
+[Feature Vector](#feature-vector-26-features)); the backtest never had them
 (no history), so its numbers do not change.
 
 ### Sun position and 15-minute time (#25)
@@ -1327,6 +1371,53 @@ gain.
 ```bash
 python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --models current --nordpool-db .cache/live/dk1_live.db [--nordpool-day1] [--nordpool-no-copies]
 python -m scripts.backtest --region DK1 --window-days 60 --start 2026-09-05 --end 2026-09-25 --models current --nordpool-db .cache/live/dk1_live.db [--nordpool-day1] [--nordpool-no-copies]
+```
+
+### Nord Pool UMM outages (#123)
+
+DK1 and DK2, 365 daily origins from 2025-09-30 to 2026-09-29, 60-day window
+(the production window), `--horizon-days 7`, with the zone weather;
+`--outages none` against `--outages umm`. Training rows get the messages
+published by their day-ahead gate, target rows those published before the
+horizon cutoff (local midnight of day 1). MAE in EUR ct/kWh, **without /
+with** the two outage features. Recorded 2026-10-02.
+
+| Zone | Model                | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | -------------------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DK1  | current (NumPy GBM)  | 2.30 / 2.27 | 2.47 / 2.47 | 2.52 / 2.54 | 2.54 / 2.55 | 2.54 / 2.55 | 2.56 / 2.56 | 2.59 / 2.60 |
+| DK1  | lightgbm (reference) | 2.29 / 2.19 | 2.51 / 2.48 | 2.58 / 2.56 | 2.60 / 2.58 | 2.62 / 2.60 | 2.63 / 2.59 | 2.67 / 2.63 |
+| DK2  | current (NumPy GBM)  | 2.55 / 2.51 | 2.71 / 2.77 | 2.74 / 2.81 | 2.76 / 2.88 | 2.76 / 2.91 | 2.75 / 2.90 | 2.78 / 2.94 |
+| DK2  | lightgbm (reference) | 2.58 / 2.46 | 2.76 / 2.79 | 2.83 / 2.88 | 2.85 / 2.93 | 2.82 / 2.96 | 2.83 / 2.95 | 2.87 / 3.00 |
+
+The naive row is 3.97-4.00 in DK1 and unchanged per zone. What the numbers
+say:
+
+- **Day 1 improves everywhere**: −0.03 (DK1) and −0.04 (DK2) ct/kWh MAE
+  for the production model, −0.10 and −0.12 for LightGBM, with the RMSE
+  down as well (DK1 3.47 → 3.45, DK2 3.79 → 3.73). The day the auction has
+  just cleared is the day whose outage state is complete.
+- **Days 2-7 get worse in DK2** (+0.06 at 2d to +0.16 at 7d), for both
+  learners, while **DK1 stays within ±0.02** (noise). A target slot days
+  ahead gets the messages known at the origin, fewer than its own gate will
+  have, while every training row has its gate's complete picture; the
+  model learned the price effect of a complete outage state and applies it
+  to an incomplete one. The same pattern as the lagged prices (#119: help
+  at 1 day, hurt at 3-7), and the reason for the near-term model (#135).
+- The production model gains less than LightGBM: depth-3 trees with 100
+  samples per leaf see a sparse signal (a few outage episodes per 60-day
+  window).
+
+**Decision**: `UMM_REGIONS` is `{"DK1"}`: a lower day-1 error and no higher
+error later. DK2 stays off (the day-1 gain does not pay for days 2-7), and
+the other Nord Pool areas stay off until measured (`UMM_AREAS` lets the
+backtest run them). Training rows with the outage state as of each lead
+time (as the Nordpool-masked copies do for the prognoses, #91) is the
+obvious next step for DK2.
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages none
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
+python -m scripts.backtest --region DK2 --window-days 60 --horizon-days 7 --outages umm
 ```
 
 ### ENTSO-E load forecast (#30)
