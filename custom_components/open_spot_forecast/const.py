@@ -375,6 +375,9 @@ CONF_EXTERNAL_FORECAST_SENSORS = "external_forecast_sensors"
 # Stromligning's forecast sensor (``prices``: start, price) and Energi Data
 # Service (``forecast``: hour, price)
 EXTERNAL_FORECAST_ATTRIBUTES = ("prices", "forecast")
+# The model's own rows among the per-slot errors kept next to the sources'
+# (#157). A source is named by its entity id, which always has a dot
+EXTERNAL_MODEL_SOURCE = "model"
 
 # Predicted vs actual (#36): per slot, the prediction made closest to this
 # long ahead is kept next to the actual price, for EVALUATION_KEEP_DAYS; the

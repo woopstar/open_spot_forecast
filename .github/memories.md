@@ -43,34 +43,34 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File                    | Responsibility                                                                                                                            |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin`       |
-| `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                               |
-| `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                           |
-| `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)               |
-| `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                               |
-| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                               |
-| `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)            |
-| `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                             |
-| `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)            |
-| `models.py`             | `ModelMixin` — training + prediction                                                                                                      |
-| `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                           |
-| `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                          |
-| `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)                     |
-| `numpy_models.py`       | `NumpyRandomForest` and other legacy pure NumPy models                                                                                    |
-| `storage.py`            | `LearningStorage` — SQLite connection, write lock, schema and migrations; composes the storage mixins below                               |
-| `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins                   |
-| `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                               |
-| `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                                |
-| `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state         |
-| `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                      |
-| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                                 |
-| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)               |
-| `external_storage.py`   | `ExternalForecastStorageMixin` — `external_forecasts` (awaiting scoring) and `external_accuracy` (daily sums per source and bucket, #120) |
-| `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                       |
-| `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                       |
-| `external_forecasts.py` | `ExternalForecastMixin` — store external forecasts, score them per lead-time bucket with the slot (#120)                                  |
+| File                    | Responsibility                                                                                                                                                                                                 |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin`                                                                            |
+| `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                                                                                                    |
+| `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                                                                                                |
+| `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)                                                                                    |
+| `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                                                                                                    |
+| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                                                                                                    |
+| `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)                                                                                 |
+| `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                                                                                                  |
+| `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)                                                                                 |
+| `models.py`             | `ModelMixin` — training + prediction                                                                                                                                                                           |
+| `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                                                                                                |
+| `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                                                                                               |
+| `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)                                                                                          |
+| `numpy_models.py`       | `NumpyRandomForest` and other legacy pure NumPy models                                                                                                                                                         |
+| `storage.py`            | `LearningStorage` — SQLite connection, write lock, schema and migrations; composes the storage mixins below                                                                                                    |
+| `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins                                                                                        |
+| `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                                                                                                    |
+| `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                                                                                                     |
+| `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state                                                                              |
+| `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                                                                                           |
+| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                                                                                                      |
+| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)                                                                                    |
+| `external_storage.py`   | `ExternalForecastStorageMixin` — `external_forecasts` (awaiting scoring), `external_accuracy` (daily sums per source and bucket, #120) and `external_slot_errors` (per-slot errors of model and sources, #157) |
+| `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                                                                                            |
+| `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                                                                                            |
+| `external_forecasts.py` | `ExternalForecastMixin` — store external forecasts, score them per lead-time bucket with the slot (#120)                                                                                                       |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -361,20 +361,21 @@ weekend - days_ahead`, floor `0.30`.
 
 SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 
-| Table                | Key                                                    | Content                                                                 |
-| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
-| `predictions`        | `id` (autoincrement)                                   | Pending predictions awaiting comparison                                 |
-| `error_metrics`      | `hour` (0-95)                                          | Per-slot error arrays                                                   |
-| `bias_correction`    | `(hour, bucket)`                                       | Additive bias offsets per slot and lead-time bucket (schema v5, v9)     |
-| `spot_prices`        | `timestamp` (UTC key)                                  | The model's price history per UTC slot (#24); `price_history` is legacy |
-| `weather_history`    | `timestamp` (UTC key)                                  | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
-| `meta`               | `key`                                                  | Training state, schema version                                          |
-| `lead_time_accuracy` | `(date, bucket)`                                       | Daily per-lead-time error sums (rolling 30 days)                        |
-| `evaluation`         | `(timestamp, target_hours)`                            | Per scored slot and lead time (12/24/48 h): prediction and actual (#36) |
-| `external_forecasts` | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring (#120)                   |
-| `external_accuracy`  | `(source, date, bucket)`                               | Daily error sums per external source and bucket (#120)                  |
-| `umm_messages`       | `(message_id, version)`                                | Every UMM outage message version for the area (#123)                    |
-| `umm_periods`        | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable MW per unit and period                          |
+| Table                  | Key                                                    | Content                                                                 |
+| ---------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `predictions`          | `id` (autoincrement)                                   | Pending predictions awaiting comparison                                 |
+| `error_metrics`        | `hour` (0-95)                                          | Per-slot error arrays                                                   |
+| `bias_correction`      | `(hour, bucket)`                                       | Additive bias offsets per slot and lead-time bucket (schema v5, v9)     |
+| `spot_prices`          | `timestamp` (UTC key)                                  | The model's price history per UTC slot (#24); `price_history` is legacy |
+| `weather_history`      | `timestamp` (UTC key)                                  | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
+| `meta`                 | `key`                                                  | Training state, schema version                                          |
+| `lead_time_accuracy`   | `(date, bucket)`                                       | Daily per-lead-time error sums (rolling 30 days)                        |
+| `evaluation`           | `(timestamp, target_hours)`                            | Per scored slot and lead time (12/24/48 h): prediction and actual (#36) |
+| `external_forecasts`   | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring (#120)                   |
+| `external_accuracy`    | `(source, date, bucket)`                               | Daily error sums per external source and bucket (#120)                  |
+| `external_slot_errors` | `(start, bucket, source)`                              | Per scored slot: mean error of each source and of the model (#157)      |
+| `umm_messages`         | `(message_id, version)`                                | Every UMM outage message version for the area (#123)                    |
+| `umm_periods`          | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable MW per unit and period                          |
 
 Migrations are versioned in `meta.schema_version` and run once at startup: v5 resets the
 multiplicative bias factors (`ml/bias_storage.py`), v6 discards consumer-price learning

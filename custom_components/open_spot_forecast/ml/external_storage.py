@@ -9,6 +9,11 @@ currency/kWh. Self-learning scores a slot's rows when its actual price is
 known and removes them, like the model's predictions; their errors are kept
 as daily sums per source and lead-time bucket in ``external_accuracy``, the
 shape of ``lead_time_accuracy``.
+
+The daily sums cannot score a blend of the model with a source: that needs
+both errors of the same slot. ``external_slot_errors`` keeps them (#157), one
+row per (slot, lead-time bucket, source) with the mean signed error of the
+forecasts in the bucket, the model's own under ``EXTERNAL_MODEL_SOURCE``.
 """
 
 from collections.abc import Sequence
@@ -34,6 +39,14 @@ EXTERNAL_SCHEMA_SQL = """
         sum_sq_error    REAL    NOT NULL,
         PRIMARY KEY (source, date, bucket)
     );
+    CREATE TABLE IF NOT EXISTS external_slot_errors (
+        start    TEXT    NOT NULL,
+        bucket   TEXT    NOT NULL,
+        source   TEXT    NOT NULL,
+        samples  INTEGER NOT NULL,
+        error    REAL    NOT NULL,
+        PRIMARY KEY (start, bucket, source)
+    ) WITHOUT ROWID;
 """
 
 
@@ -202,6 +215,70 @@ class ExternalForecastStorageMixin(StorageMixinBase):
             conn = self._ensure_conn()
             cursor = conn.execute(
                 "DELETE FROM external_accuracy WHERE date < ?", (cutoff_date,)
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def upsert_external_slot_errors(
+        self, start: str, rows: Sequence[tuple[str, str, int, float]]
+    ) -> None:
+        """Store a scored slot's mean errors per bucket and source (blocking).
+
+        Args:
+            start: The slot's UTC key (``utc_slot_key``).
+            rows: ``(bucket, source, number of forecasts, mean signed error)``,
+                the error (forecast - actual) in currency/kWh.
+        """
+        if not rows:
+            return
+        with self._lock:
+            conn = self._ensure_conn()
+            conn.executemany(
+                """INSERT OR REPLACE INTO external_slot_errors
+                   (start, bucket, source, samples, error) VALUES (?, ?, ?, ?, ?)""",
+                [(start, *row) for row in rows],
+            )
+            conn.commit()
+
+    def get_external_slot_errors(self, since: str) -> list[dict[str, Any]]:
+        """Return the per-slot errors from ``since`` (a UTC key) on (blocking).
+
+        Returns:
+            ``{"start", "bucket", "source", "samples", "error"}`` rows, by slot.
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            rows = conn.execute(
+                """SELECT start, bucket, source, samples, error
+                   FROM external_slot_errors
+                   WHERE start >= ?
+                   ORDER BY start, bucket, source""",
+                (since,),
+            ).fetchall()
+        return [
+            {
+                "start": r[0],
+                "bucket": r[1],
+                "source": r[2],
+                "samples": r[3],
+                "error": r[4],
+            }
+            for r in rows
+        ]
+
+    def delete_external_slot_errors_before(self, cutoff: str) -> int:
+        """Delete the per-slot errors of slots before ``cutoff`` (a UTC key) (blocking).
+
+        UTC keys have a fixed width, so they are compared as text and the
+        primary key serves the range.
+
+        Returns:
+            Number of rows deleted.
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            cursor = conn.execute(
+                "DELETE FROM external_slot_errors WHERE start < ?", (cutoff,)
             )
             conn.commit()
             return cursor.rowcount
