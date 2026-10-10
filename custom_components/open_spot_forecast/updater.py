@@ -17,7 +17,6 @@ model trains on is backfilled and pruned by ``HistoryUpdaterMixin``.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -32,19 +31,6 @@ from .api.gas_prices import GasPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.time_series_source import HistorySource, TimeSeriesSource
 from .const import (
-    CONF_CONSUMER_PRICE_SENSOR,
-    CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
-    CONF_SOLAR_FORECAST_SENSOR,
-    CONF_SOLAR_POWER_SENSOR,
-    CONF_SPOT_PRICE_SENSOR,
-    CONF_SPOT_PRICE_TOMORROW_SENSOR,
-    CONF_TEMPERATURE_SENSOR,
-    CONF_WIND_DIRECTION_SENSOR,
-    CONF_WIND_SPEED_SENSOR,
-    DEFAULT_CONSUMER_PRICE_SENSOR,
-    DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
-    DEFAULT_SPOT_PRICE_SENSOR,
-    DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
     ENTSOE_LOAD_REGIONS,
     GAS_PRICE_REGIONS,
     PRICE_SOURCE_DAYAHEAD,
@@ -52,10 +38,12 @@ from .const import (
     UPDATE_SIGNAL_FORECAST,
     WEATHER_POINTS,
 )
+from .external_forecasts import async_record_external_forecasts
 from .history_updater import HistoryUpdaterMixin, neighbour_sources, outage_source
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
 from .price_source import DayAheadPrices, PriceSettings
+from .sensor_entities import SensorEntities
 from .sensor_reader import SensorReader, async_read_weather_forecast
 from .spot_prices import ml_price_inputs
 from .tariffs import TariffSchedule
@@ -72,77 +60,6 @@ _LOGGER = logging.getLogger(__name__)
 # How far ahead the model predicts, and its slot length
 FORECAST_DAYS = 7
 INTERVAL_MINUTES = 15
-
-
-@dataclass(frozen=True, slots=True)
-class SensorEntities:
-    """The external entities a config entry reads.
-
-    Options (reconfiguration) take precedence over the entry's initial data.
-    """
-
-    # Stromligning's consumer price excl. VAT, today and tomorrow (#107)
-    stromligning: str | None
-    stromligning_tomorrow: str | None
-    # Raw spot price excl. VAT and tariffs: what the ML model learns (#16)
-    spot_price: str | None
-    spot_price_tomorrow: str | None
-    wind_speed: str | None
-    wind_direction: str | None
-    solar_power: str | None
-    solar_forecast: str | None
-    temperature: str | None
-
-    @classmethod
-    def from_entry(cls, entry: ConfigEntry) -> SensorEntities:
-        """Read the configured entity ids from a config entry."""
-
-        def option(key: str, default: str | None = None) -> str | None:
-            value: str | None = entry.options.get(key, entry.data.get(key, default))
-            return value
-
-        return cls(
-            stromligning=option(
-                CONF_CONSUMER_PRICE_SENSOR, DEFAULT_CONSUMER_PRICE_SENSOR
-            ),
-            stromligning_tomorrow=option(
-                CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
-                DEFAULT_CONSUMER_PRICE_TOMORROW_SENSOR,
-            ),
-            spot_price=option(CONF_SPOT_PRICE_SENSOR, DEFAULT_SPOT_PRICE_SENSOR),
-            spot_price_tomorrow=option(
-                CONF_SPOT_PRICE_TOMORROW_SENSOR, DEFAULT_SPOT_PRICE_TOMORROW_SENSOR
-            ),
-            wind_speed=option(CONF_WIND_SPEED_SENSOR),
-            wind_direction=option(CONF_WIND_DIRECTION_SENSOR),
-            solar_power=option(CONF_SOLAR_POWER_SENSOR),
-            solar_forecast=option(CONF_SOLAR_FORECAST_SENSOR),
-            temperature=option(CONF_TEMPERATURE_SENSOR),
-        )
-
-    def sensor_config(self) -> dict[str, str | None]:
-        """Return the ``api_data["sensor_config"]`` dict the weather reader uses."""
-        return {
-            "stromligning_sensor": self.stromligning,
-            "wind_speed_sensor": self.wind_speed,
-            "wind_direction_sensor": self.wind_direction,
-            "solar_power_sensor": self.solar_power,
-            "solar_forecast_sensor": self.solar_forecast,
-            "temperature_sensor": self.temperature,
-        }
-
-    @property
-    def has_weather(self) -> bool:
-        """Return whether any weather or solar entity is configured."""
-        return any(
-            [
-                self.wind_speed,
-                self.wind_direction,
-                self.solar_power,
-                self.solar_forecast,
-                self.temperature,
-            ]
-        )
 
 
 class ForecastUpdater(HistoryUpdaterMixin):
@@ -420,6 +337,16 @@ class ForecastUpdater(HistoryUpdaterMixin):
             # The stored predictions changed: so may a slot's day-ahead one (#113)
             await self.hass.async_add_executor_job(
                 ml_predictor.refresh_day_ahead_predictions
+            )
+            # What the other forecasts show for the same slots, right now (#120)
+            await async_record_external_forecasts(
+                self.hass,
+                self.sensor_reader,
+                ml_predictor,
+                self.sensors.external_forecasts,
+                self.settings.output,
+                self.api_data.get("tariffs"),
+                known_data_end_time,
             )
 
             # Save learning data after prediction (includes stored predictions)

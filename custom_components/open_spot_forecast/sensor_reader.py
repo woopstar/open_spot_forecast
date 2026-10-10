@@ -11,6 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter
 
+from .const import EXTERNAL_FORECAST_ATTRIBUTES
 from .price_series import (
     PriceSample,
     align_to_grid,
@@ -81,13 +82,19 @@ def _parse_time(value: Any) -> datetime | None:
 def _item_sample(item: Any) -> PriceSample | None:
     """Return a price item's ``(start, end, price)``, or None if unusable.
 
-    The start is the item's own ``timestamp``/``time``/``start``; ``end`` is
-    optional. The item's position in the list is never used.
+    The start is the item's own ``timestamp``/``time``/``start``/``hour``
+    (Energi Data Service); ``end`` is optional. The item's position in the
+    list is never used.
     """
     if not isinstance(item, dict):
         return None
     price = _item_price(item)
-    start = _parse_time(item.get("timestamp") or item.get("time") or item.get("start"))
+    start = _parse_time(
+        item.get("timestamp")
+        or item.get("time")
+        or item.get("start")
+        or item.get("hour")
+    )
     if price is None or start is None:
         return None
     try:
@@ -309,6 +316,46 @@ class SensorReader:
         )
 
         return result
+
+    def read_external_forecast(self, entity_id: str) -> list[tuple[datetime, float]]:
+        """Read another integration's price forecast from a sensor's attributes (#120).
+
+        Stromligning's forecast sensor lists ``prices`` (``start``, ``end``,
+        ``price``) and Energi Data Service ``forecast`` (``hour``, ``price``):
+        the first of ``EXTERNAL_FORECAST_ATTRIBUTES`` that is a list is read.
+        Hourly prices are expanded to the 15-minute slots they cover, by the
+        items' own timestamps (``align_to_grid``).
+
+        Args:
+            entity_id: The sensor holding the forecast.
+
+        Returns:
+            ``(slot start in UTC, price as the sensor shows it)`` in time
+            order; ``[]`` if the entity or its forecast is missing.
+        """
+        state = self.hass.states.get(entity_id) if entity_id else None
+        if state is None:
+            _LOGGER.debug("External forecast sensor %s not found", entity_id)
+            return []
+        items: list[Any] = next(
+            (
+                state.attributes[name]
+                for name in EXTERNAL_FORECAST_ATTRIBUTES
+                if isinstance(state.attributes.get(name), list)
+            ),
+            [],
+        )
+        samples = [
+            sample for item in items if (sample := _item_sample(item)) is not None
+        ]
+        forecast: list[tuple[datetime, float]] = []
+        for day in sorted({start.date() for start, _, _ in samples}):
+            for index, price in enumerate(align_to_grid(samples, day)):
+                if price is not None:
+                    forecast.append(
+                        (dt_util.as_utc(slot_start_in_day(day, index)), price)
+                    )
+        return forecast
 
     def read_stromligning_tomorrow_sensor(self, entity_id: str) -> dict:
         """Read Stromligning tomorrow sensor data.

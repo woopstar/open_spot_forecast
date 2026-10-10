@@ -30,8 +30,10 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `time_slots.py`          | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                              |
 | `tomorrow_prices.py`     | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                           |
 | `__init__.py`            | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                      |
-| `updater.py`             | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline; `SensorEntities` (configured entity ids)  |
+| `updater.py`             | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline                                            |
 | `history_updater.py`     | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                                |
+| `sensor_entities.py`     | `SensorEntities` (the entity ids a config entry reads) and `external_forecast_sensors()` (#120)                                                             |
+| `external_forecasts.py`  | `async_record_external_forecasts()` — external forecast sensors → raw spot rows (`PriceOutput.to_spot()` − tariff) at every forecast run (#120)             |
 | `price_source.py`        | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source               |
 | `services.py`            | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
 | `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (s/t/c arrays), `fit_compact()` (16 KB limit)                                 |
@@ -41,32 +43,34 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
-| File                    | Responsibility                                                                                                                      |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin` |
-| `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                         |
-| `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                     |
-| `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)         |
-| `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                         |
-| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                         |
-| `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)      |
-| `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                       |
-| `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)      |
-| `models.py`             | `ModelMixin` — training + prediction                                                                                                |
-| `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                     |
-| `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                    |
-| `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)               |
-| `numpy_models.py`       | `NumpyRandomForest` and other legacy pure NumPy models                                                                              |
-| `storage.py`            | `LearningStorage` — SQLite connection, write lock, schema and migrations; composes the storage mixins below                         |
-| `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins             |
-| `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                         |
-| `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                          |
-| `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state   |
-| `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
-| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
-| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)         |
-| `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                 |
-| `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
+| File                    | Responsibility                                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `predictor.py`          | `SpotPricePredictor` — composes `FeatureMixin` + `ModelMixin` + `LearningMixin` + `CatchUpMixin` + `LeadTimeMixin` + `RetrainMixin`       |
+| `features.py`           | `FeatureMixin` — feature extraction (wind, solar, time, Nordpool prognoses)                                                               |
+| `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                           |
+| `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)               |
+| `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                               |
+| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                               |
+| `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)            |
+| `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                             |
+| `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)            |
+| `models.py`             | `ModelMixin` — training + prediction                                                                                                      |
+| `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                           |
+| `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                          |
+| `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)                     |
+| `numpy_models.py`       | `NumpyRandomForest` and other legacy pure NumPy models                                                                                    |
+| `storage.py`            | `LearningStorage` — SQLite connection, write lock, schema and migrations; composes the storage mixins below                               |
+| `storage_base.py`       | `StorageMixinBase` — type-only declarations (`_lock`, `_ensure_conn()`, `last_data_write`) shared by the storage mixins                   |
+| `prediction_storage.py` | `PredictionStorageMixin` — `predictions` table (pending predictions awaiting self-learning)                                               |
+| `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                                |
+| `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state         |
+| `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                      |
+| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                                 |
+| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)               |
+| `external_storage.py`   | `ExternalForecastStorageMixin` — `external_forecasts` (awaiting scoring) and `external_accuracy` (daily sums per source and bucket, #120) |
+| `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                       |
+| `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                       |
+| `external_forecasts.py` | `ExternalForecastMixin` — store external forecasts, score them per lead-time bucket with the slot (#120)                                  |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
 
@@ -100,7 +104,8 @@ config key, region name, or price-unit factor elsewhere.
 All external entity reads go through `SensorReader` in `sensor_reader.py`. Never call
 `hass.states.get(...)` directly in platform or ML code. Methods:
 `read_stromligning_sensor`, `read_stromligning_tomorrow_sensor`, `read_spot_prices`, `read_weather_sensors`,
-`read_solcast_sensor`, `read_met_weather`.
+`read_solcast_sensor`, `read_met_weather`, `read_external_forecast` (#120: another integration's
+forecast from a `prices`/`forecast` attribute; recorded and scored, never a model input).
 
 **The ML model's prices are the raw day-ahead spot price excl. VAT and tariffs** (#16),
 from `read_spot_prices()` (Stromligning's `spotprice_ex_vat` sensors) via `ml_price_inputs()`:
@@ -150,7 +155,7 @@ prune on a fixed day count: `ForecastUpdater.prune_history()` keeps the training
 ### ML predictor
 
 `SpotPricePredictor` in `ml/predictor.py` is the single ML predictor. It composes
-`FeatureMixin`, `ModelMixin`, `LearningMixin`, `CatchUpMixin`, `LeadTimeMixin`, and `RetrainMixin`. Never re-implement
+`FeatureMixin`, `ModelMixin`, `LearningMixin`, `CatchUpMixin`, `LeadTimeMixin`, `ExternalForecastMixin`, and `RetrainMixin`. Never re-implement
 feature extraction, model training, or self-learning outside `ml/`.
 
 ### Retraining
@@ -366,6 +371,8 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 | `meta`               | `key`                                                  | Training state, schema version                                          |
 | `lead_time_accuracy` | `(date, bucket)`                                       | Daily per-lead-time error sums (rolling 30 days)                        |
 | `evaluation`         | `(timestamp, target_hours)`                            | Per scored slot and lead time (12/24/48 h): prediction and actual (#36) |
+| `external_forecasts` | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring (#120)                   |
+| `external_accuracy`  | `(source, date, bucket)`                               | Daily error sums per external source and bucket (#120)                  |
 | `umm_messages`       | `(message_id, version)`                                | Every UMM outage message version for the area (#123)                    |
 | `umm_periods`        | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable MW per unit and period                          |
 
@@ -397,8 +404,8 @@ To wire a new external entity into OSF, follow the full stack in order:
 3. `translations/en.json` — add `data` label for both `config.step.sensors` and `options.step.init`
 4. `translations/da.json` — add the Danish translation
 5. `sensor_reader.py` — add a `read_*` method on `SensorReader`
-6. `updater.py` — add the entity to `SensorEntities` (and `sensor_config()`), read the value in
-   `ForecastUpdater._read_weather()` and pass it into `weather_data`
+6. `sensor_entities.py` — add the entity to `SensorEntities` (and `sensor_config()`); `updater.py` —
+   read the value in `ForecastUpdater._read_weather()` and pass it into `weather_data`
 
 Always check `docs/using_existing_sensors.md` first for the verified entity list.
 

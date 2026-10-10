@@ -36,7 +36,9 @@ def _sensor(
 ) -> LeadTimeAccuracySensor:
     """Return an accuracy sensor backed by a predictor with ACCURACY cached."""
     if api_data is None:
-        api_data = {"ml_predictor": Mock(lead_time_accuracy=ACCURACY)}
+        api_data = {
+            "ml_predictor": Mock(lead_time_accuracy=ACCURACY, external_accuracy={})
+        }
     return LeadTimeAccuracySensor(Mock(), _entry(), api_data, "DKK", 3, bucket, metric)
 
 
@@ -91,7 +93,11 @@ def test_extra_state_attributes():
 
 @pytest.mark.parametrize(
     "api_data",
-    [{}, {"ml_predictor": None}, {"ml_predictor": Mock(lead_time_accuracy={})}],
+    [
+        {},
+        {"ml_predictor": None},
+        {"ml_predictor": Mock(lead_time_accuracy={}, external_accuracy={})},
+    ],
 )
 def test_unknown_until_predictions_are_matched(api_data):
     """No predictor or no matched predictions yet means an unknown state."""

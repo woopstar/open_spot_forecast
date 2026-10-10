@@ -35,7 +35,11 @@
           "dmi_api_key": "DMI API Nøgle (alternativ vejrdatakilde)",
           "enable_ml_prediction": "Aktiver ML Forudsigelser",
           "prediction_hours": "Prognosetimer (12 til 72; op til 168 med det kompakte format)",
-          "training_days": "Træningsdage (prishistorik, som modellen lærer af)"
+          "training_days": "Træningsdage (prishistorik, som modellen lærer af)",
+          "external_forecast_sensors": "Eksterne prognosesensorer (gemmes og vurderes ved siden af ML-prognosen)"
+        },
+        "data_description": {
+          "external_forecast_sensors": "Sensorer med en anden prisprognose i deres attributter, f.eks. Strømlignings prognosesensor (sensor.stromligning_forecasts_vat) eller en Energi Data Service-sensor med Carnot-prognosen. Ved hver prognosekørsel gemmes det, de viser for de samme intervaller som ML-prognosen, og selvlæringen vurderer dem pr. tidshorisont (se attributten external på prognose-MAE/RMSE-sensorerne). De ændrer aldrig ML-prognosen. Vælg sensorer, der viser priser som denne integration: samme enhed, med tariffer og moms."
         }
       }
     },
@@ -77,7 +81,8 @@
           "attribute_format": "Format for prognoseattributter",
           "include_known_prices": "Medtag kendte priser i prognoseattributten",
           "predbat_sensors": "Predbat-prisentiteter (import/eksport, i dag/i morgen)",
-          "predbat_tariff": "Predbat fast nettarif pr. kWh ekskl. moms (uden tariffer pr. slot)"
+          "predbat_tariff": "Predbat fast nettarif pr. kWh ekskl. moms (uden tariffer pr. slot)",
+          "external_forecast_sensors": "Eksterne prognosesensorer (gemmes og vurderes ved siden af ML-prognosen)"
         },
         "data_description": {
           "entsoe_api_key": "Sikkerhedstoken fra ENTSO-E Transparency Platform. Giver modellen ENTSO-E's ugeprognose for elforbruget og bruges som reserve, når energy-charts.info ikke har priser. Gemmes i konfigurationen og logges aldrig.",
@@ -87,7 +92,8 @@
           "include_known_prices": "Lad prognoseattributten starte ved det aktuelle interval med de kendte spotpriser (source: actual) og derefter prognoserne (source: predicted) som én sammenhængende serie. I det kompakte format angiver known_count antallet af kendte poster. Træder i kraft, når integrationen genindlæses.",
           "cross_border": "Model i to trin: lærer nabobudzonernes priser ud fra deres vejr og giver prognoserne videre til denne zones model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Sænker prognosefejlen med omkring en sjettedel i backtesten, men træner to ekstra modeller pr. nabozone og gemmer deres priser og vejr: hver træning tager flere gange længere tid (flere titals sekunder på en Raspberry Pi 4). Træder i kraft, når integrationen genindlæses.",
           "predbat_sensors": "Tilføj fire sensorer i samme form som Stromlignings prisentiteter til Predbats apps.yaml: import i dag/i morgen (prognosen med tariffer, tillæg og moms, pr. kWh) og eksport i dag/i morgen (den rå spotpris ekskl. moms). I dag starter med de kendte priser fra midnat; i morgen indeholder morgendagen og de følgende dage, så langt attributgrænsen tillader. Træder i kraft, når integrationen genindlæses.",
-          "predbat_tariff": "Nettarif i din valuta pr. kWh ekskl. moms, der kun lægges til Predbat-importprisen, når der ikke kendes en tarif pr. slot (day-ahead-kilden har ingen; Stromlignings forbrugerpris indeholder den allerede, så behold 0 der). Træder i kraft, når integrationen genindlæses."
+          "predbat_tariff": "Nettarif i din valuta pr. kWh ekskl. moms, der kun lægges til Predbat-importprisen, når der ikke kendes en tarif pr. slot (day-ahead-kilden har ingen; Stromlignings forbrugerpris indeholder den allerede, så behold 0 der). Træder i kraft, når integrationen genindlæses.",
+          "external_forecast_sensors": "Sensorer med en anden prisprognose i deres attributter, f.eks. Strømlignings prognosesensor (sensor.stromligning_forecasts_vat) eller en Energi Data Service-sensor med Carnot-prognosen. Ved hver prognosekørsel gemmes det, de viser for de samme intervaller som ML-prognosen, og selvlæringen vurderer dem pr. tidshorisont (se attributten external på prognose-MAE/RMSE-sensorerne). De ændrer aldrig ML-prognosen. Vælg sensorer, der viser priser som denne integration: samme enhed, med tariffer og moms."
         }
       }
     }

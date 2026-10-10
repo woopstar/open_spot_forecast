@@ -253,6 +253,21 @@ class PriceOutput:
         per_unit = apply_price_components(per_unit, self.surcharge, self.vat)
         return float(round(per_unit, self.precision))
 
+    def to_spot(self, exposed: float) -> float:
+        """Return the price in currency/kWh excl. VAT behind an exposed price.
+
+        The inverse of ``convert()``, unrounded: an external forecast shown in
+        the terms of this entry's prices becomes comparable with the model's
+        (#120). A tariff the exposed price includes is still in the result.
+
+        Args:
+            exposed: A price in the configured unit, with the surcharge and VAT.
+        """
+        per_unit = exposed / (1 + self.vat) - self.surcharge
+        return (
+            per_unit * PRICE_IN.get(self.price_type, PRICE_IN["kWh"]) / PRICE_IN["kWh"]
+        )
+
     def day_series(self, prices: Sequence[float | None]) -> list[float | None]:
         """Return a day's raw prices per exposed interval (per hour if hourly)."""
         return hourly_averages(prices) if self.hourly_average else list(prices)

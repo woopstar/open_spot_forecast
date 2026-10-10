@@ -26,6 +26,8 @@ All learning data is stored in a single SQLite database:
 | `meta`               | `key`                                                  | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)                               |
 | `lead_time_accuracy` | `(date, bucket)`                                       | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error                                         |
 | `evaluation`         | `(timestamp, target_hours)`                            | Per scored slot (UTC slot key) and lead time (12, 24, 48 h): the prediction made closest to it, the actual price and its lead time (#36)     |
+| `external_forecasts` | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring: raw spot price per UTC slot, source (entity id) and reading (#120)                           |
+| `external_accuracy`  | `(source, date, bucket)`                               | Per source, slot date and lead-time bucket: sample count and sums of error, absolute and squared error (#120)                                |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -37,8 +39,8 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
-`lead_time_accuracy`, `evaluation`, `entsoe_load`, `gas_prices`, `neighbour_prices`, `umm_messages` and
-`umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
+`lead_time_accuracy`, `evaluation`, `external_forecasts`, `external_accuracy`, `entsoe_load`, `gas_prices`,
+`neighbour_prices`, `umm_messages` and `umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
 whenever it is written or reloaded; about 700 rows per lead time, #113). An
 `evaluation` table from before #113 (one row per slot, no `target_hours`
@@ -48,6 +50,13 @@ migration is detected by the table's columns, like v4's forecast columns, so
 it needs no schema version. Rows
 older than the 30-day rolling window are pruned whenever the metrics are
 refreshed. The table is dropped and recreated by `clear_all()`.
+
+`external_forecasts` (#120) only has rows with external forecast sensors
+configured: every forecast run adds one row per source and predicted slot,
+a slot's rows are deleted when it is scored, and readings older than the
+training window are pruned at every run. `external_accuracy` has the layout
+and the 30-day window of `lead_time_accuracy`, with the source in its key.
+Both are dropped and recreated by `clear_all()`.
 
 ## Code Layout
 
@@ -64,6 +73,7 @@ tables:
 | `ml/state_storage.py`      | `LearningStateStorageMixin`    | `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk save/load |
 | `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`                                                     |
 | `ml/evaluation_storage.py` | `EvaluationStorageMixin`       | `evaluation`                                                             |
+| `ml/external_storage.py`   | `ExternalForecastStorageMixin` | `external_forecasts`, `external_accuracy`                                |
 
 The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
 the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking

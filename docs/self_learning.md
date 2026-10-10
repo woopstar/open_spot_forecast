@@ -110,6 +110,9 @@ price patterns — the 14:00-14:15 slot can have very different bias than
 - ~2,688 new predictions daily
 - A prediction is matched when its slot arrives
 - Multiple forecast runs for the same timestamp = multiple learning samples
+- With external forecast sensors (#120), each run also stores every source's
+  forecast for the same slots (up to 672 rows per source), deleted when the
+  slot is scored
 - Predictions stored longer ago than the training window (default 180 days)
   are pruned automatically. The longest
   lead time is ~8.5 days (7 days past the end of the known prices), so every
@@ -230,6 +233,59 @@ entities:
     name: Actual
 ```
 
+## External Forecasts (#120)
+
+Other integrations publish price forecasts too: Stromligning's forecast
+sensor (`sensor.stromligning_forecasts_vat`, attribute `prices`) and Energi
+Data Service's Carnot forecast (attribute `forecast`). They have no history
+to backtest, so the only way to compare them with the model is to record them
+live. With **External forecast sensors** set in the config or options flow
+(none by default; nothing is read, stored or scored without one):
+
+1. **Read** (`SensorReader.read_external_forecast()`): after every forecast
+   run, each sensor's forecast, expanded to 15-minute slots by the items' own
+   timestamps (an hourly price fills its four slots).
+2. **Convert** (`external_forecasts.py`): the prices are taken to be shown in
+   the terms of this entry's own prices, as on a shared chart: the configured
+   unit, with the slot's tariff, the surcharge and VAT. `PriceOutput.to_spot()`
+   (the inverse of `convert()`) and the slot's tariff (`TariffSchedule`, #107)
+   turn them back into the raw spot price in currency/kWh, the exact reverse
+   of how the model's forecast is exposed, so every source's errors are in
+   the model's unit. Only the slots the model predicts are kept (from the end
+   of the confirmed prices on): what a source shows for a slot whose price is
+   known is no forecast.
+3. **Store** (`store_external_forecasts()`, `ml/external_forecasts.py`): one
+   `external_forecasts` row per source (the entity id), slot and reading
+   (`stored_at`). Readings older than the training window are pruned, like
+   stored predictions.
+4. **Score** (`record_external_accuracy()`): when self-learning scores a slot
+   (the live loop and the startup catch-up, right after the model's own
+   lead-time accuracy), every stored forecast for it is bucketed by its lead
+   time with the same `bucket_errors()` and added to the daily sums per source
+   and bucket in `external_accuracy`; the rows are then deleted. A source is
+   scored for the slots the model is scored for.
+
+The model never reads any of this: its error metrics, bias correction,
+lead-time accuracy and predictions are the same with and without external
+sensors (a test compares them).
+
+The summary over the same rolling 30 days is cached in
+`external_accuracy` (`{source: {bucket: mae, rmse, bias, samples}}`) and shown
+by the forecast MAE/RMSE sensors: each has an `external` attribute with its
+metric, `bias` and `samples` per source for its bucket, next to its own state.
+`scripts/live_report.py` prints the full per-source table from an export
+(see [Live accuracy](ml_documentation.md#live-accuracy-94)).
+
+**Choosing the sensors.** Pick the variant that matches how this integration
+shows prices: with the default VAT of 25 % that is Stromligning's
+`forecasts_vat` sensor (consumer price with tariffs and VAT, enabled with
+Stromligning's forecast option), and an Energi Data Service sensor whose cost
+template and VAT give the same total. A source in other terms (no VAT, no
+tariffs, øre instead of kr) is still recorded, but its `bias` shows the
+constant difference and its MAE includes it. Blending the sources with the
+model is a follow-up once two weeks of errors exist; see #115 for the
+dev-only benchmark and the licence limits of other forecasts.
+
 ## Metrics Available
 
 Via `sensor.open_spot_forecast_dk1_learning_metrics`:
@@ -268,7 +324,7 @@ the live errors of stored predictions against actual prices.
 
 The `open_spot_forecast.reset_learning` action (`services.py`, #132) calls
 `reset_learning()`, which clears the in-memory error metrics, bias offsets,
-lead-time accuracy, evaluation and day-ahead predictions and drops every table of the learning
+lead-time accuracy, evaluation, day-ahead predictions and external forecast accuracy and drops every table of the learning
 database — including the stored predictions and the price history the model
 trains on — before recreating the schema. The learning and accuracy entities
 are refreshed at once; the model retrains on the data collected afterwards.

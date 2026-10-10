@@ -87,6 +87,7 @@ class CatchUpMixin(PredictorBase):
 
                 self.record_lead_time_accuracy(matching, actual_price)
                 self.record_evaluation(slot_start, matching, actual_price)
+                self.record_external_accuracy(slot_start, actual_price)
 
                 # Update the slot's bias offsets per lead-time bucket
                 self._update_bias_correction(slot)

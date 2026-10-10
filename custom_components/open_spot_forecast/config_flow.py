@@ -27,6 +27,7 @@ from .const import (
     CONF_CURRENCY,
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
+    CONF_EXTERNAL_FORECAST_SENSORS,
     CONF_HOURLY_AVERAGE,
     CONF_INCLUDE_KNOWN_PRICES,
     CONF_PRECISION,
@@ -75,6 +76,7 @@ from .const import (
     STROMLIGNING_REGIONS,
     TRAINING_DAYS_OPTIONS,
 )
+from .sensor_entities import external_forecast_sensors
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,6 +125,11 @@ def normalize_training_days(user_input: dict[str, Any]) -> dict[str, Any]:
     if CONF_TRAINING_DAYS in user_input:
         user_input[CONF_TRAINING_DAYS] = int(user_input[CONF_TRAINING_DAYS])
     return user_input
+
+
+def external_forecast_selector() -> Any:
+    """Return the picker of the sensors whose forecasts are recorded (#120)."""
+    return selector({"entity": {"domain": "sensor", "multiple": True}})
 
 
 class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -266,6 +273,10 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         "sensor.metroair_330_outdoor_temperature",
                     ),
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
+                # Other forecasts to record and score (#120); none by default
+                vol.Optional(
+                    CONF_EXTERNAL_FORECAST_SENSORS
+                ): external_forecast_selector(),
                 vol.Optional(
                     CONF_ENABLE_ML_PREDICTION,
                     default=self._data.get(CONF_ENABLE_ML_PREDICTION, True),
@@ -316,6 +327,10 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
         self._errors = {}
 
         if user_input is not None:
+            # An emptied picker is left out of the input: store the empty
+            # list, or the sensors configured before would come back
+            if external_forecast_sensors(self.config_entry):
+                user_input.setdefault(CONF_EXTERNAL_FORECAST_SENSORS, [])
             return self.async_create_entry(
                 title=self.config_entry.data.get(CONF_REGION, DEFAULT_REGION),
                 data=normalize_training_days(user_input),
@@ -476,6 +491,15 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         "sensor.metroair_330_outdoor_temperature",
                     ),
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
+                # Other forecasts to record and score (#120)
+                vol.Optional(
+                    CONF_EXTERNAL_FORECAST_SENSORS,
+                    description={
+                        "suggested_value": list(
+                            external_forecast_sensors(self.config_entry)
+                        )
+                    },
+                ): external_forecast_selector(),
                 vol.Optional(
                     CONF_VAT,
                     default=self.config_entry.options.get(

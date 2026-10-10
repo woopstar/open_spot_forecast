@@ -79,8 +79,8 @@ def _dayahead_spot(tomorrow: Sequence[float | None] = ()) -> dict[str, list]:
     }
 
 
-def _sensors(**overrides: str | None) -> SensorEntities:
-    values: dict[str, str | None] = {
+def _sensors(**overrides: Any) -> SensorEntities:
+    values: dict[str, Any] = {
         "stromligning": "sensor.strom",
         "stromligning_tomorrow": None,
         "spot_price": "sensor.spot",
@@ -351,6 +351,41 @@ async def test_prediction_and_its_feature_rows_run_in_the_executor(
 
     harness.predictor.predict.assert_called_once()
     assert harness.predictor.predict in in_executor
+
+
+@pytest.mark.asyncio
+async def test_run_forecast_records_the_external_forecasts(
+    make: Callable[..., Harness],
+) -> None:
+    """After predicting, for the slots the predictions start at (#120)."""
+    sensors = _sensors(external_forecasts=("sensor.stromligning_forecasts_vat",))
+    harness = make(sensors)
+    tariffs = harness.api_data["tariffs"] = Mock()
+
+    with patch(f"{MODULE}.async_record_external_forecasts", AsyncMock()) as record:
+        await harness.updater.run_forecast()
+
+    record.assert_awaited_once_with(
+        harness.updater.hass,
+        harness.reader,
+        harness.predictor,
+        ("sensor.stromligning_forecasts_vat",),
+        harness.updater.settings.output,
+        tariffs,
+        KNOWN_END,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_forecast_without_external_sensors_reads_none(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+
+    await harness.updater.run_forecast()
+
+    harness.reader.read_external_forecast.assert_not_called()
+    harness.predictor.store_external_forecasts.assert_not_called()
 
 
 @pytest.mark.asyncio

@@ -1091,6 +1091,11 @@ learning-database export:
   prediction made closest to 24 h ahead of each slot, and a row per other
   lead-time snapshot (`12 h snapshot`, `48 h snapshot`, #113) over the slots
   that have one, each with its mean real lead time.
+- **External forecasts** (`external_accuracy`, the last 30 days, #120): with
+  external forecast sensors configured on the instance, the same metrics per
+  bucket for every recorded source next to the model's row
+  (`open_spot_forecast`), scored for the same slots; see
+  [Self-Learning](self_learning.md#external-forecasts-120) for the unit.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
   count, and the `hpo_*` keys of an export from before #92.
 - **Coverage**: the dates the data spans, with a warning below 14 days.

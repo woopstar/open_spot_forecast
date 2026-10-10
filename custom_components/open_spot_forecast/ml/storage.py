@@ -24,6 +24,7 @@ from .bias_storage import (
     migrate_bias_to_lead_time_buckets,
 )
 from .evaluation_storage import EvaluationStorageMixin
+from .external_storage import EXTERNAL_SCHEMA_SQL, ExternalForecastStorageMixin
 from .history_storage import HistoryStorageMixin
 from .outage_storage import UMM_SCHEMA_SQL, OutageStorageMixin
 from .prediction_storage import PredictionStorageMixin
@@ -43,6 +44,7 @@ class LearningStorage(
     LearningStateStorageMixin,
     LeadTimeAccuracyStorageMixin,
     EvaluationStorageMixin,
+    ExternalForecastStorageMixin,
     OutageStorageMixin,
 ):
     """Handles persistence of learning data to a SQLite database.
@@ -78,6 +80,9 @@ class LearningStorage(
                         #123, ENTSO-E #138) and their unavailable-capacity
                         periods (outage_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
+      external_forecasts, external_accuracy — other integrations' forecasts
+                        awaiting scoring, and their daily error sums per
+                        source and lead time (#120; external_storage.py)
     """
 
     def __init__(self, hass: HomeAssistant, region: str):
@@ -317,6 +322,7 @@ class LearningStorage(
         )
         conn.execute(BIAS_TABLE_SQL)
         conn.executescript(UMM_SCHEMA_SQL)
+        conn.executescript(EXTERNAL_SCHEMA_SQL)
 
         # Schema migration: old DBs had start as PRIMARY KEY without id column
         cols = [c[1] for c in conn.execute("PRAGMA table_info(predictions)").fetchall()]
@@ -471,6 +477,8 @@ class LearningStorage(
                     DROP TABLE IF EXISTS volatility;
                     DROP TABLE IF EXISTS lead_time_accuracy;
                     DROP TABLE IF EXISTS evaluation;
+                    DROP TABLE IF EXISTS external_forecasts;
+                    DROP TABLE IF EXISTS external_accuracy;
                     DROP TABLE IF EXISTS meta;
                     """
                 )

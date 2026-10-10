@@ -66,6 +66,8 @@ class PredictorBase:
     evaluation_snapshots: dict[float, list[dict[str, Any]]]
     # The day-ahead prediction of the current and coming slots, by UTC slot key
     day_ahead_predictions: dict[str, float]
+    # Live accuracy of the external forecasts per source and bucket (#120)
+    external_accuracy: dict[str, dict[str, dict[str, float | int]]]
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
@@ -107,6 +109,11 @@ class PredictorBase:
         slot_start: datetime,
         predictions: list[dict[str, Any]],
         actual_price: float,
+    ) -> None:
+        raise NotImplementedError
+
+    def record_external_accuracy(
+        self, slot_start: datetime, actual_price: float
     ) -> None:
         raise NotImplementedError
 
