@@ -2,6 +2,7 @@
 
 import hashlib
 import math
+import sqlite3
 from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
@@ -46,6 +47,9 @@ def _export(tmp_path: Path) -> Path:
         storage.upsert_evaluation("2026-09-21T21:45:00Z", 1.0, 1.5, 24.0)
         storage.upsert_evaluation("2026-09-21T22:00:00Z", 2.0, 1.0, 23.0)
         storage.upsert_evaluation("2026-09-21T22:15:00Z", 1.0, 1.0, 25.0)
+        # The snapshots at another lead time (#113), for two of the slots
+        storage.upsert_evaluation("2026-09-21T22:00:00Z", 1.5, 1.0, 11.0, 12.0)
+        storage.upsert_evaluation("2026-09-21T22:15:00Z", 0.5, 1.0, 13.0, 12.0)
         storage.save_meta_dict(
             {
                 "holdout_mae": 0.25,
@@ -252,3 +256,46 @@ def test_empty_database(tmp_path: Path) -> None:
     assert "No evaluation rows." in report
     assert "Holdout: none stored" in report
     assert "Per week" not in report
+
+
+def test_the_other_lead_times_are_reported_next_to_the_evaluation(
+    export: Path,
+) -> None:
+    data = load_live_data(export)
+
+    # The evaluation stays the day-ahead series
+    assert len(data.evaluation) == 3
+    assert [row.lead_hours for row in data.snapshots[12.0]] == pytest.approx(
+        [11.0, 13.0]
+    )
+    report = format_report(data, Units())
+    assert "| evaluation | 3 | 2 |" in report
+    assert "| 12 h snapshot | 2 | 1 | 0.500 | 0.500 | 0.000 |" in report
+    assert "Mean lead time: 24.0 h." in report
+    assert "Mean lead time of the 12 h snapshots: 12.0 h." in report
+    later = load_live_data(export, since=date(2026, 9, 23))
+    assert later.snapshots == {}
+
+
+def test_an_export_from_before_the_lead_times_reads_as_day_ahead(
+    export: Path,
+) -> None:
+    with sqlite3.connect(export) as conn:
+        conn.executescript(
+            """DROP TABLE evaluation;
+               CREATE TABLE evaluation (
+                   timestamp   TEXT    PRIMARY KEY,
+                   predicted   REAL    NOT NULL,
+                   actual      REAL    NOT NULL,
+                   lead_hours  REAL    NOT NULL
+               );
+               INSERT INTO evaluation VALUES ('2026-09-21T22:00:00Z', 2.0, 1.0, 23.0);
+            """
+        )
+    conn.close()
+
+    data = load_live_data(export)
+
+    assert [row.predicted for row in data.evaluation] == pytest.approx([2.0])
+    assert data.snapshots == {}
+    assert "snapshot" not in format_report(data, Units())

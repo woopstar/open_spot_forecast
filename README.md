@@ -69,6 +69,10 @@ and continuously improves accuracy via per-slot bias correction.
 - Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
 - Diagnostic forecast evaluation sensor: the day-ahead prediction next to
   the actual price for the last 48 hours, to chart predicted against actual
+  (and the predictions made 12 and 48 hours ahead)
+- Diagnostic day-ahead prediction sensor: what was predicted a day ago for
+  the current slot, recorded in Home Assistant's history, so a history graph
+  shows predicted against actual over weeks
 - Binary sensors for tomorrow's price availability and ML model training status
 - Optional Predbat rate entities (import/export, today/tomorrow) in the
   shape of the Stromligning entities Predbat reads, with the 7-day forecast:

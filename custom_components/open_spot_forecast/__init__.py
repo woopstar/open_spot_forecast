@@ -106,6 +106,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await ml_predictor._load_learning_data()
         await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)
         await hass.async_add_executor_job(ml_predictor.refresh_evaluation)
+        await hass.async_add_executor_job(ml_predictor.refresh_day_ahead_predictions)
 
     # The day-ahead prices are stored in the learning database, which exists
     # without the ML model too

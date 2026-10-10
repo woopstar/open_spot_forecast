@@ -8,7 +8,11 @@ MAE, RMSE and bias per bucket are then reported over a rolling window.
 
 The prediction made closest to ``EVALUATION_LEAD_HOURS`` before its slot is
 also kept next to the actual price (``evaluation`` table, #36), so the
-predicted and the actual series can be charted side by side.
+predicted and the actual series can be charted side by side. So are the
+snapshots at the other ``EVALUATION_LEAD_TIMES`` (#113), when a prediction
+was made close enough to them. Before a slot is scored, the same choice among
+its stored predictions is the slot's day-ahead prediction
+(``day_ahead_prediction()``), the state of the day-ahead prediction sensor.
 """
 
 import logging
@@ -21,12 +25,20 @@ from homeassistant.util import dt as dt_util
 
 from ..const import (
     BIAS_FALLBACK_BUCKET,
+    DAY_AHEAD_PREDICTION_HOURS,
     EVALUATION_KEEP_DAYS,
     EVALUATION_LEAD_HOURS,
+    EVALUATION_LEAD_TIMES,
     LEAD_TIME_BUCKETS,
     LEAD_TIME_WINDOW_DAYS,
 )
-from ..time_slots import SLOT_MINUTES, UTC_KEY_FORMAT, utc_slot_key
+from ..time_slots import (
+    SLOT_MINUTES,
+    UTC_KEY_FORMAT,
+    floor_to_slot,
+    parse_utc,
+    utc_slot_key,
+)
 from .base import PredictorBase
 
 _LOGGER = logging.getLogger(__name__)
@@ -141,6 +153,53 @@ def evaluation_prediction(
     return best
 
 
+def snapshot_tolerance(target_hours: float) -> float | None:
+    """Return how far from a lead time a prediction may be to be its snapshot.
+
+    Args:
+        target_hours: One of ``EVALUATION_LEAD_TIMES``.
+
+    Returns:
+        Half the gap to the nearest other lead time; None for
+        ``EVALUATION_LEAD_HOURS``, whose snapshot is always kept (#36).
+    """
+    if abs(target_hours - EVALUATION_LEAD_HOURS) < 1e-9:
+        return None
+    gaps = [
+        abs(other - target_hours)
+        for other in EVALUATION_LEAD_TIMES
+        if abs(other - target_hours) > 1e-9
+    ]
+    return min(gaps) / 2 if gaps else None
+
+
+def evaluation_snapshots(
+    predictions: list[dict[str, Any]],
+) -> dict[float, tuple[dict[str, Any], float]]:
+    """Return a slot's prediction per lead time in ``EVALUATION_LEAD_TIMES`` (#113).
+
+    A lead time without a prediction made within its ``snapshot_tolerance()``
+    is left out, so a 12 h snapshot is never a prediction made 31 h ahead.
+
+    Args:
+        predictions: Matched prediction rows for one slot (see
+            ``evaluation_prediction``).
+
+    Returns:
+        ``{target_hours: (prediction, lead_hours)}`` for the lead times that
+        have a snapshot.
+    """
+    snapshots: dict[float, tuple[dict[str, Any], float]] = {}
+    for target in EVALUATION_LEAD_TIMES:
+        chosen = evaluation_prediction(predictions, target)
+        if chosen is None:
+            continue
+        tolerance = snapshot_tolerance(target)
+        if tolerance is None or abs(chosen[1] - target) <= tolerance:
+            snapshots[target] = chosen
+    return snapshots
+
+
 def summarize_error_sums(
     sums: dict[str, tuple[int, float, float, float]],
 ) -> dict[str, dict[str, float | int]]:
@@ -197,7 +256,9 @@ class LeadTimeMixin(PredictorBase):
     ) -> None:
         """Keep the slot's day-ahead prediction next to its actual price (blocking).
 
-        A storage failure is logged and never interrupts the learning loop.
+        The snapshots at the other ``EVALUATION_LEAD_TIMES`` are kept too
+        (#113). A storage failure is logged and never interrupts the
+        learning loop.
 
         Args:
             slot_start: Start of the matched slot; naive is Home Assistant's
@@ -206,44 +267,104 @@ class LeadTimeMixin(PredictorBase):
             actual_price: Actual price of the slot.
         """
         start = dt_util.as_utc(slot_start)
-        chosen = evaluation_prediction(predictions)
+        snapshots = evaluation_snapshots(predictions)
         # Older slots (the startup catch-up) would be pruned right away
-        if chosen is None or start < dt_util.utcnow() - timedelta(
+        if not snapshots or start < dt_util.utcnow() - timedelta(
             days=EVALUATION_KEEP_DAYS
         ):
             return
-        prediction, lead = chosen
         try:
-            self.storage.upsert_evaluation(
-                utc_slot_key(start),
-                float(prediction["price"]),
-                actual_price,
-                round(lead, 2),
-            )
+            for target, (prediction, lead) in snapshots.items():
+                self.storage.upsert_evaluation(
+                    utc_slot_key(start),
+                    float(prediction["price"]),
+                    actual_price,
+                    round(lead, 2),
+                    target,
+                )
             self.refresh_evaluation()
         except sqlite3.Error as err:
             _LOGGER.error("Failed to record the evaluation: %s", err)
 
     def refresh_evaluation(self) -> None:
-        """Prune slots older than the kept days and reload the series (blocking)."""
+        """Prune slots older than the kept days and reload the series (blocking).
+
+        ``evaluation`` is the ``EVALUATION_LEAD_HOURS`` series;
+        ``evaluation_snapshots`` holds every lead time's (#113).
+        """
         cutoff = utc_slot_key(dt_util.utcnow() - timedelta(days=EVALUATION_KEEP_DAYS))
         self.storage.delete_evaluation_before(cutoff)
-        evaluation = []
-        for row in self.storage.get_evaluation(cutoff):
-            start = datetime.strptime(row["timestamp"], UTC_KEY_FORMAT).replace(
-                tzinfo=UTC
+        snapshots: dict[float, list[dict[str, Any]]] = {}
+        for target in EVALUATION_LEAD_TIMES:
+            series = snapshots[target] = []
+            for row in self.storage.get_evaluation(cutoff, target):
+                start = datetime.strptime(row["timestamp"], UTC_KEY_FORMAT).replace(
+                    tzinfo=UTC
+                )
+                end = start + timedelta(minutes=SLOT_MINUTES)
+                series.append(
+                    {
+                        "start": dt_util.as_local(start).isoformat(),
+                        "end": dt_util.as_local(end).isoformat(),
+                        "predicted": row["predicted"],
+                        "actual": row["actual"],
+                        "lead_hours": row["lead_hours"],
+                    }
+                )
+        self.evaluation_snapshots = snapshots
+        self.evaluation = snapshots[EVALUATION_LEAD_HOURS]
+
+    def refresh_day_ahead_predictions(self) -> None:
+        """Reload the day-ahead prediction of the current and coming slots (blocking).
+
+        For every slot of the next ``DAY_AHEAD_PREDICTION_HOURS`` that has
+        stored predictions, the one ``evaluation_prediction()`` would keep
+        once the slot is scored. Run after every forecast (the only writer of
+        predictions) and at startup. A storage failure is logged and keeps
+        the cached ones.
+        """
+        first = dt_util.utcnow()
+        try:
+            rows = self.storage.get_predictions_between(
+                utc_slot_key(first),
+                utc_slot_key(first + timedelta(hours=DAY_AHEAD_PREDICTION_HOURS)),
             )
-            end = start + timedelta(minutes=SLOT_MINUTES)
-            evaluation.append(
-                {
-                    "start": dt_util.as_local(start).isoformat(),
-                    "end": dt_util.as_local(end).isoformat(),
-                    "predicted": row["predicted"],
-                    "actual": row["actual"],
-                    "lead_hours": row["lead_hours"],
-                }
-            )
-        self.evaluation = evaluation
+        except sqlite3.Error as err:
+            _LOGGER.error("Failed to load the day-ahead predictions: %s", err)
+            return
+        by_slot: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            start = parse_utc(row["start"])
+            if start is not None:
+                by_slot.setdefault(utc_slot_key(start), []).append(row)
+        self.day_ahead_predictions = {
+            key: float(chosen[0]["price"])
+            for key, predictions in by_slot.items()
+            if (chosen := evaluation_prediction(predictions)) is not None
+        }
+
+    def day_ahead_prediction(self, slot_start: datetime) -> float | None:
+        """Return the prediction made about a day before a slot (raw spot price).
+
+        Args:
+            slot_start: Timezone-aware start of a current or recent slot.
+
+        Returns:
+            The slot's cached day-ahead prediction; once the slot is scored
+            (its stored predictions are gone), the one kept in the
+            evaluation; None if the slot was never predicted.
+        """
+        start = floor_to_slot(dt_util.as_utc(slot_start))
+        if (price := self.day_ahead_predictions.get(utc_slot_key(start))) is not None:
+            return price
+        # The newest slots are last
+        for row in reversed(self.evaluation):
+            row_start = parse_utc(row["start"])
+            if row_start is None or row_start < start:
+                break
+            if row_start == start:
+                return float(row["predicted"])
+        return None
 
     def refresh_lead_time_accuracy(self) -> None:
         """Prune rows outside the rolling window and reload the summary (blocking)."""

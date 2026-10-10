@@ -121,6 +121,9 @@
       "forecast_evaluation": {
         "name": "Forecast evaluation"
       },
+      "day_ahead_prediction": {
+        "name": "Day-ahead prediction"
+      },
       "predbat_import_today": {
         "name": "Predbat import today"
       },
@@ -177,6 +180,10 @@
         "evaluation": {
           "name": "Evaluation",
           "description": "Also return, for the last 7 days of slots, the prediction made about a day ahead next to the actual price (evaluation: start, end, predicted, actual, lead_hours)."
+        },
+        "target_hours": {
+          "name": "Evaluation lead time",
+          "description": "Which prediction the evaluation returns: the one made closest to 24 hours ahead (default), or the one kept at 12 or 48 hours ahead (only for slots that had a prediction within 6 or 12 hours of it)."
         },
         "raw": {
           "name": "Raw spot price",

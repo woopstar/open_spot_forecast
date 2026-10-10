@@ -373,6 +373,14 @@ BIAS_FALLBACK_BUCKET = LEAD_TIME_BUCKETS[0][0]
 EVALUATION_LEAD_HOURS = 24.0
 EVALUATION_WINDOW_HOURS = 48
 EVALUATION_KEEP_DAYS = 7
+# The lead times a snapshot of the prediction is kept for (#113). The one at
+# EVALUATION_LEAD_HOURS is always kept (the prediction closest to it, however
+# far off); another one only if a prediction was made within half the gap to
+# its nearest neighbour (12 h: 6-18 h ahead, 48 h: 36-60 h ahead)
+EVALUATION_LEAD_TIMES: tuple[float, ...] = (12.0, EVALUATION_LEAD_HOURS, 48.0)
+# How far ahead the day-ahead prediction of each coming slot is cached for the
+# day-ahead prediction sensor (#113); every forecast run reloads it
+DAY_AHEAD_PREDICTION_HOURS = 48
 
 # Open-Meteo weather (#22): no key, 15-minute data, 16 days ahead. Each region
 # is sampled at a few fixed points across its bidding zone (wind and demand

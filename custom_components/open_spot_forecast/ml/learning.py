@@ -562,6 +562,8 @@ class LearningMixin(PredictorBase):
         self.bias_correction = {}
         self.lead_time_accuracy = {}
         self.evaluation = []
+        self.evaluation_snapshots = {}
+        self.day_ahead_predictions = {}
 
         # Clear storage file
         cleared = await self.storage.async_clear_storage()

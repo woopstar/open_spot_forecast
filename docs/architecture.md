@@ -230,7 +230,8 @@ the whole forecast), `hourly` (default: the entry's `hourly_average`) and
 from `start`, then the predictions, see above). With `evaluation: true` the
 response also has `evaluation`: every kept slot's day-ahead prediction next to
 its actual price (`start`, `end`, `predicted`, `actual`, `lead_hours`; see
-[self-learning](self_learning.md#predicted-vs-actual-36)).
+[self-learning](self_learning.md#predicted-vs-actual-36)); `target_hours: 12`
+or `48` returns the predictions kept at that lead time instead (#113).
 Prices go through the entry's `PriceOutput`, so the action and the forecast
 sensor always agree; the action has no 16 KB attribute limit. With `raw: true`
 (#142) the output is `PriceOutput.raw_spot()` and no tariffs are added, so the

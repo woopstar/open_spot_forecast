@@ -7,7 +7,8 @@ in the learning database of a running instance, which this script reads:
 - ``lead_time_accuracy``: daily error sums per lead-time bucket (day 1/2/3/4+),
   kept for ``LEAD_TIME_WINDOW_DAYS``;
 - ``evaluation``: per slot, the prediction closest to a day ahead next to the
-  actual price, kept for ``EVALUATION_KEEP_DAYS``;
+  actual price, kept for ``EVALUATION_KEEP_DAYS``, and the snapshots at the
+  other ``EVALUATION_LEAD_TIMES`` (#113);
 - ``meta``: the latest training's holdout MAE/RMSE (and the ``hpo_*`` keys of
   exports from before #92).
 
@@ -28,7 +29,7 @@ import sqlite3
 import statistics
 from collections.abc import Sequence
 from contextlib import closing
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta, tzinfo
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -36,6 +37,7 @@ from zoneinfo import ZoneInfo
 from custom_components.open_spot_forecast.api.exchange_rates import PEGGED_EUR_RATES
 from custom_components.open_spot_forecast.const import (
     EVALUATION_KEEP_DAYS,
+    EVALUATION_LEAD_HOURS,
     LEAD_TIME_BUCKETS,
     LEAD_TIME_WINDOW_DAYS,
     REGIONS,
@@ -89,8 +91,11 @@ class LiveData:
     path: Path
     # (local slot date, bucket) -> error sums
     lead_time: dict[tuple[date, str], ErrorSums]
+    # The EVALUATION_LEAD_HOURS series
     evaluation: list[EvaluationRow]
     meta: dict[str, str]
+    # The other lead times' snapshots (#113), by target hours
+    snapshots: dict[float, list[EvaluationRow]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -155,22 +160,31 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                     float(sums[3]),
                 )
         evaluation: list[EvaluationRow] = []
+        snapshots: dict[float, list[EvaluationRow]] = {}
         if "evaluation" in tables:
-            evaluation = [
-                EvaluationRow(str(row[0]), float(row[1]), float(row[2]), float(row[3]))
-                for row in conn.execute(
-                    "SELECT timestamp, predicted, actual, lead_hours FROM evaluation"
-                    " ORDER BY julianday(timestamp)"
+            # An export from before #113 has one row per slot, the 24 h one
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(evaluation)")}
+            target = "target_hours" if "target_hours" in columns else "NULL"
+            for row in conn.execute(
+                f"SELECT timestamp, predicted, actual, lead_hours, {target}"
+                " FROM evaluation ORDER BY julianday(timestamp)"
+            ):
+                if since is not None and _local_date(str(row[0]), tz) < since:
+                    continue
+                kept = EvaluationRow(
+                    str(row[0]), float(row[1]), float(row[2]), float(row[3])
                 )
-                if since is None or _local_date(str(row[0]), tz) >= since
-            ]
+                if row[4] is None or abs(row[4] - EVALUATION_LEAD_HOURS) < 1e-6:
+                    evaluation.append(kept)
+                else:
+                    snapshots.setdefault(round(float(row[4]), 2), []).append(kept)
         meta: dict[str, str] = {}
         if "meta" in tables:
             meta = {
                 str(key): str(value)
                 for key, value in conn.execute("SELECT key, value FROM meta")
             }
-    return LiveData(path, lead_time, evaluation, meta)
+    return LiveData(path, lead_time, evaluation, meta, snapshots)
 
 
 def _local_date(utc_key: str, tz: tzinfo) -> date:
@@ -379,11 +393,25 @@ def _accuracy_lines(data: LiveData, units: Units, tz: tzinfo) -> list[str]:
         lines.append("No evaluation rows.")
     else:
         mean_lead = statistics.fmean(row.lead_hours for row in data.evaluation)
+        # The snapshots at the other lead times (#113), where slots have one
+        snapshots = [
+            (f"{target:g} h snapshot", rows, stats)
+            for target, rows in sorted(data.snapshots.items())
+            if (stats := evaluation_stats(rows, tz)) is not None
+        ]
         lines += _table(
             ["Table", *_STATS_HEADER],
-            [_stats_row("evaluation", evaluation, units)],
+            [
+                _stats_row("evaluation", evaluation, units),
+                *(_stats_row(label, stats, units) for label, _, stats in snapshots),
+            ],
         )
         lines += ["", f"Mean lead time: {mean_lead:.1f} h."]
+        lines += [
+            f"Mean lead time of the {label}s: "
+            f"{statistics.fmean(row.lead_hours for row in rows):.1f} h."
+            for label, rows, _ in snapshots
+        ]
     return lines
 
 

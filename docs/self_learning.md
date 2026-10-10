@@ -155,6 +155,19 @@ skipped) is stored next to the actual price in the `evaluation` table, by the
 live loop and by the startup catch-up alike. Slots older than 7 days are not
 kept. The predictor caches the series (`evaluation`), reloaded at startup.
 
+Predictions for a slot stop once Nordpool publishes its price (around 13:00
+the day before), so the "24 h" prediction's real lead time (`lead_hours`,
+stored with every row) runs from about 11 h for the first slots of a day to
+about 35 h for the last. To compare lead times honestly, a snapshot is also
+kept at the other `EVALUATION_LEAD_TIMES` (12 h and 48 h ahead, #113):
+`evaluation_snapshots()` picks, per lead time, the prediction made closest to
+it, and skips a lead time when that prediction is further away than half the
+gap to the neighbouring lead time (`snapshot_tolerance()`: a 12 h snapshot
+was made 6-18 h ahead, a 48 h one 36-60 h ahead), so a 12 h snapshot is never
+a prediction made 31 h ahead. The 24 h one is always kept, as before. A 12 h
+snapshot therefore exists for the first hours of a day only. The predictor
+caches every lead time's series in `evaluation_snapshots`.
+
 It is exposed by the diagnostic `Forecast evaluation` sensor
 (`evaluation_sensor.py`): its state is the mean absolute error over the last
 48 hours, and its attributes hold the series as compact arrays, `s` (slot
@@ -162,8 +175,11 @@ start, unix seconds), `t` (predicted) and `a` (actual), plus `samples`, `bias`
 (mean signed error; positive = too high), `lead_hours` and `window_hours`,
 about 5 KB. Prices are converted like every exposed price (unit, surcharge,
 VAT), with the slot's tariff (#107) added to both the predicted and the
-actual price, so the error stays the spot price's. The `get_forecast` action returns all kept slots with
-`evaluation: true`. An ApexCharts card over the sensor:
+actual price, so the error stays the spot price's. The other lead times'
+predictions are further arrays aligned with `s`: `t12` and `t48`, `null`
+where a slot has no such snapshot (about 7 KB in all). The `get_forecast`
+action returns all kept slots with `evaluation: true`, and another lead
+time's with `target_hours: 12` or `48`. An ApexCharts card over the sensor:
 
 ```yaml
 type: custom:apexcharts-card
@@ -179,6 +195,39 @@ series:
     data_generator: |
       const e = entity.attributes;
       return e.s.map((s, i) => [s * 1000, e.a[i]]);
+```
+
+### Day-ahead prediction in the recorder (#113)
+
+The evaluation series lives in attributes, which Home Assistant's history and
+long-term statistics never see, and covers 48 hours. The diagnostic
+`Day-ahead prediction` sensor (`day_ahead_sensor.py`, `state_class:
+measurement`) closes that gap: its state is the prediction made closest to
+24 hours before **the slot that is current now**, converted like every exposed
+price (the slot's tariff, unit, surcharge, VAT; the hour's mean with
+`hourly_average`). The recorder therefore keeps the day-ahead forecast as a
+plain series, for as long as it keeps history, and a history or statistics
+graph over it and the actual price shows predicted against actual with no
+attribute or 7-day limit.
+
+The value is the one the evaluation keeps once the slot is scored:
+`refresh_day_ahead_predictions()` (`ml/lead_time.py`) caches, after every
+forecast run and at startup, `evaluation_prediction()` of the stored
+predictions of each slot in the next `DAY_AHEAD_PREDICTION_HOURS` (48), and
+`day_ahead_prediction()` falls back to the `evaluation` row of a slot that was
+already scored (a restart in the middle of a slot). The state is written on
+every slot boundary (minute 0/15/30/45) and after every forecast and learning
+update; it is unknown for a slot that was never predicted, e.g. during the
+first day after setup.
+
+```yaml
+type: history-graph
+hours_to_show: 168
+entities:
+  - entity: sensor.open_spot_forecast_dk1_day_ahead_prediction
+    name: Predicted a day ahead
+  - entity: sensor.stromligning_current_price_vat
+    name: Actual
 ```
 
 ## Metrics Available
@@ -219,7 +268,7 @@ the live errors of stored predictions against actual prices.
 
 The `open_spot_forecast.reset_learning` action (`services.py`, #132) calls
 `reset_learning()`, which clears the in-memory error metrics, bias offsets,
-lead-time accuracy and evaluation and drops every table of the learning
+lead-time accuracy, evaluation and day-ahead predictions and drops every table of the learning
 database — including the stored predictions and the price history the model
 trains on — before recreating the schema. The learning and accuracy entities
 are refreshed at once; the model retrains on the data collected afterwards.

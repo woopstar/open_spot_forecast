@@ -417,6 +417,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
             )
             self.api_data["ml_predictions"] = ml_predictor.predictions
             _LOGGER.info("Generated %d ML predictions", len(ml_predictor.predictions))
+            # The stored predictions changed: so may a slot's day-ahead one (#113)
+            await self.hass.async_add_executor_job(
+                ml_predictor.refresh_day_ahead_predictions
+            )
 
             # Save learning data after prediction (includes stored predictions)
             await ml_predictor.save_learning_data()

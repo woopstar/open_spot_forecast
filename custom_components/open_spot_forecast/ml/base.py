@@ -62,6 +62,10 @@ class PredictorBase:
     cross_border: CrossBorderModels | None
     lead_time_accuracy: dict[str, dict[str, float | int]]
     evaluation: list[dict[str, Any]]
+    # The evaluation series per lead time in EVALUATION_LEAD_TIMES (#113)
+    evaluation_snapshots: dict[float, list[dict[str, Any]]]
+    # The day-ahead prediction of the current and coming slots, by UTC slot key
+    day_ahead_predictions: dict[str, float]
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
