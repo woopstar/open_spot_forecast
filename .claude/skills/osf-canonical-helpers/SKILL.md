@@ -182,5 +182,5 @@ If a utility function is used in 2+ modules, it belongs in a shared module
 
 ### File Size Limit
 
-Hard limit: **30 KB AND 1000 lines** per file across the codebase. Check:
-`wc -c custom_components/open_spot_forecast/**/*.py` and `wc -l custom_components/open_spot_forecast/**/*.py`.
+Hard limit: **30 KiB AND 1000 lines** per integration file, twice that in `scripts/` and
+`tests/` (`CODE_QUALITY_STANDARDS.md` → File Size Limits). Check: `./scripts/quality.sh file-size`.

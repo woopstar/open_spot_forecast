@@ -56,11 +56,11 @@ test coverage for:
 
 ## Step 5: Check File Size
 
-Hard limit: 30 KB AND 1000 lines per file. Check before PR:
+Hard limit: 30 KiB AND 1000 lines per integration file (`CODE_QUALITY_STANDARDS.md` → File
+Size Limits). Check before PR:
 
 ```bash
-wc -c custom_components/open_spot_forecast/ml/*.py
-wc -l custom_components/open_spot_forecast/ml/*.py
+./scripts/quality.sh file-size
 ```
 
 ## Definition of Done for ML Work
