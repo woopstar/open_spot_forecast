@@ -113,7 +113,10 @@ class PredictorBase:
         raise NotImplementedError
 
     def record_external_accuracy(
-        self, slot_start: datetime, actual_price: float
+        self,
+        slot_start: datetime,
+        predictions: list[dict[str, Any]],
+        actual_price: float,
     ) -> None:
         raise NotImplementedError
 

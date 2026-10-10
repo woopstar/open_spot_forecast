@@ -11,6 +11,9 @@ in the learning database of a running instance, which this script reads:
   other ``EVALUATION_LEAD_TIMES`` (#113);
 - ``external_accuracy``: the same daily error sums for every recorded external
   forecast (Stromligning, Energi Data Service; #120), per source and bucket;
+- ``external_slot_errors``: per scored slot, the mean error of the model and of
+  every external forecast, from which ``scripts/live_blend.py`` scores what a
+  blend of them would have (#157);
 - ``meta``: the latest training's holdout MAE/RMSE (and the ``hpo_*`` keys of
   exports from before #92).
 
@@ -40,6 +43,7 @@ from custom_components.open_spot_forecast.api.exchange_rates import PEGGED_EUR_R
 from custom_components.open_spot_forecast.const import (
     EVALUATION_KEEP_DAYS,
     EVALUATION_LEAD_HOURS,
+    EXTERNAL_MODEL_SOURCE,
     LEAD_TIME_BUCKETS,
     LEAD_TIME_WINDOW_DAYS,
     REGIONS,
@@ -47,6 +51,8 @@ from custom_components.open_spot_forecast.const import (
 from custom_components.open_spot_forecast.ml.lead_time import summarize_error_sums
 from custom_components.open_spot_forecast.ml.models import OBSOLETE_HPO_META_KEYS
 from custom_components.open_spot_forecast.time_slots import UTC_KEY_FORMAT
+
+from .live_blend import MIN_BLEND_SLOTS, SlotErrors, blend_stats
 
 # (samples, sum_error, sum_abs_error, sum_sq_error), as in lead_time_accuracy
 ErrorSums = tuple[int, float, float, float]
@@ -102,6 +108,8 @@ class LiveData:
     snapshots: dict[float, list[EvaluationRow]] = field(default_factory=dict)
     # The recorded external forecasts (#120): source -> (date, bucket) -> sums
     external: dict[str, dict[tuple[date, str], ErrorSums]] = field(default_factory=dict)
+    # The per-slot errors of the model and the sources (#157)
+    slot_errors: SlotErrors = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -199,13 +207,23 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                     float(sums[2]),
                     float(sums[3]),
                 )
+        slot_errors: SlotErrors = {}
+        if "external_slot_errors" in tables:
+            for start, bucket, source, error in conn.execute(
+                "SELECT start, bucket, source, error FROM external_slot_errors"
+            ):
+                if since is not None and _local_date(str(start), tz) < since:
+                    continue
+                slot_errors.setdefault((str(start), str(bucket)), {})[str(source)] = (
+                    float(error)
+                )
         meta: dict[str, str] = {}
         if "meta" in tables:
             meta = {
                 str(key): str(value)
                 for key, value in conn.execute("SELECT key, value FROM meta")
             }
-    return LiveData(path, lead_time, evaluation, meta, snapshots, external)
+    return LiveData(path, lead_time, evaluation, meta, snapshots, external, slot_errors)
 
 
 def _local_date(utc_key: str, tz: tzinfo) -> date:
@@ -489,6 +507,62 @@ def _source_lines(data: LiveData, units: Units) -> list[str]:
     ]
 
 
+def _blend_lines(data: LiveData, units: Units, tz: tzinfo) -> list[str]:
+    """Render what a blend of the model with the sources would have scored (#157)."""
+    blends = blend_stats(data.slot_errors, lambda start: _local_date(start, tz))
+    if not blends:
+        return []
+    buckets = _in_lead_time_order(set(blends))
+    rows = [
+        [
+            bucket,
+            MODEL_SOURCE if label == EXTERNAL_MODEL_SOURCE else label,
+            str(stats.slots),
+            str(stats.days),
+            units.fmt(stats.mae),
+            units.fmt(stats.rmse),
+            units.fmt(stats.bias),
+        ]
+        for bucket in buckets
+        for label, stats in blends[bucket].rows.items()
+    ]
+    lines = [
+        "## Blend with the external forecasts",
+        "",
+        *_table(["Bucket", "Forecast", "Slots", "Days", "MAE", "RMSE", "Bias"], rows),
+        "",
+        "Per bucket, over the slots the model and every source have. An error is "
+        "a slot's mean over the forecasts of the bucket, so these numbers are a "
+        "little lower than the tables above, which count every forecast. The "
+        "equal-weight blend is the mean of the model and the sources. The "
+        "inverse-MSE blend weights each by 1 / its mean squared error over the "
+        f"earlier days, and is the model alone until {MIN_BLEND_SLOTS} earlier "
+        "slots exist.",
+        "",
+    ]
+    for bucket in buckets:
+        blend = blends[bucket]
+        if blend.weights is None:
+            lines.append(f"- `{bucket}`: too few slots for inverse-MSE weights.")
+            continue
+        weights = ", ".join(
+            f"{MODEL_SOURCE if member == EXTERNAL_MODEL_SOURCE else member} "
+            f"{weight:.2f}"
+            for member, weight in blend.weights.items()
+        )
+        lines.append(
+            f"- `{bucket}`: inverse-MSE weights over every slot: {weights}; "
+            f"{blend.weighted_slots} slot(s) were scored with weights."
+        )
+    days = max(stats.days for blend in blends.values() for stats in blend.rows.values())
+    if days < MIN_REPORT_DAYS:
+        lines.append(
+            f"- **Only {days} day(s)**: decide on a blend from "
+            f"{MIN_REPORT_DAYS}+ days of paired slots."
+        )
+    return [*lines, ""]
+
+
 def _training_lines(
     data: LiveData, units: Units, times: list[float] | None
 ) -> list[str]:
@@ -551,6 +625,7 @@ def format_report(
         *_accuracy_lines(data, units, tz),
         "",
         *_source_lines(data, units),
+        *_blend_lines(data, units, tz),
         *_training_lines(data, units, times),
     ]
     return "\n".join(lines) + "\n"

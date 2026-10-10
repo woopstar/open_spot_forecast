@@ -1096,6 +1096,20 @@ learning-database export:
   bucket for every recorded source next to the model's row
   (`open_spot_forecast`), scored for the same slots; see
   [Self-Learning](self_learning.md#external-forecasts-120) for the unit.
+- **Blend with the external forecasts** (`external_slot_errors`, the last 30
+  days, #157; `scripts/live_blend.py`): per bucket and over the slots the
+  model and every source of the bucket have, slots, days, MAE, RMSE and bias
+  of the model, each source, and two blends of them. `blend: equal weights`
+  is their mean. `blend: inverse MSE` weights each by 1 / its mean squared
+  error; a day's weights come from the earlier days only, and the blend is
+  the model alone until 288 earlier slots (three days) exist, as a shipped
+  blend would have to work (weights fitted on the slots they are scored on
+  would flatter it). The weights over every slot are listed below the table.
+  An error is the slot's mean over the forecasts of the bucket, so a blend's
+  error is the weighted sum of its members', and the numbers are a little
+  lower than the per-forecast ones above. **No result is recorded yet, and
+  no blend is shipped**: instances keep these errors from the release with
+  #157 on, so the first export with 14 days of them decides.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
   count, and the `hpo_*` keys of an export from before #92.
 - **Coverage**: the dates the data spans, with a warning below 14 days.

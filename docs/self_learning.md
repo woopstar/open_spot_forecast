@@ -264,6 +264,13 @@ live. With **External forecast sensors** set in the config or options flow
    time with the same `bucket_errors()` and added to the daily sums per source
    and bucket in `external_accuracy`; the rows are then deleted. A source is
    scored for the slots the model is scored for.
+5. **Keep both errors of the slot** (#157): the daily sums cannot say what a
+   blend of the model with a source would have scored, since that needs both
+   errors of the same slot. So the slot's mean signed error per bucket is
+   kept in `external_slot_errors` for every source, and for the model
+   (source `model`) in the buckets a source has, over the same rolling 30
+   days. The model's matched predictions are only read for this; nothing
+   reads the table back in the integration.
 
 The model never reads any of this: its error metrics, bias correction,
 lead-time accuracy and predictions are the same with and without external
@@ -282,9 +289,18 @@ shows prices: with the default VAT of 25 % that is Stromligning's
 Stromligning's forecast option), and an Energi Data Service sensor whose cost
 template and VAT give the same total. A source in other terms (no VAT, no
 tariffs, øre instead of kr) is still recorded, but its `bias` shows the
-constant difference and its MAE includes it. Blending the sources with the
-model is a follow-up once two weeks of errors exist; see #115 for the
-dev-only benchmark and the licence limits of other forecasts.
+constant difference and its MAE includes it.
+
+**Blending is evaluated, not done** (#157). The forecast is the model's alone:
+no option blends it with a source. Whether a blend would be better is measured
+first, offline, by `scripts/live_report.py` from an export with 14 or more
+days of `external_slot_errors` (see
+[Live accuracy](ml_documentation.md#live-accuracy-94)): the model, each
+source, their equal-weight mean and their inverse-MSE weighted mean over the
+same slots. A blend is only built if it wins there, and only with sources
+whose terms allow their forecast to be an input (see #115 for the dev-only
+benchmark and the licence limits of other forecasts; Smartere Elforbrug's
+forbid it).
 
 ## Metrics Available
 

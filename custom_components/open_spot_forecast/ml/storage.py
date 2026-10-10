@@ -83,6 +83,9 @@ class LearningStorage(
       external_forecasts, external_accuracy — other integrations' forecasts
                         awaiting scoring, and their daily error sums per
                         source and lead time (#120; external_storage.py)
+      external_slot_errors — per scored slot and lead time, the mean error of
+                        the model and of every external forecast (#157;
+                        external_storage.py)
     """
 
     def __init__(self, hass: HomeAssistant, region: str):
@@ -479,6 +482,7 @@ class LearningStorage(
                     DROP TABLE IF EXISTS evaluation;
                     DROP TABLE IF EXISTS external_forecasts;
                     DROP TABLE IF EXISTS external_accuracy;
+                    DROP TABLE IF EXISTS external_slot_errors;
                     DROP TABLE IF EXISTS meta;
                     """
                 )

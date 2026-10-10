@@ -8,6 +8,11 @@ model predicts, and when self-learning scores a slot it scores the sources'
 stored forecasts for it with the same lead-time buckets. The model's own
 metrics, bias correction and predictions never read any of it.
 
+A blend of the model with a source can only be scored from both errors of the
+same slot, which the daily sums do not hold. So a scored slot's mean error per
+bucket is kept for the model and for every source, for the same rolling
+window (#157); ``scripts/live_report.py`` evaluates the blends from an export.
+
 The rows are raw spot prices in currency/kWh, the unit of the model's
 errors: the component layer converts the displayed prices before storing
 them (``external_forecasts.py`` next to the updater).
@@ -21,12 +26,32 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import LEAD_TIME_WINDOW_DAYS
+from ..const import EXTERNAL_MODEL_SOURCE, LEAD_TIME_WINDOW_DAYS
 from ..time_slots import utc_slot_key
 from .base import PredictorBase
 from .lead_time import bucket_errors, summarize_error_sums
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _mean_errors(
+    source: str, errors_by_bucket: Mapping[str, Sequence[float]]
+) -> list[tuple[str, str, int, float]]:
+    """Return a source's ``external_slot_errors`` rows for one slot.
+
+    Args:
+        source: The source's name.
+        errors_by_bucket: Signed errors (forecast - actual) per bucket key.
+
+    Returns:
+        ``(bucket, source, number of forecasts, mean signed error)`` for every
+        bucket with a forecast.
+    """
+    return [
+        (bucket, source, len(errors), sum(errors) / len(errors))
+        for bucket, errors in errors_by_bucket.items()
+        if errors
+    ]
 
 
 class ExternalForecastMixin(PredictorBase):
@@ -57,17 +82,24 @@ class ExternalForecastMixin(PredictorBase):
             _LOGGER.error("Failed to store the external forecasts: %s", err)
 
     def record_external_accuracy(
-        self, slot_start: datetime, actual_price: float
+        self,
+        slot_start: datetime,
+        predictions: list[dict[str, Any]],
+        actual_price: float,
     ) -> None:
         """Score the stored external forecasts of a slot and remove them (blocking).
 
         Each forecast's signed error goes into its source's lead-time bucket
-        (``bucket_errors``, as the model's own). A storage failure is logged
-        and never interrupts the learning loop.
+        (``bucket_errors``, as the model's own). The slot's mean error per
+        bucket is also kept for every source, and for the model in the
+        buckets a source has (#157). A storage failure is logged and never
+        interrupts the learning loop.
 
         Args:
             slot_start: Start of the scored slot; naive is Home Assistant's
                 local time.
+            predictions: The model's own matched predictions for the slot,
+                only read to keep their errors next to the sources'.
             actual_price: Actual raw spot price of the slot.
         """
         key = utc_slot_key(dt_util.as_utc(slot_start))
@@ -79,10 +111,18 @@ class ExternalForecastMixin(PredictorBase):
                 return
             # The slot's local date, as lead_time_accuracy keys its rows
             slot_date = dt_util.as_local(slot_start).date().isoformat()
+            slot_errors: list[tuple[str, str, int, float]] = []
             for source, forecasts in by_source.items():
-                self.storage.add_external_errors(
-                    slot_date, source, bucket_errors(forecasts, actual_price)
-                )
+                errors = bucket_errors(forecasts, actual_price)
+                self.storage.add_external_errors(slot_date, source, errors)
+                slot_errors += _mean_errors(source, errors)
+            paired = {bucket for bucket, *_ in slot_errors}
+            own = bucket_errors(predictions, actual_price)
+            slot_errors += _mean_errors(
+                EXTERNAL_MODEL_SOURCE,
+                {bucket: errors for bucket, errors in own.items() if bucket in paired},
+            )
+            self.storage.upsert_external_slot_errors(key, slot_errors)
             self.storage.delete_external_forecasts(key)
             self.refresh_external_accuracy()
         except sqlite3.Error as err:
@@ -93,6 +133,9 @@ class ExternalForecastMixin(PredictorBase):
         today = dt_util.now().date()
         cutoff = (today - timedelta(days=LEAD_TIME_WINDOW_DAYS - 1)).isoformat()
         self.storage.delete_external_accuracy_before(cutoff)
+        self.storage.delete_external_slot_errors_before(
+            utc_slot_key(dt_util.utcnow() - timedelta(days=LEAD_TIME_WINDOW_DAYS))
+        )
         self.external_accuracy = {
             source: summarize_error_sums(sums)
             for source, sums in self.storage.get_external_error_sums(cutoff).items()

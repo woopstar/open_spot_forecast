@@ -29,6 +29,7 @@ from custom_components.open_spot_forecast.config_flow import (
 from custom_components.open_spot_forecast.const import (
     CONF_EXTERNAL_FORECAST_SENSORS,
     CONF_REGION,
+    EXTERNAL_MODEL_SOURCE,
     LEAD_TIME_WINDOW_DAYS,
 )
 from custom_components.open_spot_forecast.external_forecasts import (
@@ -361,6 +362,7 @@ def test_an_existing_database_gains_the_tables(tmp_path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.executescript(
             "DROP TABLE external_forecasts; DROP TABLE external_accuracy;"
+            "DROP TABLE external_slot_errors;"
         )
     conn.close()
 
@@ -368,6 +370,52 @@ def test_an_existing_database_gains_the_tables(tmp_path: Path) -> None:
     try:
         assert storage.count_external_forecasts() == 0
         assert storage.get_external_error_sums("2000-01-01") == {}
+        assert storage.get_external_slot_errors("") == []
+    finally:
+        storage.close()
+
+
+def test_slot_errors_are_kept_per_slot_bucket_and_source(tmp_path: Path) -> None:
+    storage = LearningStorage(_hass(tmp_path), "DK1")
+    first, second = "2026-09-24T10:00:00Z", "2026-09-24T10:15:00Z"
+    try:
+        storage.upsert_external_slot_errors(
+            first, [("day_1", EDS, 2, 0.25), ("day_1", EXTERNAL_MODEL_SOURCE, 3, -0.5)]
+        )
+        storage.upsert_external_slot_errors(second, [("day_2", EDS, 1, 1.0)])
+        storage.upsert_external_slot_errors(second, [])
+        # A slot scored again replaces its rows
+        storage.upsert_external_slot_errors(first, [("day_1", EDS, 1, 0.75)])
+
+        assert storage.get_external_slot_errors("") == [
+            {
+                "start": first,
+                "bucket": "day_1",
+                "source": EXTERNAL_MODEL_SOURCE,
+                "samples": 3,
+                "error": pytest.approx(-0.5),
+            },
+            {
+                "start": first,
+                "bucket": "day_1",
+                "source": EDS,
+                "samples": 1,
+                "error": pytest.approx(0.75),
+            },
+            {
+                "start": second,
+                "bucket": "day_2",
+                "source": EDS,
+                "samples": 1,
+                "error": pytest.approx(1.0),
+            },
+        ]
+        assert [r["start"] for r in storage.get_external_slot_errors(second)] == [
+            second
+        ]
+        assert storage.delete_external_slot_errors_before(second) == 2
+        storage.clear_all()
+        assert storage.get_external_slot_errors("") == []
     finally:
         storage.close()
 
@@ -468,6 +516,55 @@ def test_scoring_a_slot_scores_its_external_forecasts_per_lead_time(
     assert sums[EDS]["day_1"][0] == 1
 
 
+def test_scoring_a_slot_keeps_its_mean_errors_for_the_model_and_the_sources(
+    predictor: SpotPricePredictor,
+) -> None:
+    """What a blend of the two would have scored needs both errors of a slot (#157)."""
+    slot = _slot()
+    # The model: 2.0 twice a day ahead and once two days ahead, actual 2.5
+    _own(predictor, slot, 20)
+    _own(predictor, slot, 22)
+    _own(predictor, slot, 30)
+    _external(predictor, EDS, slot, 20, 2.75)
+    _external(predictor, EDS, slot, 22, 3.25)
+    _external(predictor, STROMLIGNING, slot, 20, 2.25)
+    _external(predictor, STROMLIGNING, slot, 100, 2.0)
+
+    assert predictor.learn_from_actual_price(slot.isoformat(), 2.5) is True
+
+    rows = {
+        (row["bucket"], row["source"]): (row["samples"], row["error"])
+        for row in predictor.storage.get_external_slot_errors("")
+    }
+    assert {row["start"] for row in predictor.storage.get_external_slot_errors("")} == {
+        utc_slot_key(slot)
+    }
+    # The mean of a source's forecasts in the bucket; the model's own only in
+    # the buckets a source has (day 2 has none, day 4+ has no prediction)
+    assert rows == {
+        ("day_1", EDS): (2, pytest.approx(0.5)),
+        ("day_1", STROMLIGNING): (1, pytest.approx(-0.25)),
+        ("day_1", EXTERNAL_MODEL_SOURCE): (2, pytest.approx(-0.5)),
+        ("day_4_plus", STROMLIGNING): (1, pytest.approx(-0.5)),
+    }
+
+
+def test_slot_errors_outside_the_rolling_window_are_pruned(
+    predictor: SpotPricePredictor,
+) -> None:
+    now = dt_util.utcnow()
+    old = utc_slot_key(now - timedelta(days=LEAD_TIME_WINDOW_DAYS, minutes=15))
+    kept = utc_slot_key(now - timedelta(days=LEAD_TIME_WINDOW_DAYS - 1))
+    for start in (old, kept):
+        predictor.storage.upsert_external_slot_errors(start, [("day_1", EDS, 1, 0.5)])
+
+    predictor.refresh_external_accuracy()
+
+    assert [row["start"] for row in predictor.storage.get_external_slot_errors("")] == [
+        kept
+    ]
+
+
 def test_the_models_own_learning_is_unchanged_by_external_forecasts(
     tmp_path: Path,
 ) -> None:
@@ -509,6 +606,7 @@ def test_without_external_forecasts_nothing_is_recorded(
 
     assert predictor.external_accuracy == {}
     assert predictor.storage.get_external_error_sums("2000-01-01") == {}
+    assert predictor.storage.get_external_slot_errors("") == []
 
 
 def test_a_slot_the_model_did_not_predict_is_not_scored(
@@ -554,7 +652,7 @@ def test_a_naive_slot_start_is_local_time(predictor: SpotPricePredictor) -> None
     slot = _slot()
     _external(predictor, EDS, slot, 20, 3.0)
 
-    predictor.record_external_accuracy(slot.replace(tzinfo=None), 2.5)
+    predictor.record_external_accuracy(slot.replace(tzinfo=None), [], 2.5)
 
     assert predictor.external_accuracy[EDS]["day_1"]["samples"] == 1
 
@@ -605,7 +703,7 @@ def test_storage_errors_never_stop_the_forecast_or_the_learning(
     ):
         predictor.store_external_forecasts({EDS: [("2026-09-24T12:00:00Z", 1.0)]})
     with patch.object(predictor.storage, "find_external_forecasts", side_effect=locked):
-        predictor.record_external_accuracy(_slot(), 1.0)
+        predictor.record_external_accuracy(_slot(), [], 1.0)
 
     assert "Failed to store the external forecasts: locked" in caplog.text
     assert "Failed to record the external forecast accuracy: locked" in caplog.text
