@@ -63,11 +63,12 @@ For faster iteration during development:
 
 ## File Size Check
 
-Hard limit: **30 KB AND 1000 lines** per file across the codebase. Check before PR:
+Hard limit: **30 KiB AND 1000 lines** per integration file, twice that in `scripts/` and
+`tests/` (`CODE_QUALITY_STANDARDS.md` → File Size Limits). It is part of
+`./scripts/quality.sh all`; to run it alone:
 
 ```bash
-wc -c custom_components/open_spot_forecast/**/*.py
-wc -l custom_components/open_spot_forecast/**/*.py
+./scripts/quality.sh file-size
 ```
 
 If a file exceeds either limit, split it before adding more features.

@@ -385,8 +385,11 @@ v9 keys the bias offsets by lead-time bucket (`ml/bias_storage.py`). The legacy 
 
 ## File Size Rules
 
-Hard limit: **30 KB AND 1000 lines** per file across the entire codebase. Both limits must
-be satisfied. If a file exceeds either, split it before adding more features.
+Hard limit for the integration: **30 KiB (30,720 bytes) AND 1000 lines** per Python file;
+`scripts/` and `tests/` get twice that. `CODE_QUALITY_STANDARDS.md` → File Size Limits is the
+single statement of the rule. `./scripts/quality.sh file-size` (`scripts/check_file_size.py`)
+enforces it in `all`, in CI and as a pre-commit hook. If a file exceeds either limit, split
+it before adding more features.
 
 ## Documentation Style
 

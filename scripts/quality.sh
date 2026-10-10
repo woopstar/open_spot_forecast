@@ -66,7 +66,8 @@ Commands:
   lint      Format and lint code (ruff format + ruff check + prettier --write)
   typing    Type check with mypy
   quality   Static quality checks (pyright + vulture)
-  format-check  Verify ruff format, ruff lint and prettier without writing (used by CI)
+  format-check  Verify ruff format, ruff lint, prettier and file sizes without writing (used by CI)
+  file-size  Assert every Python file is within the file-size limits
   translations  Validate en/da/de/es translation files stay in sync
   skylos    Run Skylos static analysis (experimental, not in 'all')
   backtest  Rolling 1/2/3-day-ahead model backtest (dev-only, network, not in 'all');
@@ -75,7 +76,7 @@ Commands:
             extra args go to scripts/benchmark.py, e.g. benchmark collect --region DK1
   test      Run tests with pytest and coverage
   coverage-floor  Assert every module meets the 95% per-module coverage floor
-  all       Run lint, typing, quality, translations, and test in sequence
+  all       Run lint, file-size, typing, quality, translations, and test in sequence
 EOF
     exit 1
 }
@@ -102,6 +103,10 @@ case "${1:-}" in
         run ruff format --check .
         run ruff check .
         prettier_run --check
+        run python3 scripts/check_file_size.py
+        ;;
+    file-size)
+        run python3 scripts/check_file_size.py
         ;;
     translations)
         run python3 scripts/validate_translations.py
@@ -143,6 +148,9 @@ case "${1:-}" in
         run ruff format .
         run ruff check . --fix
         prettier_run --write
+        echo ""
+        echo "=== File Size ==="
+        run python3 scripts/check_file_size.py
         echo ""
         echo "=== Type Check ==="
         run mypy custom_components tests
