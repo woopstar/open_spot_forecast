@@ -161,6 +161,41 @@ async def test_async_lifecycle(cls):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cls", ALL_SENSOR_CLASSES)
+async def test_the_dispatcher_listener_is_removed_with_the_entity(cls):
+    """A removed sensor (e.g. after an entry reload) no longer gets updates (#156)."""
+    sensor = _make_sensor(cls)
+    unsub = Mock()
+
+    with (
+        patch(
+            "custom_components.open_spot_forecast.sensor.async_dispatcher_connect",
+            return_value=unsub,
+        ) as connect,
+        patch.object(sensor, "async_on_remove") as on_remove,
+    ):
+        await sensor.async_added_to_hass()
+
+    connect.assert_called_once()
+    assert connect.call_args.args[2] == sensor._handle_update
+    on_remove.assert_called_once_with(unsub)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", ALL_SENSOR_CLASSES)
+async def test_no_listener_is_left_after_removal(cls):
+    """With the real dispatcher: the signal has no target once the sensor is gone."""
+    sensor = _make_sensor(cls)
+    await sensor.async_added_to_hass()
+    (dispatchers,) = sensor.hass.data.values()
+    assert sum(len(targets) for targets in dispatchers.values()) == 1
+
+    sensor._call_on_remove_callbacks()
+
+    assert sum(len(targets) for targets in dispatchers.values()) == 0
+
+
+@pytest.mark.asyncio
 async def test_learning_metrics_handle_update_invalidates_cache():
     """_handle_update resets the cached metrics so they are recomputed."""
     predictor = MagicMock()

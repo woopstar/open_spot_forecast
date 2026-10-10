@@ -203,8 +203,10 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
@@ -300,8 +302,10 @@ class DayPriceStatSensor(PriceAttributionMixin, SensorEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
@@ -420,8 +424,10 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL_FORECAST), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL_FORECAST), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
@@ -533,8 +539,10 @@ class PredictionConfidenceSensor(ModelAttributionMixin, SensorEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL_FORECAST), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL_FORECAST), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
@@ -576,8 +584,10 @@ class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
         }
 
     async def async_added_to_hass(self) -> None:
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
