@@ -15,6 +15,7 @@ from homeassistant.util import slugify as util_slugify
 
 from custom_components.open_spot_forecast import CONFIG_SCHEMA, async_setup
 from custom_components.open_spot_forecast.const import DOMAIN, UPDATE_SIGNAL
+from custom_components.open_spot_forecast.predbat_sensor import PredbatRateSensor
 from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
 from custom_components.open_spot_forecast.services import (
@@ -26,6 +27,7 @@ from custom_components.open_spot_forecast.services import (
     _async_reset_learning,
     forecast_response,
 )
+from custom_components.open_spot_forecast.tariffs import TariffSchedule
 from custom_components.open_spot_forecast.time_slots import (
     slot_start_in_day,
     slots_in_local_day,
@@ -59,6 +61,7 @@ def _hass(
     entry_state: ConfigEntryState = ConfigEntryState.LOADED,
     ml_predictor: Any = None,
     options: dict[str, Any] | None = None,
+    tariffs: TariffSchedule | None = None,
 ) -> Mock:
     """Return a mock Home Assistant with one Open Spot Forecast entry."""
     entry = MagicMock()
@@ -78,9 +81,11 @@ def _hass(
             "entry": {
                 "ml_predictor": ml_predictor,
                 "spot_data": {
+                    "day": DAY,
                     "today": [1.0] * 96,
                     "raw_today": [{"start": "2026-09-24T21:45:00+00:00"}],
                 },
+                "tariffs": tariffs,
             }
         }
     }
@@ -130,6 +135,9 @@ def test_the_schema_validates_the_fields() -> None:
     assert data["start"] == datetime(2026, 9, 24, 10, 0)
     assert data["hours"] == 24
     assert data["hourly"] is True
+    assert data["raw"] is False
+    raw: dict[str, Any] = GET_FORECAST_SCHEMA({"raw": "true"})
+    assert raw["raw"] is True
     with pytest.raises(vol.Invalid):
         GET_FORECAST_SCHEMA({"hours": 0})
     with pytest.raises(vol.Invalid):
@@ -290,6 +298,167 @@ async def test_without_ml_there_is_no_forecast() -> None:
     assert err.value.translation_placeholders == {
         "entry_title": "Open Spot Forecast DK1"
     }
+
+
+# --- Raw spot price (#142) -----------------------------------------------------------
+
+# An entry whose consumer price differs from the spot price in every way
+RAW_OPTIONS: dict[str, Any] = {
+    "surcharge": 100.0,
+    "vat": 0.25,
+    "price_type": "MWh",
+    "precision": 3,
+}
+
+
+def _raw_hass(
+    predictions: list[dict[str, Any]] | None = None,
+    options: dict[str, Any] | None = None,
+) -> Mock:
+    predictor = _predictor(predictions if predictions is not None else _predictions())
+    predictor.evaluation = [
+        {
+            "start": "2026-09-24T08:00:00+00:00",
+            "end": "2026-09-24T08:15:00+00:00",
+            "predicted": 2.0,
+            "actual": -1.0,
+            "lead_hours": 24.0,
+        }
+    ]
+    return _hass(
+        ml_predictor=predictor,
+        options={**RAW_OPTIONS, **(options or {})},
+        tariffs=TariffSchedule.fixed(0.5),
+    )
+
+
+@pytest.mark.asyncio
+async def test_raw_is_the_spot_price_without_tariff_surcharge_or_vat() -> None:
+    hass = _raw_hass()
+
+    consumer = await _call(hass, hours=1, include_known=False)
+    raw = await _call(hass, hours=1, include_known=False, raw=True)
+
+    # The entry's price: (41 + 0.5 tariff) per MWh + surcharge, with VAT
+    assert consumer["unit"] == "DKK/MWh"
+    assert consumer["forecast"][0]["price"] == pytest.approx(
+        (41.5 * 1000 + 100.0) * 1.25
+    )
+    # Raw: the spot price per kWh, nothing added, the precision kept
+    assert raw["unit"] == "DKK/kWh"
+    assert [entry["price"] for entry in raw["forecast"]] == pytest.approx(
+        [41.0, 42.0, 43.0, 44.0]
+    )
+    assert raw["interval_minutes"] == 15
+    assert raw["known_until"] == consumer["known_until"]
+    assert [e["start"] for e in raw["forecast"]] == [
+        e["start"] for e in consumer["forecast"]
+    ]
+
+
+@pytest.mark.asyncio
+async def test_raw_with_include_known_hourly_start_and_hours() -> None:
+    hass = _raw_hass()
+
+    response = await _call(
+        hass,
+        raw=True,
+        include_known=True,
+        hourly=True,
+        start="2026-09-24 22:00",
+        hours=4,
+    )
+
+    forecast = response["forecast"]
+    assert response["unit"] == "DKK/kWh"
+    assert response["interval_minutes"] == 60
+    assert [entry["start"] for entry in forecast] == [
+        "2026-09-24T22:00:00+02:00",
+        "2026-09-24T23:00:00+02:00",
+        "2026-09-25T00:00:00+02:00",
+        "2026-09-25T01:00:00+02:00",
+    ]
+    # Confirmed spot prices (1.0) until midnight, then the model's raw output
+    assert [entry["source"] for entry in forecast] == [
+        "actual",
+        "actual",
+        "predicted",
+        "predicted",
+    ]
+    assert [entry["price"] for entry in forecast] == pytest.approx(
+        [1.0, 1.0, 97.5, 101.5]
+    )
+
+
+@pytest.mark.asyncio
+async def test_without_raw_the_response_is_unchanged() -> None:
+    hass = _raw_hass()
+
+    default = await _call(hass, hours=2, evaluation=True)
+    explicit = await _call(hass, hours=2, evaluation=True, raw=False)
+
+    assert explicit == default
+    assert default["unit"] == "DKK/MWh"
+    assert default["evaluation"][0]["actual"] == pytest.approx(
+        ((-1.0 + 0.5) * 1000 + 100.0) * 1.25
+    )
+
+
+@pytest.mark.asyncio
+async def test_raw_keeps_negative_prices() -> None:
+    predictions = _predictions(1)
+    for entry in predictions:
+        entry["price"] = -0.1234
+    hass = _raw_hass(predictions)
+
+    response = await _call(hass, raw=True, hours=1, include_known=False)
+
+    assert [entry["price"] for entry in response["forecast"]] == pytest.approx(
+        [-0.123] * 4
+    )
+
+
+@pytest.mark.asyncio
+async def test_raw_applies_to_the_evaluation_too() -> None:
+    hass = _raw_hass()
+
+    response = await _call(hass, raw=True, evaluation=True, hours=1)
+
+    assert response["evaluation"] == [
+        {
+            "start": "2026-09-24T08:00:00+00:00",
+            "end": "2026-09-24T08:15:00+00:00",
+            "predicted": pytest.approx(2.0),
+            "actual": pytest.approx(-1.0),
+            "lead_hours": 24.0,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_raw_matches_the_predbat_export_entities() -> None:
+    hass = _raw_hass()
+    entry = hass.config_entries.async_get_entry("entry")
+    export = PredbatRateSensor(
+        hass,
+        entry,
+        hass.data[DOMAIN]["entry"],
+        "DKK",
+        PriceOutput(**RAW_OPTIONS),
+        "export",
+        "tomorrow",
+    )
+
+    response = await _call(
+        hass, raw=True, include_known=True, start="2026-09-25 00:00", hours=24
+    )
+
+    with patch("homeassistant.util.dt.utcnow", return_value=NOW.astimezone(UTC)):
+        tomorrow = export.extra_state_attributes["prices_tomorrow"][:96]
+    assert len(response["forecast"]) == len(tomorrow) == 96
+    assert [(e["start"], e["end"], e["price"]) for e in response["forecast"]] == [
+        (e["start"], e["end"], pytest.approx(e["price"])) for e in tomorrow
+    ]
 
 
 # --- Reset learning ------------------------------------------------------------------

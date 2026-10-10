@@ -177,6 +177,10 @@
         "evaluation": {
           "name": "Evaluering",
           "description": "Returnér også, for de seneste 7 dages intervaller, prognosen lavet cirka et døgn i forvejen sammen med den faktiske pris (evaluation: start, end, predicted, actual, lead_hours)."
+        },
+        "raw": {
+          "name": "Rå spotpris",
+          "description": "Returnér den rå spotpris pr. kWh uden tariffer, tillæg og moms (som Predbat-eksportenhederne), f.eks. til en indfødningstarif. Standard: fra."
         }
       }
     },

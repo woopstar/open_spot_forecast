@@ -464,6 +464,34 @@ tariffs:
 3. Check it with `evcc tariff`: it lists the slots from now to about 7 days
    ahead.
 
+For a feed-in (export) tariff add `feedin:` with the same settings and
+`"raw": true` in the body: the response is then the raw spot price per kWh,
+excl. tariffs, surcharge and VAT, which is what the exported power is
+typically paid:
+
+```yaml
+tariffs:
+  currency: DKK
+  grid:
+    # ... as above
+  feedin:
+    type: custom
+    forecast:
+      source: http
+      uri: http://homeassistant.local:8123/api/services/open_spot_forecast/get_forecast?return_response
+      method: POST
+      headers:
+        - Authorization: Bearer <long-lived access token>
+        - Content-Type: application/json
+      body: '{"include_known": true, "raw": true}'
+      jq: >-
+        [.service_response.forecast[] | {
+          start: (.start | sub("(?<h>[+-][0-9]{2}):(?<m>[0-9]{2})$"; "\(.h)\(.m)") | strptime("%Y-%m-%dT%H:%M:%S%z") | mktime | todate),
+          end: (.end | sub("(?<h>[+-][0-9]{2}):(?<m>[0-9]{2})$"; "\(.h)\(.m)") | strptime("%Y-%m-%dT%H:%M:%S%z") | mktime | todate),
+          value: .price
+        }] | tostring
+```
+
 Notes:
 
 - `include_known: true` gives evcc the confirmed prices first, then the
@@ -476,6 +504,9 @@ Notes:
   at 0 (evcc applies `tax` to the whole price, which already has VAT). With
   the day-ahead source add grid tariffs (incl. VAT) with `charges` or
   `chargesZones`.
+- `"raw": true` (feed-in) is the raw spot price excl. VAT, as the Predbat
+  export entities; if your supplier charges a per-kWh export fee subtract it
+  in the `jq` (`value: (.price - 0.01)`). Negative prices pass through.
 - With several regions add `"config_entry_id": "<entry id>"` to `body`.
 - evcc reads the forecast hourly (`interval`, default `1h`).
 

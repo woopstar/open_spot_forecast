@@ -230,8 +230,11 @@ response also has `evaluation`: every kept slot's day-ahead prediction next to
 its actual price (`start`, `end`, `predicted`, `actual`, `lead_hours`; see
 [self-learning](self_learning.md#predicted-vs-actual-36)).
 Prices go through the entry's `PriceOutput`, so the action and the forecast
-sensor always agree; the action has no 16 KB attribute limit. Without the ML
-model it raises `ml_prediction_disabled`.
+sensor always agree; the action has no 16 KB attribute limit. With `raw: true`
+(#142) the output is `PriceOutput.raw_spot()` and no tariffs are added, so the
+forecast (and the evaluation) is the raw spot price per kWh excl. surcharge
+and VAT, as the Predbat export entities expose it — evcc's feed-in tariff.
+Without the ML model it raises `ml_prediction_disabled`.
 
 `open_spot_forecast.reset_learning` (#132) is registered next to it with the
 same `config_entry_id` lookup. It awaits `SpotPricePredictor.reset_learning()`
