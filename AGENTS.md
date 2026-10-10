@@ -68,8 +68,8 @@ The agent MUST:
      **both** `config.step.sensors` and `options.step.init`
    - `translations/da.json` — add the Danish translation, in sync with `en.json`
    - `sensor_reader.py` — add a `read_*` method on `SensorReader`
-   - `updater.py` — add it to `SensorEntities`, read the value in `ForecastUpdater._read_weather()`
-     and pass it into `weather_data`
+   - `sensor_entities.py` — add it to `SensorEntities`; `updater.py` — read the value in
+     `ForecastUpdater._read_weather()` and pass it into `weather_data`
 4. **Never use a fixed numeric constant** for a value that an entity reports. Always source it
    from the live entity.
 

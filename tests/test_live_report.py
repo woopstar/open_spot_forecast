@@ -20,6 +20,7 @@ from scripts.live_report import (
     evaluation_stats,
     format_report,
     load_live_data,
+    source_stats,
     training_times,
     units_from_args,
     weekly_stats,
@@ -299,3 +300,55 @@ def test_an_export_from_before_the_lead_times_reads_as_day_ahead(
     assert [row.predicted for row in data.evaluation] == pytest.approx([2.0])
     assert data.snapshots == {}
     assert "snapshot" not in format_report(data, Units())
+
+
+def test_external_forecasts_are_reported_per_bucket_next_to_the_model(
+    tmp_path: Path,
+) -> None:
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    storage = LearningStorage(hass, "DK1")
+    try:
+        storage.add_lead_time_errors("2026-09-21", {"day_1": [0.1, -0.1]})
+        storage.add_external_errors(
+            "2026-09-21", "sensor.eds", {"day_1": [0.2, 0.4], "day_3": [1.0]}
+        )
+        storage.add_external_errors("2026-09-22", "sensor.eds", {"day_1": [-0.6]})
+        storage.add_external_errors("2026-09-21", "sensor.carnot", {"day_1": [0.5]})
+        path = storage.db_path
+    finally:
+        storage.close()
+
+    data = load_live_data(path)
+    stats = source_stats(data)
+
+    assert list(stats) == ["sensor.carnot", "sensor.eds"]
+    assert list(stats["sensor.eds"]) == ["day_1", "day_3"]
+    eds = stats["sensor.eds"]["day_1"]
+    assert (eds.samples, eds.days) == (3, 2)
+    assert eds.mae == pytest.approx(0.4)
+    assert eds.bias == pytest.approx(0.0)
+    report = format_report(data, Units())
+    section = report[report.index("## External forecasts") :]
+    assert "| Bucket | Source | Samples | Days | MAE |" in section
+    # The model first, then every source, bucket by bucket
+    rows = [line for line in section.splitlines() if line.startswith("| day_")]
+    assert [row.split(" | ")[:3] for row in rows] == [
+        ["| day_1", "open_spot_forecast", "2"],
+        ["| day_1", "sensor.carnot", "1"],
+        ["| day_1", "sensor.eds", "3"],
+        ["| day_3", "sensor.eds", "1"],
+    ]
+    assert "| day_1 | sensor.eds | 3 | 2 | 0.400 |" in section
+    later = load_live_data(path, since=date(2026, 9, 22))
+    assert source_stats(later)["sensor.eds"]["day_1"].samples == 1
+    assert "sensor.carnot" not in later.external
+
+
+def test_without_external_forecasts_the_report_has_no_source_table(
+    export: Path,
+) -> None:
+    data = load_live_data(export)
+
+    assert data.external == {}
+    assert "External forecasts" not in format_report(data, Units())

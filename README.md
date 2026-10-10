@@ -74,6 +74,10 @@ and continuously improves accuracy via per-slot bias correction.
   the current slot, recorded in Home Assistant's history, so a history graph
   shows predicted against actual over weeks
 - Binary sensors for tomorrow's price availability and ML model training status
+- Optional comparison with other forecasts: pick Stromligning's forecast
+  sensor or an Energi Data Service sensor as an external forecast sensor and
+  the forecast MAE/RMSE sensors show its error next to the ML forecast's, per
+  lead time (it never changes the ML forecast)
 - Optional Predbat rate entities (import/export, today/tomorrow) in the
   shape of the Stromligning entities Predbat reads, with the 7-day forecast:
   see [QUICKSTART.md → Predbat](QUICKSTART.md#predbat)

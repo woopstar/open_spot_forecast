@@ -33,10 +33,11 @@ from .const import (
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
 from .price_source import PriceSettings
+from .sensor_entities import SensorEntities
 from .sensor_reader import SensorReader
 from .services import async_setup_services
 from .tomorrow_prices import TomorrowPriceChecker
-from .updater import ForecastUpdater, SensorEntities
+from .updater import ForecastUpdater
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,6 +108,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await hass.async_add_executor_job(ml_predictor.refresh_lead_time_accuracy)
         await hass.async_add_executor_job(ml_predictor.refresh_evaluation)
         await hass.async_add_executor_job(ml_predictor.refresh_day_ahead_predictions)
+        await hass.async_add_executor_job(ml_predictor.refresh_external_accuracy)
 
     # The day-ahead prices are stored in the learning database, which exists
     # without the ML model too

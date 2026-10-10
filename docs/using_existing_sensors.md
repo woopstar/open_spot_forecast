@@ -25,6 +25,22 @@ Stromligning → Entities.
 | `sensor.power_inverter_input_total`                    | Your inverter                                           | Actual solar production (solar scale)  |
 | `sensor.metroair_330_outdoor_temperature`              | MyUplink/Met.no                                         | Actual temperature (forecast accuracy) |
 
+## Optional: External Forecasts
+
+| Entity                                | Integration                                                       | Purpose                           |
+| ------------------------------------- | ----------------------------------------------------------------- | --------------------------------- |
+| `sensor.stromligning_forecasts_vat`   | Stromligning (enable its forecast option)                         | Stromligning's own price forecast |
+| Your Energi Data Service price sensor | [Energi Data Service](https://github.com/MTrab/energidataservice) | Its `forecast` attribute (Carnot) |
+
+Set them as **External forecast sensors** (config or options flow, several
+allowed, none by default). They are never a model input: every forecast run
+records what they show for the slots the ML forecast covers, and
+self-learning scores them per lead time next to the ML forecast (the
+`external` attribute of the forecast MAE/RMSE sensors). A sensor must list
+its forecast in a `prices` (`start`, `price`) or `forecast` (`hour`, `price`)
+attribute, in the terms this integration shows prices in (unit, tariffs,
+VAT). See [Self-Learning](self_learning.md#external-forecasts-120).
+
 ## Weather Entity
 
 A single `weather.*` entity scores the local weather forecast for the
