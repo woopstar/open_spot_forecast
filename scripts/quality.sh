@@ -71,6 +71,8 @@ Commands:
   skylos    Run Skylos static analysis (experimental, not in 'all')
   backtest  Rolling 1/2/3-day-ahead model backtest (dev-only, network, not in 'all');
             extra args go to scripts/backtest.py, e.g. backtest --window-days 30
+  benchmark Benchmark against external forecasts (dev-only, network, not in 'all');
+            extra args go to scripts/benchmark.py, e.g. benchmark collect --region DK1
   test      Run tests with pytest and coverage
   coverage-floor  Assert every module meets the 95% per-module coverage floor
   all       Run lint, typing, quality, translations, and test in sequence
@@ -112,6 +114,12 @@ case "${1:-}" in
         # tests/test_backtest.py is the fast offline smoke test that CI runs.
         # Called directly (not via rtk) so the report table prints verbatim.
         python -m scripts.backtest "${@:2}"
+        ;;
+    benchmark)
+        # Not in 'all': collect fetches the external forecasts, report the
+        # actual prices. tests/test_benchmark.py is the offline test CI runs.
+        # Called directly (not via rtk) so the report tables print verbatim.
+        python -m scripts.benchmark "${@:2}"
         ;;
     coverage-floor)
         run python3 scripts/check_coverage_floor.py
