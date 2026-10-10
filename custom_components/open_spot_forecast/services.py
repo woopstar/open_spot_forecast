@@ -4,7 +4,9 @@ Entity attributes are capped by Home Assistant's 16 KB limit, so the sensor
 shows at most 72 hours of the 7-day forecast. ``get_forecast`` returns the
 whole forecast, or a window of it, as response data. Prices are converted
 exactly as the sensor converts them (``PriceOutput``: tariffs, unit, surcharge,
-VAT, hourly mean), so both always agree.
+VAT, hourly mean), so both always agree. With ``raw`` (#142) the prices are the
+raw spot price per kWh instead (``PriceOutput.raw_spot()``, as the Predbat
+export entities), e.g. for evcc's feed-in tariff.
 
 ``reset_learning`` deletes an entry's learning database through
 ``SpotPricePredictor.reset_learning()`` and refreshes the entities, so the
@@ -52,6 +54,7 @@ ATTR_HOURS = "hours"
 ATTR_HOURLY = "hourly"
 ATTR_INCLUDE_KNOWN = "include_known"
 ATTR_EVALUATION = "evaluation"
+ATTR_RAW = "raw"
 
 # The forecast reaches 7 days past the known prices: at most 9 days in all
 MAX_FORECAST_HOURS = 9 * 24
@@ -67,6 +70,7 @@ GET_FORECAST_SCHEMA = vol.Schema(
         vol.Optional(ATTR_HOURLY): cv.boolean,
         vol.Optional(ATTR_INCLUDE_KNOWN): cv.boolean,
         vol.Optional(ATTR_EVALUATION, default=False): cv.boolean,
+        vol.Optional(ATTR_RAW, default=False): cv.boolean,
     }
 )
 
@@ -150,12 +154,16 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
     ml_predictor = _ml_predictor(hass, entry)
     settings = PriceSettings.from_entry(entry)
     output = settings.output
+    tariffs = api_data.get("tariffs")
+    if call.data[ATTR_RAW]:
+        # The raw spot price per kWh, no tariff, surcharge or VAT (#142)
+        output = output.raw_spot()
+        tariffs = None
     if ATTR_HOURLY in call.data:
         output = replace(output, hourly_average=call.data[ATTR_HOURLY])
     start = call.data.get(ATTR_START)
     start = dt_util.as_utc(start) if start is not None else dt_util.utcnow()
     spot_data = api_data.get("spot_data")
-    tariffs = api_data.get("tariffs")
     predictions = ml_predictor.predictions
     include_known = call.data.get(
         ATTR_INCLUDE_KNOWN,
@@ -174,10 +182,9 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
         tariffs,
     )
     if call.data[ATTR_EVALUATION]:
-        # Every kept slot's day-ahead prediction next to its actual price (#36)
-        response["evaluation"] = settings.output.evaluation(
-            ml_predictor.evaluation, tariffs
-        )
+        # Every kept slot's day-ahead prediction next to its actual price
+        # (#36), per slot; the raw spot price too with ``raw``
+        response["evaluation"] = output.evaluation(ml_predictor.evaluation, tariffs)
     return response
 
 

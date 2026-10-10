@@ -177,6 +177,10 @@
         "evaluation": {
           "name": "Evaluation",
           "description": "Also return, for the last 7 days of slots, the prediction made about a day ahead next to the actual price (evaluation: start, end, predicted, actual, lead_hours)."
+        },
+        "raw": {
+          "name": "Raw spot price",
+          "description": "Return the raw spot price per kWh without tariffs, surcharge or VAT (like the Predbat export entities), e.g. for a feed-in tariff. Default: off."
         }
       }
     },

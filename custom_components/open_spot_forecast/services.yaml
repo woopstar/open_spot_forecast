@@ -23,6 +23,9 @@ get_forecast:
     evaluation:
       selector:
         boolean:
+    raw:
+      selector:
+        boolean:
 reset_learning:
   fields:
     config_entry_id:
