@@ -49,8 +49,8 @@ _LOGGER = logging.getLogger(__name__)
 class HistorySource(Protocol):
     """What the update cycle needs of a stored source (#123).
 
-    Every ``TimeSeriesSource`` has it; ``NordpoolUmmSource`` (messages, not
-    grid rows) implements it on its own.
+    Every ``TimeSeriesSource`` has it; ``OutageSource`` (messages, not grid
+    rows, ``api/outage_source.py``) implements it on its own.
     """
 
     async def async_update(self, start: datetime, end: datetime) -> bool:

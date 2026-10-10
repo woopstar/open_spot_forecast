@@ -8,7 +8,8 @@ unavailable capacity in time periods. A message is revised in numbered
 versions (each with its publication time) and can be dismissed.
 
 ``OutageIndex`` holds the stored message versions and their periods (the
-rows of ``umm_messages`` and ``umm_periods``, see ``api/nordpool_umm.py``)
+rows of ``umm_messages`` and ``umm_periods``, see ``api/nordpool_umm.py``
+and, for the zones publishing on the ENTSO-E platform, ``api/entsoe_outages.py``, #138)
 and aggregates them per slot **as known at an origin**: only versions
 published at or before the origin count, the latest of them per message,
 and a dismissed message counts for nothing. Training rows use the slot's

@@ -63,6 +63,7 @@ from custom_components.open_spot_forecast.api.openmeteo_weather import (
 from custom_components.open_spot_forecast.const import (
     ENERGY_CHARTS_API,
     ENTSOE_API,
+    ENTSOE_OUTAGE_BORDERS,
     INSTRAT_GAS_API,
     NEIGHBOURS,
     OPEN_METEO_ARCHIVE_API,
@@ -94,6 +95,7 @@ from custom_components.open_spot_forecast.ml.public_holidays import public_holid
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 from custom_components.open_spot_forecast.time_series import iso_weeks
 
+from .backtest_entsoe_outages import load_entsoe_outages
 from .backtest_lags import LagConfig, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 from .backtest_umm import load_umm_outages
@@ -354,8 +356,8 @@ def load_energy_charts_prices(
     return merge_series(parts)
 
 
-def _http_get_text(url: str) -> str:
-    """Fetch a text document; an HTTP 400 answer is returned too.
+def _http_get_bytes(url: str) -> bytes:
+    """Fetch a document's bytes; an HTTP 400 answer is returned too.
 
     ENTSO-E answers "no matching data" with 400 and an acknowledgement
     document. The URL (with the ENTSO-E token) is never printed.
@@ -364,12 +366,17 @@ def _http_get_text(url: str) -> str:
         url, headers={"User-Agent": "open-spot-forecast-backtest"}
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            return str(response.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=120) as response:
+            return bytes(response.read())
     except urllib.error.HTTPError as err:
         if err.code != 400:
             raise
-        return str(err.read().decode("utf-8"))
+        return bytes(err.read())
+
+
+def _http_get_text(url: str) -> str:
+    """Fetch a text document (``_http_get_bytes`` decoded as UTF-8)."""
+    return _http_get_bytes(url).decode("utf-8")
 
 
 def load_entsoe_load(
@@ -1172,9 +1179,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--outages",
-        choices=("none", "umm"),
+        choices=("none", "umm", "entsoe"),
         default="none",
-        help="Nord Pool UMM outages (#123) as known at each origin; Nord Pool areas",
+        help=(
+            "outages as known at each origin: Nord Pool UMM (#123, Nord Pool "
+            "areas) or ENTSO-E's outage documents (#138, DE/NL/BE/FR; needs "
+            "ENTSOE_API_KEY)"
+        ),
     )
     parser.add_argument(
         "--cross-border",
@@ -1225,6 +1236,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error(f"--cross-border needs a region in {', '.join(NEIGHBOURS)}")
     if args.outages == "umm" and args.region not in UMM_AREAS:
         parser.error(f"--outages umm needs a region in {', '.join(sorted(UMM_AREAS))}")
+    if args.outages == "entsoe" and args.region not in ENTSOE_OUTAGE_BORDERS:
+        parser.error(
+            "--outages entsoe needs a region in "
+            + ", ".join(sorted(ENTSOE_OUTAGE_BORDERS))
+        )
+    if args.outages == "entsoe" and not os.environ.get("ENTSOE_API_KEY"):
+        parser.error("--outages entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
     if (args.nordpool_day1 or args.nordpool_no_copies) and args.nordpool_db is None:
         parser.error("--nordpool-day1 and --nordpool-no-copies need --nordpool-db")
     if args.nordpool_db is not None and not args.nordpool_db.is_file():
@@ -1310,6 +1328,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Loading {args.region} outages from Nord Pool UMM ...", file=sys.stderr)
         outages = load_umm_outages(
             args.region, data_first, data_last, args.cache_dir, _http_get_json
+        )
+    elif args.outages == "entsoe":
+        print(f"Loading {args.region} outages from ENTSO-E ...", file=sys.stderr)
+        outages = load_entsoe_outages(
+            args.region,
+            data_first,
+            data_last,
+            args.cache_dir,
+            os.environ["ENTSOE_API_KEY"],
+            _http_get_bytes,
         )
     models, skipped = build_models(
         names, tz, zone, args.region, load, cross, gas, nordpool, args.lags, outages

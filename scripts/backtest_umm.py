@@ -27,7 +27,7 @@ from custom_components.open_spot_forecast.const import NORDPOOL_UMM_API, REGIONS
 from custom_components.open_spot_forecast.ml.outages import OutageIndex
 
 
-def _months(first: date, last: date) -> Iterator[tuple[date, date]]:
+def months(first: date, last: date) -> Iterator[tuple[date, date]]:
     """Yield (first day, first day of the next month) for every month touched."""
     current = first.replace(day=1)
     while current <= last:
@@ -78,7 +78,7 @@ def load_umm_outages(
     today = today or date.today()
     now = datetime.now(UTC)
     rows: list[dict[str, Any]] = []
-    for month_start, month_end in _months(first, last):
+    for month_start, month_end in months(first, last):
         cache_file = cache_dir / f"umm_{region}_{month_start:%Y-%m}.json"
         if cache_file.exists():
             month = json.loads(cache_file.read_text(encoding="utf-8"))

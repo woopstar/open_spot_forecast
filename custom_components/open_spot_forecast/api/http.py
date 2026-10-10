@@ -25,10 +25,24 @@ MAX_RETRY_AFTER = 60.0
 
 @dataclass(frozen=True, slots=True)
 class HttpResponse:
-    """The final response of a request: status and body text."""
+    """The final response of a request: status, body text and raw bytes.
+
+    ``body`` holds the bytes for a binary answer (ENTSO-E's ZIP of outage
+    documents, #138); ``text`` is its decoded form.
+    """
 
     status: int
     text: str
+    body: bytes = b""
+
+
+def _decode(resp: aiohttp.ClientResponse, body: bytes) -> str:
+    """Decode a body with the response's charset; a binary one never raises."""
+    try:
+        encoding = resp.get_encoding()
+    except RuntimeError:
+        encoding = "utf-8"
+    return body.decode(encoding, errors="replace")
 
 
 def _retry_delay(attempt: int, retry_after: str | None) -> float:
@@ -83,7 +97,8 @@ async def async_get(
                     )
                     await asyncio.sleep(delay)
                     continue
-                return HttpResponse(resp.status, await resp.text())
+                body = await resp.read()
+                return HttpResponse(resp.status, _decode(resp, body), body)
         except (aiohttp.ClientError, TimeoutError) as err:
             if not retry:
                 _LOGGER.warning("%s API request failed: %s", label, type(err).__name__)

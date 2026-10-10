@@ -25,7 +25,8 @@ and continuously improves accuracy via per-slot bias correction.
   position over the bidding zone, ENTSO-E's week-ahead load forecast (with
   an API key), the natural-gas price (in regions where it helps), planned
   and unplanned outages of plants and interconnectors from Nord Pool's
-  urgent market messages (where they help), zone weather from Open-Meteo (wind at 80 m,
+  urgent market messages or the ENTSO-E Transparency Platform (where they
+  help), zone weather from Open-Meteo (wind at 80 m,
   temperature, irradiance, pressure, humidity across the bidding zone;
   trained on archived forecasts, like the forecasts it predicts from) and
   market-demand features, implemented in pure NumPy (no scikit-learn
@@ -134,9 +135,11 @@ for the Stromligning entities in its `apps.yaml`: see
   day-ahead index (CC BY-NC 4.0), in the regions where it improves the
   forecast
 - **Outages** — [Nord Pool's urgent market messages](https://umm.nordpoolgroup.com/)
-  (no key): unavailable plant and interconnector capacity per slot, as
-  known when each price was set, in the regions where it improves the
-  forecast (DK1)
+  (no key) or, for DE, NL, BE and FR, the
+  [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)'s outage
+  documents (API key): unavailable plant and interconnector capacity per
+  slot, as known when each price was set, in the regions where it improves
+  the forecast (DK1)
 - **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
   learns the neighbours' day-ahead prices from their weather and feeds the
   forecasts to the region's model (more CPU per training)
@@ -229,16 +232,16 @@ Full documentation is available in the [`docs/`](docs/) directory:
 
 ## Data Sources and Attribution
 
-| Source                                                                       | Used for                                                        | Licence / terms                                                                                                                                                                                                                            |
-| ---------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| [Stromligning](https://github.com/MTrab/stromligning)                        | Consumer and spot prices (DK1/DK2, `stromligning` source)       | The Stromligning integration's terms                                                                                                                                                                                                       |
-| [energy-charts.info](https://energy-charts.info/) (Fraunhofer ISE)           | Day-ahead prices (`dayahead` source), the backtest's prices     | Per zone, as the API reports it: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), Bundesnetzagentur \| SMARD.de (e.g. DK1, DK2, NO2, NL, FR, DE-LU); EPEX SPOT data for private and internal use only (e.g. SE3, FI, EE, LT, LV) |
-| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)             | Day-ahead price fallback and week-ahead load forecast (API key) | [ENTSO-E terms and conditions](https://transparency.entsoe.eu/content/static_content/Static%20content/terms%20and%20conditions/terms%20and%20conditions.html)                                                                              |
-| [European Central Bank](https://data.ecb.europa.eu/)                         | EUR reference exchange rates (day-ahead prices in DKK/SEK/NOK)  | ECB data, reusable with the source acknowledged                                                                                                                                                                                            |
-| [Open-Meteo.com](https://open-meteo.com/)                                    | Zone weather forecasts; archived forecasts for the backtest     | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)                                                                                                                                                                                  |
-| [Nord Pool](https://data.nordpoolgroup.com/)                                 | Consumption and production prognoses                            | Nord Pool's data portal terms                                                                                                                                                                                                              |
-| [Nord Pool UMM](https://umm.nordpoolgroup.com/)                              | Outage messages (planned and unplanned unavailability)          | Nord Pool's UMM terms (REMIT transparency data, public API)                                                                                                                                                                                |
-| Met.no (HA weather), [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Local weather, solar forecast                                   | Their integrations' terms                                                                                                                                                                                                                  |
+| Source                                                                       | Used for                                                                          | Licence / terms                                                                                                                                                                                                                            |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [Stromligning](https://github.com/MTrab/stromligning)                        | Consumer and spot prices (DK1/DK2, `stromligning` source)                         | The Stromligning integration's terms                                                                                                                                                                                                       |
+| [energy-charts.info](https://energy-charts.info/) (Fraunhofer ISE)           | Day-ahead prices (`dayahead` source), the backtest's prices                       | Per zone, as the API reports it: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), Bundesnetzagentur \| SMARD.de (e.g. DK1, DK2, NO2, NL, FR, DE-LU); EPEX SPOT data for private and internal use only (e.g. SE3, FI, EE, LT, LV) |
+| [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)             | Day-ahead price fallback, week-ahead load forecast and outage documents (API key) | [ENTSO-E terms and conditions](https://transparency.entsoe.eu/content/static_content/Static%20content/terms%20and%20conditions/terms%20and%20conditions.html)                                                                              |
+| [European Central Bank](https://data.ecb.europa.eu/)                         | EUR reference exchange rates (day-ahead prices in DKK/SEK/NOK)                    | ECB data, reusable with the source acknowledged                                                                                                                                                                                            |
+| [Open-Meteo.com](https://open-meteo.com/)                                    | Zone weather forecasts; archived forecasts for the backtest                       | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)                                                                                                                                                                                  |
+| [Nord Pool](https://data.nordpoolgroup.com/)                                 | Consumption and production prognoses                                              | Nord Pool's data portal terms                                                                                                                                                                                                              |
+| [Nord Pool UMM](https://umm.nordpoolgroup.com/)                              | Outage messages (planned and unplanned unavailability)                            | Nord Pool's UMM terms (REMIT transparency data, public API)                                                                                                                                                                                |
+| Met.no (HA weather), [Solcast](https://github.com/BJReplay/ha-solcast-solar) | Local weather, solar forecast                                                     | Their integrations' terms                                                                                                                                                                                                                  |
 
 Every entity credits the sources its value comes from in Home Assistant's
 **attribution** (the entity's more-info dialog): the price sensors the price
@@ -247,8 +250,8 @@ fallback is configured), and the forecast, confidence, learning and accuracy
 sensors everything the model learns from, e.g. _Prices: energy-charts.info
 (CC BY 4.0, Bundesnetzagentur | SMARD.de) · Weather: Open-Meteo.com (CC BY
 4.0) · Prognoses: Nord Pool_, plus _Load forecast: ENTSO-E Transparency
-Platform_ with an ENTSO-E key and _Outages: Nord Pool UMM_ in the regions
-that use them. Stromligning's prices are credited by the
+Platform_ with an ENTSO-E key and _Outages: Nord Pool UMM_ or _Outages:
+ENTSO-E Transparency Platform_ in the regions that use them. Stromligning's prices are credited by the
 Stromligning integration.
 
 **Credit: [EpexPredictor](https://github.com/b3nn0/EpexPredictor)** (BSD-3-Clause)

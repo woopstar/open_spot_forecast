@@ -3,8 +3,11 @@
 OSF reads two ENTSO-E series: the day-ahead prices (``documentType=A44``,
 the fallback of ``dayahead_prices``) and the week-ahead load forecast
 (``A65``/``A31``, ``entsoe_load``). Both are XML documents of
-``TimeSeries`` holding ``Period``s of ``Point``s. The security token is a
-query parameter; ``async_get`` never logs URLs or parameters.
+``TimeSeries`` holding ``Period``s of ``Point``s. The outage documents
+(``A77``/``A80``/``A78``, #138, ``entsoe_outages``) come as a ZIP of XML
+documents, so ``async_entsoe_get_bytes`` returns the raw body. The
+security token is a query parameter; ``async_get`` never logs URLs or
+parameters.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from ..const import ENTSOE_API
-from .http import async_get
+from .http import HttpResponse, async_get
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -99,10 +102,10 @@ def entsoe_period(start: datetime, end: datetime) -> dict[str, str]:
     }
 
 
-async def async_entsoe_get(
+async def _async_entsoe_response(
     hass: HomeAssistant, api_key: str, params: dict[str, Any]
-) -> str | None:
-    """Request an ENTSO-E document; return its text, or None if it failed.
+) -> HttpResponse | None:
+    """Request an ENTSO-E document; None if the request failed.
 
     "No matching data" is an acknowledgement document with status 200 or
     400, which the parsers read as no rows.
@@ -117,4 +120,20 @@ async def async_entsoe_get(
         if response is not None:
             _LOGGER.warning("ENTSO-E returned %d", response.status)
         return None
-    return response.text
+    return response
+
+
+async def async_entsoe_get(
+    hass: HomeAssistant, api_key: str, params: dict[str, Any]
+) -> str | None:
+    """Request an ENTSO-E document; return its text, or None if it failed."""
+    response = await _async_entsoe_response(hass, api_key, params)
+    return response.text if response is not None else None
+
+
+async def async_entsoe_get_bytes(
+    hass: HomeAssistant, api_key: str, params: dict[str, Any]
+) -> bytes | None:
+    """Request an ENTSO-E document; return its raw body (a ZIP or XML), or None."""
+    response = await _async_entsoe_response(hass, api_key, params)
+    return response.body if response is not None else None

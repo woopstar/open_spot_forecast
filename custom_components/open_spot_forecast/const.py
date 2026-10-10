@@ -256,12 +256,57 @@ GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
 # Nord Pool publishes urgent market messages (UMMs, #123: planned and
 # unplanned outages of production units and interconnectors) for its own
 # delivery areas, the Nordics and the Baltics; DE, NL, BE and FR publish on
-# the ENTSO-E platform instead (a follow-up). The backtest can measure every
-# area; the model uses them only in UMM_REGIONS, where the backtest found a
-# lower day-1 error and no higher error later (DK1; in DK2 days 2-7 got
-# worse, see docs/ml_documentation.md)
+# the ENTSO-E platform instead (ENTSOE_OUTAGE_BORDERS, #138). The backtest
+# can measure every area; the model uses them only in UMM_REGIONS, where the
+# backtest found a lower day-1 error and no higher error later (DK1; in DK2
+# days 2-7 got worse, see docs/ml_documentation.md)
 UMM_AREAS = frozenset({"DK1", "DK2", "SE3", "SE4", "NO2", "FI", "EE", "LT", "LV"})
 UMM_REGIONS = frozenset({"DK1"})
+
+# The ENTSO-E Transparency Platform's outage documents (#138): production and
+# generation unit unavailability (A77/A80) are requested per bidding zone,
+# transmission unavailability (A78) per border, in both directions. The
+# borders of the zones that publish there (the neighbouring zones' EICs;
+# zones outside REGIONS are given by EIC only). With an ENTSO-E key the
+# backtest can measure every zone listed here; the model uses the documents
+# only in ENTSOE_OUTAGE_REGIONS (docs/ml_documentation.md)
+ENTSOE_OUTAGE_BORDERS: dict[str, tuple[str, ...]] = {
+    "DE": (
+        "10YDK-1--------W",  # DK1
+        "10YDK-2--------M",  # DK2
+        "10Y1001A1001A47J",  # SE4
+        "10YNO-2--------T",  # NO2
+        "10YNL----------L",  # NL
+        "10YBE----------2",  # BE
+        "10YFR-RTE------C",  # FR
+        "10YCH-SWISSGRIDZ",  # CH
+        "10YAT-APG------L",  # AT
+        "10YCZ-CEPS-----N",  # CZ
+        "10YPL-AREA-----S",  # PL
+    ),
+    "NL": (
+        "10Y1001A1001A82H",  # DE-LU
+        "10YBE----------2",  # BE
+        "10YGB----------A",  # GB
+        "10YNO-2--------T",  # NO2
+        "10YDK-1--------W",  # DK1
+    ),
+    "BE": (
+        "10YNL----------L",  # NL
+        "10YFR-RTE------C",  # FR
+        "10YGB----------A",  # GB
+        "10Y1001A1001A82H",  # DE-LU
+    ),
+    "FR": (
+        "10YBE----------2",  # BE
+        "10Y1001A1001A82H",  # DE-LU
+        "10YCH-SWISSGRIDZ",  # CH
+        "10Y1001A1001A73I",  # IT-North
+        "10YES-REE------0",  # ES
+        "10YGB----------A",  # GB
+    ),
+}
+ENTSOE_OUTAGE_REGIONS: frozenset[str] = frozenset()
 
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions

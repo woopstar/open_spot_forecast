@@ -74,9 +74,9 @@ class LearningStorage(
                         series_storage.py)
       neighbour_prices — neighbouring zones' raw day-ahead prices, EUR/MWh
                         per zone and UTC 15-min slot (#29; series_storage.py)
-      umm_messages, umm_periods — Nord Pool UMM outage message versions and
-                        their unavailable-capacity periods (#123;
-                        outage_storage.py)
+      umm_messages, umm_periods — outage message versions (Nord Pool UMM
+                        #123, ENTSO-E #138) and their unavailable-capacity
+                        periods (outage_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
     """
 

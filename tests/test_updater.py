@@ -38,6 +38,7 @@ from custom_components.open_spot_forecast.updater import (
 )
 
 MODULE = "custom_components.open_spot_forecast.updater"
+HISTORY = "custom_components.open_spot_forecast.history_updater"
 INTEGRATION = Path(__file__).parent.parent / "custom_components/open_spot_forecast"
 CPH = ZoneInfo("Europe/Copenhagen")
 SPOT_TODAY = [0.5] * 96
@@ -152,7 +153,8 @@ def make() -> Iterator[Callable[..., Harness]]:
         patch(f"{MODULE}.OpenMeteoWeatherSource", return_value=weather),
         patch(f"{MODULE}.EntsoeLoadSource", return_value=load),
         patch(f"{MODULE}.GasPriceSource", return_value=gas),
-        patch(f"{MODULE}.NordpoolUmmSource", return_value=outages),
+        patch(f"{HISTORY}.NordpoolUmmSource", return_value=outages),
+        patch(f"{HISTORY}.EntsoeOutageSource", return_value=outages),
         patch(f"{MODULE}.async_read_weather_forecast", read_forecast),
         patch(f"{MODULE}.async_dispatcher_send", dispatch),
         patch(f"{MODULE}.ml_price_inputs", return_value=(SPOT_TODAY, KNOWN_END)),
@@ -1113,22 +1115,31 @@ async def test_the_load_forecast_is_backfilled_and_pruned_with_the_history(
 
 
 @pytest.mark.parametrize(
-    ("region", "ml", "used"),
+    ("region", "ml", "entsoe_key", "used"),
     [
-        ("DK1", True, True),
-        ("DK1", False, False),
-        ("DK2", True, False),
-        ("DE", True, False),
+        ("DK1", True, None, True),
+        ("DK1", False, None, False),
+        ("DK2", True, None, False),
+        ("DE", True, None, False),
+        ("DE", True, "token", True),
+        ("NL", True, "token", False),
     ],
 )
 def test_the_outage_messages_need_the_model_and_a_region_they_help(
-    make: Callable[..., Harness], region: str, ml: bool, used: bool
+    make: Callable[..., Harness],
+    region: str,
+    ml: bool,
+    entsoe_key: str | None,
+    used: bool,
 ) -> None:
-    harness = make(region=region, ml=ml)
+    """Nord Pool's UMMs in ``UMM_REGIONS``; with a key ENTSO-E's documents (#138)."""
+    with patch(f"{HISTORY}.ENTSOE_OUTAGE_REGIONS", frozenset({"DE"})):
+        harness = make(region=region, ml=ml, entsoe_key=entsoe_key)
 
     assert (harness.updater.outages is harness.outages) is used
     assert (harness.updater.outages is None) is not used
-    assert harness.api_data["umm_outages"] is used
+    assert (harness.api_data["outages"] is harness.outages.attribution) is used
+    assert (harness.api_data["outages"] is None) is not used
 
 
 @pytest.mark.asyncio

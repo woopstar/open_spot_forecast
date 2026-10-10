@@ -29,7 +29,6 @@ from homeassistant.util import dt as dt_util, slugify as util_slugify
 from .api import NordpoolPrognosisSource, forecast_prognoses
 from .api.entsoe_load import EntsoeLoadSource
 from .api.gas_prices import GasPriceSource
-from .api.nordpool_umm import NordpoolUmmSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.time_series_source import HistorySource, TimeSeriesSource
 from .const import (
@@ -49,12 +48,11 @@ from .const import (
     ENTSOE_LOAD_REGIONS,
     GAS_PRICE_REGIONS,
     PRICE_SOURCE_DAYAHEAD,
-    UMM_REGIONS,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
     WEATHER_POINTS,
 )
-from .history_updater import HistoryUpdaterMixin, neighbour_sources
+from .history_updater import HistoryUpdaterMixin, neighbour_sources, outage_source
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
 from .price_source import DayAheadPrices, PriceSettings
@@ -207,12 +205,8 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if ml_predictor and self.region in GAS_PRICE_REGIONS
             else None
         )
-        # Nord Pool's outage messages (#123), in the regions where they help
-        self.outages = (
-            NordpoolUmmSource(hass, ml_predictor.storage, self.region)
-            if ml_predictor and self.region in UMM_REGIONS
-            else None
-        )
+        # Outage messages (#123, #138), in the regions where they help
+        self.outages = outage_source(hass, ml_predictor, self.region, key)
         # The neighbours' prices and zone weather: the cross-border model's
         # stage 1 (#29), only when the option is on
         self.neighbour_prices, self.neighbour_weather = neighbour_sources(
@@ -240,7 +234,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         api_data["entsoe_load"] = self.load is not None
         api_data["cross_border"] = bool(self.neighbour_prices)
         api_data["gas_price"] = self.gas is not None
-        api_data["umm_outages"] = self.outages is not None
+        api_data["outages"] = self.outages.attribution if self.outages else None
 
     def _notify(self, signal: str) -> None:
         """Tell the entities that ``api_data`` changed."""
