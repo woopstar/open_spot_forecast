@@ -1142,6 +1142,92 @@ hyperparameter optimization (#92) and without the cross-border model:
 day 1 MAE 3.41 and day 2 4.62 EUR ct/kWh (133 and 155 samples, bias −1.75
 and −3.78), too few days to compare with the backtest.
 
+### Benchmark against external forecasts (#115)
+
+The backtest and the live report measure OSF against itself. Whether its
+forecast is better or worse than the forecasts a Danish user can already get
+is measured by `scripts/benchmark.py` (dev-only, not shipped, nothing of it in
+`manifest.json`), for DK1 and DK2. None of these sources keeps a history of
+what it published (EpexPredictor's `evaluation` mode returns today's model for
+past slots, hindsight like the backtest's archived weather), and neither does
+OSF: its stored predictions are deleted once scored. So the forecasts are
+collected as they are published, OSF's at the same moment, and scored later.
+
+| Source                                                          | Access                                                                                                                            | Resolution, horizon | Unit    | Terms                                                                                                     |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------- | ------- | --------------------------------------------------------------------------------------------------------- |
+| `smartere`: Smartere Elforbrug                                  | `prognose.json` in the public repository [solmoller/Spotprisprognose](https://github.com/solmoller/Spotprisprognose) (EWII)       | Hourly, ~5.5 days   | EUR/MWh | Free for non-commercial consumer use; no redistribution, commercial use or refinement; not to be embedded |
+| `carnot`: [Carnot](https://www.carnot.dk/)                      | Personal key (`CARNOT_API_KEY`, `CARNOT_USER`), the endpoint the Energi Data Service integration uses                             | Hourly, 7 days      | DKK/MWh | Personal account; undocumented endpoint                                                                   |
+| `epex`: [EpexPredictor](https://github.com/b3nn0/EpexPredictor) | Public instance `epexpredictor.batzill.com`, one request per run                                                                  | 15 min, 7 days      | EUR/MWh | Fair use of the instance                                                                                  |
+| `osf`: Open Spot Forecast                                       | `get_forecast` with `raw: true` over Home Assistant's REST API (`HA_URL`, `HA_TOKEN`), or a learning-database export (`--osf-db`) | 15 min, 7 days      | per kWh | The raw spot price, no tariffs, surcharge or VAT                                                          |
+
+Actual prices are energy-charts' day-ahead prices (© Bundesnetzagentur |
+SMARD.de, CC BY 4.0), as in the backtest.
+
+**Licences shape the design.** Smartere Elforbrug's forecasts may be used but
+not redistributed or built into a product: the benchmark is a dev-only script,
+never a shipped connector and never a model input, the raw forecasts stay in
+the git-ignored `.cache/benchmark/`, and only aggregate error numbers are
+written down, with the source credited. Ask its author before putting such
+numbers in the README. Carnot's key and Home Assistant's token are read from
+the environment only and sent as request headers; they are never stored,
+printed or put in a URL (as `ENTSOE_API_KEY`).
+
+**Collect.** `collect` appends one row per `(source, origin, slot, price)` to
+`.cache/benchmark/<region>.db` (EUR/MWh, UTC), where `origin` is when the
+forecast was published: Smartere Elforbrug's own `Forecast created` (Danish
+local time; its `Time` values are UTC), and the fetch time for the others. It
+is idempotent: the same forecast is never stored twice, and a source fetched
+again before its forecast changed is not a new forecast. A source without
+credentials is skipped. Smartere Elforbrug's git history holds every past
+`prognose.json`, so `--backfill-days N` reconstructs its past forecasts with
+their original origins through the GitHub commits API (60 requests an hour
+without `GITHUB_TOKEN`; a run stopped by the limit continues when run again).
+Run it once or twice a day, before the day-ahead auction (e.g. 09:00 and
+11:30 local):
+
+```bash
+./scripts/quality.sh benchmark collect --region DK1
+./scripts/quality.sh benchmark collect --region DK1 --sources smartere --backfill-days 60
+./scripts/quality.sh benchmark collect --region DK1 --sources osf --osf-db .cache/live/dk1_live.db
+```
+
+**Report.** `report` scores every source per lead (1 to 7 days) for each local
+target day _T_ with two rules:
+
+- **Origin.** At lead _k_ a source is scored with its latest forecast
+  published before `--cutoff` (default 12:00 local) on day _T − k_. For
+  _k = 1_ that is before the auction result for _T_; later, every source, OSF
+  included (`include_known_prices`), repeats the published prices. A forecast
+  published after the cutoff is never used for that lead.
+- **Resolution.** Every source is averaged to hours and compared with the
+  hourly mean of the actual prices, so a 15-minute source (OSF,
+  EpexPredictor) gets no advantage or penalty against an hourly one. A day is
+  scored whole (23, 24 or 25 hours); a forecast that does not reach the end of
+  the day is left out for it.
+
+It prints MAE, RMSE and bias in EUR ct/kWh with the backtest's definitions
+(mean of the daily MAEs, root of the mean daily MSE; `HorizonScore`), with the
+backtest's `naive (same slot last week)` row as the common floor: first over
+the **paired days** only (every selected source has a forecast, so missing
+days cannot flatter a source), then over all days each source has. A third
+table measures what Smartere Elforbrug is built for, finding the cheap hours:
+the share of days whose forecast cheapest 3-hour window overlaps the actual
+one, and Spearman's rank correlation of the day's hourly prices.
+
+```bash
+./scripts/quality.sh benchmark report --region DK1 --since 2026-10-11
+./scripts/quality.sh benchmark report --region DK1 --sources smartere,osf --cutoff 11:00
+```
+
+The benchmark is not comparable with the backtest's `current` row: that row
+gets archived, near-same-day weather forecasts and is optimistic from day 2
+on (see [Running](#running)), which is why OSF's forecast is collected live
+here.
+
+**No results are recorded yet.** OSF's own forecasts are collected from
+2026-10-10 on; record the paired table here once it covers 14 days or more
+(`MIN_REPORT_DAYS`, as the live report).
+
 ### Zone weather (#22)
 
 DK1, 365 daily origins from 2025-09-24 to 2026-09-23, retrained daily, EUR

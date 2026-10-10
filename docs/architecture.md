@@ -305,7 +305,10 @@ Features (23):
 
 A Carnot-style decomposition (separate wind/solar/consumption models feeding
 into a price model) would require historical generation and consumption data
-that isn't currently available.
+that isn't currently available. How the forecast compares with Carnot's,
+Smartere Elforbrug's and EpexPredictor's is measured by the dev-only benchmark
+(`scripts/benchmark.py`, #115; see
+[ML Documentation](ml_documentation.md#benchmark-against-external-forecasts-115)).
 
 ## Training vs Prediction Segmentation
 

@@ -241,7 +241,10 @@ def _retry_after_seconds(value: str | None) -> float:
 
 
 def _http_get_json(
-    url: str, sleep: Callable[[float], None] = time.sleep
+    url: str,
+    sleep: Callable[[float], None] = time.sleep,
+    headers: Mapping[str, str] | None = None,
+    data: bytes | None = None,
 ) -> dict[str, Any]:
     """Fetch and decode a JSON document, retrying transient failures.
 
@@ -250,9 +253,17 @@ def _http_get_json(
     doubling back-off (``TRANSIENT_BACKOFF_SECONDS`` first). Other HTTP
     errors (404, 400, ...) are raised at once. At most ``HTTP_ATTEMPTS``
     attempts, then the last error propagates.
+
+    Args:
+        url: The document's URL.
+        sleep: Waits between attempts (replaced in tests).
+        headers: Extra request headers (e.g. a credential); never printed.
+        data: A request body; the request is then a POST.
     """
     request = urllib.request.Request(
-        url, headers={"User-Agent": "open-spot-forecast-backtest"}
+        url,
+        data=data,
+        headers={"User-Agent": "open-spot-forecast-backtest", **(headers or {})},
     )
     attempt = 1
     while True:

@@ -196,6 +196,15 @@ repository root (location-revealing weather; `.gitignore` blocks root learning D
 `-shm`/`-wal`, see `docs/persistence.md` → Live Exports for Analysis). Procedure: `docs/ml_documentation.md` →
 Live accuracy.
 
+`scripts/benchmark.py` (dev-only, #115) compares OSF with external forecasts (Smartere
+Elforbrug, Carnot, EpexPredictor): `collect` stores every source's forecast as published,
+OSF's too (`get_forecast` `raw` over REST, or `--osf-db`), in the git-ignored
+`.cache/benchmark/<region>.db`; `report` scores them per lead with the backtest's metrics, a
+forecast only counting for day T at lead k if published before `--cutoff` on T−k. Sources and
+storage live in `scripts/benchmark_sources.py`. Smartere Elforbrug's forecasts may not be
+redistributed or refined: never ship a connector for them, never feed them to the model, never
+commit them (tests use made-up prices); credentials come from the environment as headers only.
+
 ### Learning storage
 
 `LearningStorage` in `ml/storage.py` is the single SQLite persistence layer. Never open a
