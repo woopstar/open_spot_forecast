@@ -139,7 +139,7 @@ for the Stromligning entities in its `apps.yaml`: see
   [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)'s outage
   documents (API key): unavailable plant and interconnector capacity per
   slot, as known when each price was set, in the regions where it improves
-  the forecast (DK1)
+  the forecast (DK1 with Nord Pool, FR with ENTSO-E)
 - **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
   learns the neighbours' day-ahead prices from their weather and feeds the
   forecasts to the region's model (more CPU per training)

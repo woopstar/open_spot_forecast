@@ -269,7 +269,9 @@ UMM_REGIONS = frozenset({"DK1"})
 # borders of the zones that publish there (the neighbouring zones' EICs;
 # zones outside REGIONS are given by EIC only). With an ENTSO-E key the
 # backtest can measure every zone listed here; the model uses the documents
-# only in ENTSOE_OUTAGE_REGIONS (docs/ml_documentation.md)
+# only in ENTSOE_OUTAGE_REGIONS, where the backtest found a lower error:
+# FR (days 1-5; the nuclear fleet's unit outages). DE, NL and BE got worse
+# (docs/ml_documentation.md)
 ENTSOE_OUTAGE_BORDERS: dict[str, tuple[str, ...]] = {
     "DE": (
         "10YDK-1--------W",  # DK1
@@ -306,7 +308,7 @@ ENTSOE_OUTAGE_BORDERS: dict[str, tuple[str, ...]] = {
         "10YGB----------A",  # GB
     ),
 }
-ENTSOE_OUTAGE_REGIONS: frozenset[str] = frozenset()
+ENTSOE_OUTAGE_REGIONS = frozenset({"FR"})
 
 # Prediction attribute window. The full 7-day forecast (672 slots) blows past
 # Home Assistant's 16 KB attribute limit, so only the next N hours of predictions

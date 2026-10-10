@@ -1461,9 +1461,44 @@ window), `--horizon-days 7`, with the zone weather; `--outages none`
 against `--outages entsoe`. Training rows get the documents published (the
 current revision's `createdDateTime`) by their day-ahead gate, target rows
 those published before the horizon cutoff. MAE in EUR ct/kWh, **without /
-with** the two outage features.
+with** the two outage features. Recorded 2026-10-10.
 
-<!-- ENTSOE_OUTAGE_RESULTS -->
+| Zone | Model                | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | -------------------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DE   | current (NumPy GBM)  | 2.13 / 2.14 | 2.24 / 2.26 | 2.27 / 2.29 | 2.29 / 2.31 | 2.30 / 2.32 | 2.31 / 2.33 | 2.33 / 2.35 |
+| DE   | lightgbm (reference) | 2.01 / 2.01 | 2.17 / 2.18 | 2.21 / 2.23 | 2.24 / 2.24 | 2.28 / 2.25 | 2.29 / 2.26 | 2.30 / 2.30 |
+| NL   | current (NumPy GBM)  | 2.17 / 2.19 | 2.29 / 2.34 | 2.35 / 2.41 | 2.37 / 2.44 | 2.38 / 2.47 | 2.41 / 2.51 | 2.43 / 2.53 |
+| NL   | lightgbm (reference) | 2.15 / 2.08 | 2.28 / 2.29 | 2.34 / 2.35 | 2.38 / 2.38 | 2.41 / 2.42 | 2.44 / 2.45 | 2.49 / 2.51 |
+| BE   | current (NumPy GBM)  | 2.31 / 2.29 | 2.44 / 2.46 | 2.50 / 2.52 | 2.52 / 2.56 | 2.54 / 2.57 | 2.57 / 2.59 | 2.58 / 2.59 |
+| BE   | lightgbm (reference) | 2.25 / 2.24 | 2.43 / 2.45 | 2.48 / 2.52 | 2.51 / 2.57 | 2.55 / 2.59 | 2.59 / 2.63 | 2.64 / 2.65 |
+| FR   | current (NumPy GBM)  | 2.64 / 2.55 | 2.85 / 2.78 | 2.97 / 2.92 | 3.06 / 3.03 | 3.09 / 3.09 | 3.13 / 3.14 | 3.14 / 3.18 |
+| FR   | lightgbm (reference) | 2.50 / 2.41 | 2.78 / 2.72 | 2.92 / 2.87 | 2.99 / 2.93 | 3.01 / 2.98 | 3.03 / 3.03 | 3.05 / 3.05 |
+
+The naive row is 3.78 (DE), 3.44 (NL), 3.42 (BE), 3.69 (FR) at 1d and unchanged per zone. What the
+numbers say:
+
+- **FR gains clearly**: −0.09 ct/kWh MAE at day 1 for the production model
+  (2.64 → 2.55, RMSE 3.57 → 3.49), −0.07 at 2d, −0.05 at 3d, −0.03 at 4d,
+  level at 5d, then +0.01 at 6d and +0.04 at 7d; LightGBM gains −0.09 at
+  1d and is never worse. France's price is set by a nuclear fleet whose
+  unit outages (A80 documents, planned refuelling and forced) are large,
+  long and well announced, so the plant feature carries real signal.
+- **DE, NL and BE do not**: DE is +0.01 at 1d and +0.02 later, NL +0.02 at
+  1d and +0.05 to +0.10 later, BE −0.02 at 1d but +0.02 to +0.04 at days
+  2-5 (the DK2 pattern of #123). Two reasons specific to these zones: the
+  grid feature counts restricted assets instead of MW (A78 has no nominal
+  capacity; Germany's TSOs publish hundreds of internal-line documents, so
+  the count is a congestion proxy at best), and the platform's
+  latest-revision-only history means every document enters at its last
+  revision's publication time — in DE a long outage is revised dozens of
+  times, so the backtest's training rows see it late. The live archive
+  improves on the second point over time; the backtest cannot.
+
+**Decision**: `ENTSOE_OUTAGE_REGIONS` is `{"FR"}`: a lower error at days
+1-5 that outweighs the +0.04 at 7d (DK1 was kept at ±0.02; DK2 rejected at
++0.06 to +0.16). DE, NL and BE stay off; `ENTSOE_OUTAGE_BORDERS` keeps them
+measurable, and a re-run once a live archive has accumulated the revision
+history (#122's export route) is the next step there.
 
 ```bash
 ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages none
