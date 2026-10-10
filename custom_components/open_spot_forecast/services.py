@@ -38,6 +38,8 @@ from .const import (
     CONF_INCLUDE_KNOWN_PRICES,
     DEFAULT_INCLUDE_KNOWN_PRICES,
     DOMAIN,
+    EVALUATION_LEAD_HOURS,
+    EVALUATION_LEAD_TIMES,
     UPDATE_SIGNAL,
 )
 from .price_output import PriceOutput
@@ -54,6 +56,7 @@ ATTR_HOURS = "hours"
 ATTR_HOURLY = "hourly"
 ATTR_INCLUDE_KNOWN = "include_known"
 ATTR_EVALUATION = "evaluation"
+ATTR_TARGET_HOURS = "target_hours"
 ATTR_RAW = "raw"
 
 # The forecast reaches 7 days past the known prices: at most 9 days in all
@@ -70,6 +73,10 @@ GET_FORECAST_SCHEMA = vol.Schema(
         vol.Optional(ATTR_HOURLY): cv.boolean,
         vol.Optional(ATTR_INCLUDE_KNOWN): cv.boolean,
         vol.Optional(ATTR_EVALUATION, default=False): cv.boolean,
+        # Which lead time's predictions the evaluation returns (#113)
+        vol.Optional(ATTR_TARGET_HOURS, default=EVALUATION_LEAD_HOURS): vol.All(
+            vol.Coerce(float), vol.In(EVALUATION_LEAD_TIMES)
+        ),
         vol.Optional(ATTR_RAW, default=False): cv.boolean,
     }
 )
@@ -182,9 +189,16 @@ async def _async_get_forecast(call: ServiceCall) -> ServiceResponse:
         tariffs,
     )
     if call.data[ATTR_EVALUATION]:
-        # Every kept slot's day-ahead prediction next to its actual price
-        # (#36), per slot; the raw spot price too with ``raw``
-        response["evaluation"] = output.evaluation(ml_predictor.evaluation, tariffs)
+        # Every kept slot's day-ahead prediction (or the one kept at another
+        # lead time, #113) next to its actual price (#36), per slot; the raw
+        # spot price too with ``raw``
+        target = call.data[ATTR_TARGET_HOURS]
+        rows = (
+            ml_predictor.evaluation
+            if abs(target - EVALUATION_LEAD_HOURS) < 1e-9
+            else ml_predictor.evaluation_snapshots.get(target, [])
+        )
+        response["evaluation"] = output.evaluation(rows, tariffs)
     return response
 
 

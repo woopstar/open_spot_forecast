@@ -12,6 +12,9 @@ from custom_components.open_spot_forecast.accuracy_sensor import (
     LeadTimeAccuracySensor,
 )
 from custom_components.open_spot_forecast.const import DOMAIN
+from custom_components.open_spot_forecast.day_ahead_sensor import (
+    DayAheadPredictionSensor,
+)
 from custom_components.open_spot_forecast.evaluation_sensor import (
     ForecastEvaluationSensor,
 )
@@ -105,11 +108,12 @@ async def test_async_setup_entry_adds_accuracy_sensors_with_ml():
     async_add_entities.assert_called_once()
     sensors, update = async_add_entities.call_args[0]
     assert update is True
-    assert len(sensors) == 19
+    assert len(sensors) == 20
     assert isinstance(sensors[0], SpotPriceSensor)
     assert isinstance(sensors[9], LearningMetricsSensor)
     assert all(isinstance(s, LeadTimeAccuracySensor) for s in sensors[10:18])
     assert isinstance(sensors[18], ForecastEvaluationSensor)
+    assert isinstance(sensors[19], DayAheadPredictionSensor)
 
 
 @pytest.mark.asyncio

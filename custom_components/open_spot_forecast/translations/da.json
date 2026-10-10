@@ -121,6 +121,9 @@
       "forecast_evaluation": {
         "name": "Prognoseevaluering"
       },
+      "day_ahead_prediction": {
+        "name": "Prognose fra dagen før"
+      },
       "predbat_import_today": {
         "name": "Predbat import i dag"
       },
@@ -177,6 +180,10 @@
         "evaluation": {
           "name": "Evaluering",
           "description": "Returnér også, for de seneste 7 dages intervaller, prognosen lavet cirka et døgn i forvejen sammen med den faktiske pris (evaluation: start, end, predicted, actual, lead_hours)."
+        },
+        "target_hours": {
+          "name": "Evalueringens tidshorisont",
+          "description": "Hvilken prognose evalueringen returnerer: den, der blev lavet tættest på 24 timer i forvejen (standard), eller den, der er gemt ved 12 eller 48 timer i forvejen (kun for intervaller med en prognose inden for 6 eller 12 timer derfra)."
         },
         "raw": {
           "name": "Rå spotpris",

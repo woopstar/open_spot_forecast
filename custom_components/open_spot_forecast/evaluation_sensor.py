@@ -5,6 +5,8 @@ sensor. This sensor keeps, for the last ``EVALUATION_WINDOW_HOURS``, the
 prediction made closest to ``EVALUATION_LEAD_HOURS`` before each slot next
 to the slot's actual price, as compact parallel arrays (see
 ``forecast_attributes``), so a dashboard can chart predicted against actual.
+The predictions kept at the other ``EVALUATION_LEAD_TIMES`` (#113) are further
+arrays aligned with them (``t12``, ``t48``; None where there is none).
 Its state is the mean absolute error over that window. Prices are converted
 like every exposed price (``PriceOutput``: unit, surcharge, VAT), with the
 slot's tariff added to both (#107), so the error stays the spot price's.
@@ -26,11 +28,19 @@ from .attribution import ModelAttributionMixin
 from .const import (
     DOMAIN,
     EVALUATION_LEAD_HOURS,
+    EVALUATION_LEAD_TIMES,
     EVALUATION_WINDOW_HOURS,
     UPDATE_SIGNAL,
 )
 from .price_output import PriceOutput
 from .time_slots import SLOT_MINUTES, parse_utc
+
+# The other lead times a prediction is kept for (#113), by attribute name
+EXTRA_LEAD_TIME_ARRAYS: dict[str, float] = {
+    f"t{target:g}": target
+    for target in EVALUATION_LEAD_TIMES
+    if abs(target - EVALUATION_LEAD_HOURS) > 1e-9
+}
 
 
 class ForecastEvaluationSensor(ModelAttributionMixin, SensorEntity):
@@ -93,6 +103,23 @@ class ForecastEvaluationSensor(ModelAttributionMixin, SensorEntity):
         errors = [abs(row["predicted"] - row["actual"]) for _, row in window]
         return float(round(sum(errors) / len(errors), self.output.precision))
 
+    def _extra_predictions(
+        self, window: list[tuple[datetime, dict[str, Any]]]
+    ) -> dict[str, list[float | None]]:
+        """Return the other lead times' predictions, one per slot of the window."""
+        ml_predictor = self.api_data.get("ml_predictor")
+        snapshots = ml_predictor.evaluation_snapshots if ml_predictor else {}
+        arrays: dict[str, list[float | None]] = {}
+        for name, target in EXTRA_LEAD_TIME_ARRAYS.items():
+            predicted = {
+                row["start"]: row["predicted"]
+                for row in self.output.evaluation(
+                    snapshots.get(target, []), self.api_data.get("tariffs")
+                )
+            }
+            arrays[name] = [predicted.get(row["start"]) for _, row in window]
+        return arrays
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the predicted and actual series as compact parallel arrays."""
@@ -113,4 +140,5 @@ class ForecastEvaluationSensor(ModelAttributionMixin, SensorEntity):
             "s": [int(start.timestamp()) for start, _ in window],
             "t": [row["predicted"] for _, row in window],
             "a": [row["actual"] for _, row in window],
+            **self._extra_predictions(window),
         }

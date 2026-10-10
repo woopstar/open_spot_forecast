@@ -1088,7 +1088,9 @@ learning-database export:
   is the local day after the origin (0-24 h after midnight), so `day_1`
   compares with the backtest's 1d and `day_2` with its 2d only roughly.
 - **Evaluation** (`evaluation`, the last 7 days): the same metrics for the
-  prediction made closest to 24 h ahead of each slot.
+  prediction made closest to 24 h ahead of each slot, and a row per other
+  lead-time snapshot (`12 h snapshot`, `48 h snapshot`, #113) over the slots
+  that have one, each with its mean real lead time.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
   count, and the `hpo_*` keys of an export from before #92.
 - **Coverage**: the dates the data spans, with a warning below 14 days.

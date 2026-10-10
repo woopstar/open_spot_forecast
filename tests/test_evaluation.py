@@ -3,6 +3,8 @@
 Self-learning removes a slot's predictions once it has scored them. The one
 made closest to a day ahead is kept next to the actual price, and a
 diagnostic sensor and the ``get_forecast`` action expose the recent series.
+So are the snapshots at the other lead times (12 and 48 hours ahead, #113),
+when a prediction was made close enough to them.
 """
 
 import sqlite3
@@ -14,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+import voluptuous as vol
+import yaml
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import EntityCategory
@@ -22,13 +26,23 @@ from homeassistant.util import dt as dt_util
 from custom_components.open_spot_forecast.const import (
     DOMAIN,
     EVALUATION_KEEP_DAYS,
+    EVALUATION_LEAD_HOURS,
+    EVALUATION_LEAD_TIMES,
     RECORDER_MAX_ATTRIBUTES_BYTES,
 )
 from custom_components.open_spot_forecast.evaluation_sensor import (
     ForecastEvaluationSensor,
 )
 from custom_components.open_spot_forecast.forecast_attributes import attributes_size
-from custom_components.open_spot_forecast.ml.lead_time import evaluation_prediction
+from custom_components.open_spot_forecast.ml.evaluation_storage import (
+    EVALUATION_TABLE_SQL,
+    migrate_evaluation_to_lead_times,
+)
+from custom_components.open_spot_forecast.ml.lead_time import (
+    evaluation_prediction,
+    evaluation_snapshots,
+    snapshot_tolerance,
+)
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from custom_components.open_spot_forecast.price_output import PriceOutput
@@ -110,6 +124,58 @@ def test_ties_go_to_the_later_prediction_and_bad_leads_are_skipped() -> None:
     assert evaluation_prediction([{"start": "x", "stored_at": "y"}]) is None
 
 
+# --- A snapshot per lead time (#113) -------------------------------------------------
+
+
+def test_the_day_ahead_lead_time_is_one_of_the_snapshots() -> None:
+    assert EVALUATION_LEAD_HOURS in EVALUATION_LEAD_TIMES
+    assert EVALUATION_LEAD_TIMES == (12.0, 24.0, 48.0)
+
+
+def test_a_snapshot_may_be_half_the_gap_to_its_neighbour_away() -> None:
+    assert snapshot_tolerance(12.0) == pytest.approx(6.0)
+    assert snapshot_tolerance(48.0) == pytest.approx(12.0)
+    # The day-ahead one is always kept, as before
+    assert snapshot_tolerance(EVALUATION_LEAD_HOURS) is None
+
+
+def test_each_lead_time_keeps_its_closest_prediction() -> None:
+    snapshots = evaluation_snapshots(
+        [
+            _prediction(50, 1.0),
+            _prediction(44, 2.0),
+            _prediction(26, 3.0),
+            _prediction(14, 4.0),
+            _prediction(8, 5.0),
+        ]
+    )
+
+    assert {target: chosen[0]["price"] for target, chosen in snapshots.items()} == {
+        12.0: pytest.approx(4.0),
+        24.0: pytest.approx(3.0),
+        48.0: pytest.approx(1.0),
+    }
+    # Each with its real lead time
+    assert snapshots[12.0][1] == pytest.approx(14.0)
+    assert snapshots[48.0][1] == pytest.approx(50.0)
+
+
+def test_a_lead_time_without_a_close_prediction_is_skipped() -> None:
+    # 31 h ahead is neither a 12 h (6-18 h) nor a 48 h (36-60 h) snapshot
+    snapshots = evaluation_snapshots([_prediction(31, 1.0)])
+
+    assert list(snapshots) == [EVALUATION_LEAD_HOURS]
+    assert snapshots[EVALUATION_LEAD_HOURS][1] == pytest.approx(31.0)
+    # The edges of the tolerance still count
+    assert set(evaluation_snapshots([_prediction(18), _prediction(36)])) == {
+        12.0,
+        24.0,
+        48.0,
+    }
+    assert set(evaluation_snapshots([_prediction(18.5), _prediction(35.5)])) == {24.0}
+    assert evaluation_snapshots([_prediction(-1)]) == {}
+
+
 # --- Storage -------------------------------------------------------------------------
 
 
@@ -134,6 +200,80 @@ def test_storage_round_trip_replace_and_prune(tmp_path: Path) -> None:
         storage.close()
 
 
+def test_storage_keeps_a_row_per_slot_and_lead_time(tmp_path: Path) -> None:
+    storage = LearningStorage(_hass(tmp_path), "DK1")
+    try:
+        storage.upsert_evaluation("2026-09-24T10:00:00Z", 1.0, 1.5, 23.0)
+        storage.upsert_evaluation("2026-09-24T10:00:00Z", 1.1, 1.5, 13.0, 12.0)
+        storage.upsert_evaluation("2026-09-24T10:00:00Z", 1.2, 1.5, 11.0, 12.0)
+        storage.upsert_evaluation("2026-09-24T10:00:00Z", 1.3, 1.5, 47.0, 48.0)
+
+        since = "2026-09-24T00:00:00Z"
+        assert [row["predicted"] for row in storage.get_evaluation(since)] == [
+            pytest.approx(1.0)
+        ]
+        twelve = storage.get_evaluation(since, 12.0)
+        assert [row["predicted"] for row in twelve] == [pytest.approx(1.2)]
+        assert twelve[0]["lead_hours"] == pytest.approx(11.0)
+        assert storage.get_evaluation(since, 48.0)[0]["predicted"] == pytest.approx(1.3)
+        # Pruning removes every lead time's row of a slot
+        assert storage.delete_evaluation_before("2026-09-25T00:00:00Z") == 3
+    finally:
+        storage.close()
+
+
+def test_a_table_from_before_the_lead_times_is_rebuilt(tmp_path: Path) -> None:
+    storage = LearningStorage(_hass(tmp_path), "DK1")
+    path = storage.db_path
+    storage.close()
+    with sqlite3.connect(path) as conn:
+        conn.executescript(
+            """DROP TABLE evaluation;
+               CREATE TABLE evaluation (
+                   timestamp   TEXT    PRIMARY KEY,
+                   predicted   REAL    NOT NULL,
+                   actual      REAL    NOT NULL,
+                   lead_hours  REAL    NOT NULL
+               );
+               INSERT INTO evaluation VALUES ('2026-09-24T10:00:00Z', 1.0, 1.5, 22.0);
+            """
+        )
+    conn.close()
+
+    # Opening the database migrates it; a second start changes nothing
+    for kept_at_12_hours in (0, 1):
+        storage = LearningStorage(_hass(tmp_path), "DK1")
+        try:
+            rows = storage.get_evaluation("2026-09-24T00:00:00Z")
+            assert len(rows) == 1
+            assert rows[0]["predicted"] == pytest.approx(1.0)
+            assert rows[0]["lead_hours"] == pytest.approx(22.0)
+            twelve = storage.get_evaluation("2026-09-24T00:00:00Z", 12.0)
+            assert len(twelve) == kept_at_12_hours
+            # The rebuilt table takes a second lead time for the same slot
+            storage.upsert_evaluation("2026-09-24T10:00:00Z", 1.1, 1.5, 12.0, 12.0)
+        finally:
+            storage.close()
+
+
+def test_the_migration_leaves_new_and_missing_tables_alone() -> None:
+    conn = sqlite3.connect(":memory:")
+    try:
+        # No table yet (a new database): nothing to migrate
+        migrate_evaluation_to_lead_times(conn)
+        assert conn.execute("SELECT name FROM sqlite_master").fetchall() == []
+        conn.execute(EVALUATION_TABLE_SQL)
+        conn.execute(
+            "INSERT INTO evaluation VALUES ('2026-09-24T10:00:00Z', 12.0, 1, 2, 11)"
+        )
+        migrate_evaluation_to_lead_times(conn)
+        assert conn.execute("SELECT target_hours FROM evaluation").fetchall() == [
+            (12.0,)
+        ]
+    finally:
+        conn.close()
+
+
 # --- Self-learning -------------------------------------------------------------------
 
 
@@ -156,6 +296,41 @@ def test_learning_keeps_the_day_ahead_prediction(predictor: SpotPricePredictor) 
             "lead_hours": pytest.approx(23.0),
         }
     ]
+
+
+def test_learning_keeps_a_snapshot_per_lead_time(predictor: SpotPricePredictor) -> None:
+    slot = _slot()
+    _insert(predictor.storage, slot, 46, 1.0)
+    _insert(predictor.storage, slot, 23, 2.0)
+    _insert(predictor.storage, slot, 13, 3.0)
+
+    assert predictor.learn_from_actual_price(slot.isoformat(), 2.5) is True
+
+    snapshots = predictor.evaluation_snapshots
+    assert predictor.evaluation is snapshots[EVALUATION_LEAD_HOURS]
+    assert [
+        (target, rows[0]["predicted"], rows[0]["lead_hours"])
+        for target, rows in snapshots.items()
+    ] == [
+        (12.0, pytest.approx(3.0), pytest.approx(13.0)),
+        (24.0, pytest.approx(2.0), pytest.approx(23.0)),
+        (48.0, pytest.approx(1.0), pytest.approx(46.0)),
+    ]
+    assert all(rows[0]["actual"] == pytest.approx(2.5) for rows in snapshots.values())
+
+
+def test_learning_skips_a_lead_time_nothing_was_predicted_near(
+    predictor: SpotPricePredictor,
+) -> None:
+    slot = _slot()
+    _insert(predictor.storage, slot, 31, 1.0)
+
+    assert predictor.learn_from_actual_price(slot.isoformat(), 2.5) is True
+
+    assert predictor.evaluation[0]["lead_hours"] == pytest.approx(31.0)
+    assert predictor.evaluation_snapshots[12.0] == []
+    assert predictor.evaluation_snapshots[48.0] == []
+    assert predictor.storage.get_evaluation("2000-01-01T00:00:00Z", 12.0) == []
 
 
 def test_the_evaluation_survives_a_restart(tmp_path: Path) -> None:
@@ -233,10 +408,14 @@ async def test_reset_learning_clears_the_evaluation() -> None:
     predictor.storage = Mock()
     predictor.storage.async_clear_storage = AsyncMock(return_value=True)
     predictor.evaluation = [{"start": "x"}]
+    predictor.evaluation_snapshots = {12.0: [{"start": "x"}]}
+    predictor.day_ahead_predictions = {"2026-09-24T10:00:00Z": 1.0}
 
     await predictor.reset_learning()
 
     assert predictor.evaluation == []
+    assert predictor.evaluation_snapshots == {}
+    assert predictor.day_ahead_predictions == {}
 
 
 # --- The sensor ----------------------------------------------------------------------
@@ -258,10 +437,15 @@ def _rows(count: int, first: datetime) -> list[dict[str, Any]]:
     ]
 
 
-def _sensor(rows: list[dict[str, Any]] | None) -> ForecastEvaluationSensor:
+def _sensor(
+    rows: list[dict[str, Any]] | None,
+    snapshots: dict[float, list[dict[str, Any]]] | None = None,
+) -> ForecastEvaluationSensor:
     api_data: dict[str, Any] = {}
     if rows is not None:
-        api_data["ml_predictor"] = Mock(evaluation=rows, is_trained=True)
+        api_data["ml_predictor"] = Mock(
+            evaluation=rows, evaluation_snapshots=snapshots or {}, is_trained=True
+        )
     return ForecastEvaluationSensor(
         Mock(), MagicMock(entry_id="test"), api_data, "DKK", PriceOutput(vat=0.25)
     )
@@ -305,12 +489,43 @@ def test_the_sensor_shows_the_last_48_hours() -> None:
 
 
 def test_the_attributes_stay_under_16_kb() -> None:
-    sensor = _sensor(_rows(7 * 96, NOW - timedelta(days=7)))
+    # Every slot of the week has a snapshot at every lead time
+    rows = _rows(7 * 96, NOW - timedelta(days=7))
+    sensor = _sensor(rows, {12.0: rows, 48.0: rows})
 
     _, attributes = _read(sensor)
 
+    assert len(attributes["t12"]) == len(attributes["t48"]) == 48 * 4
+    assert None not in attributes["t12"]
     stored = {**attributes, "attribution": sensor.attribution, "friendly_name": "x"}
     assert attributes_size(stored) < RECORDER_MAX_ATTRIBUTES_BYTES
+
+
+def test_the_other_lead_times_are_arrays_aligned_with_the_slots() -> None:
+    rows = _rows(4, NOW - timedelta(hours=1))
+    # 12 h ahead: the second and fourth slot only; 48 h ahead: none
+    twelve = [{**rows[1], "predicted": 2.0}, {**rows[3], "predicted": 3.0}]
+
+    _, attributes = _read(_sensor(rows, {12.0: twelve, 48.0: []}))
+
+    # Converted like every price: VAT 25 %
+    assert attributes["t12"] == [None, pytest.approx(2.5), None, pytest.approx(3.75)]
+    assert attributes["t48"] == [None, None, None, None]
+    # The day-ahead series is unchanged
+    assert attributes["t"] == pytest.approx([1.25, 1.2625, 1.275, 1.2875], abs=1e-3)
+    assert set(attributes) == {
+        "interval_minutes",
+        "unit",
+        "lead_hours",
+        "window_hours",
+        "samples",
+        "bias",
+        "s",
+        "t",
+        "a",
+        "t12",
+        "t48",
+    }
 
 
 def test_without_data_the_sensor_is_unknown() -> None:
@@ -320,12 +535,13 @@ def test_without_data_the_sensor_is_unknown() -> None:
         assert attributes["samples"] == 0
         assert attributes["bias"] is None
         assert attributes["s"] == []
+        assert attributes["t12"] == attributes["t48"] == []
 
 
 # --- The action ----------------------------------------------------------------------
 
 
-async def _call(evaluation: bool | None) -> Any:
+async def _call(evaluation: bool | None, target_hours: Any = None) -> Any:
     entry = MagicMock()
     entry.entry_id = "entry"
     entry.domain = DOMAIN
@@ -337,12 +553,18 @@ async def _call(evaluation: bool | None) -> Any:
     predictor = MagicMock()
     predictor.predictions = []
     predictor.evaluation = _rows(2, NOW - timedelta(hours=1))
+    predictor.evaluation_snapshots = {
+        12.0: [{**_rows(1, NOW - timedelta(hours=1))[0], "lead_hours": 13.0}],
+        24.0: predictor.evaluation,
+        48.0: [],
+    }
     hass.data = {DOMAIN: {"entry": {"ml_predictor": predictor}}}
     call = Mock()
     call.hass = hass
-    call.data = GET_FORECAST_SCHEMA(
-        {} if evaluation is None else {"evaluation": evaluation}
-    )
+    data = {} if evaluation is None else {"evaluation": evaluation}
+    if target_hours is not None:
+        data["target_hours"] = target_hours
+    call.data = GET_FORECAST_SCHEMA(data)
     with patch("homeassistant.util.dt.utcnow", return_value=NOW):
         return await _async_get_forecast(call)
 
@@ -369,3 +591,35 @@ async def test_the_action_returns_the_evaluation_on_request() -> None:
     ]
     assert "evaluation" not in await _call(None)
     assert "evaluation" not in await _call(False)
+
+
+@pytest.mark.asyncio
+async def test_the_action_returns_another_lead_time_on_request() -> None:
+    day_ahead = (await _call(True))["evaluation"]
+
+    # The selector sends the option as a string
+    twelve = (await _call(True, "12"))["evaluation"]
+
+    assert [row["lead_hours"] for row in twelve] == [pytest.approx(13.0)]
+    assert twelve[0]["start"] == "2026-09-24T13:00:00+02:00"
+    assert (await _call(True, 24))["evaluation"] == day_ahead
+    assert (await _call(True, 48.0))["evaluation"] == []
+    assert "evaluation" not in await _call(None, 12)
+    with pytest.raises(vol.Invalid):
+        await _call(True, 36)
+
+
+def test_the_action_offers_every_lead_time() -> None:
+    services = yaml.safe_load(
+        (
+            Path(__file__).parent.parent
+            / "custom_components"
+            / "open_spot_forecast"
+            / "services.yaml"
+        ).read_text()
+    )
+
+    options = services["get_forecast"]["fields"]["target_hours"]["selector"]["select"][
+        "options"
+    ]
+    assert [float(option) for option in options] == list(EVALUATION_LEAD_TIMES)

@@ -20,6 +20,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `config_flow.py`         | Two-step config flow (basic settings → sensor configuration) + options flow                                                                                 |
 | `sensor.py`              | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                           |
 | `evaluation_sensor.py`   | Diagnostic `Forecast evaluation` sensor (#36): MAE and s/t/a arrays of the day-ahead prediction vs the actual price, last 48 h                              |
+| `day_ahead_sensor.py`    | Diagnostic `Day-ahead prediction` sensor (#113): the ~24 h-ahead prediction of the current slot as a recorded state (`ml_predictor.day_ahead_prediction()`) |
 | `accuracy_sensor.py`     | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                    |
 | `predbat_sensor.py`      | Optional Predbat rate entities (#124): import/export × today/tomorrow, Stromligning's `prices_today` / `prices_tomorrow` shape, `kr/kWh`, budget-trimmed    |
 | `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                           |
@@ -63,7 +64,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state   |
 | `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                |
 | `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                           |
-| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the day-ahead prediction next to the actual price, #36)                              |
+| `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)         |
 | `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                 |
 | `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                 |
 
@@ -355,7 +356,7 @@ SQLite database at `/config/.storage/open_spot_forecast_{region}_learning.db`.
 | `weather_history`    | `timestamp` (UTC key)                                  | 15-min weather snapshots, keyed by UTC slot start (`…Z`)                |
 | `meta`               | `key`                                                  | Training state, schema version                                          |
 | `lead_time_accuracy` | `(date, bucket)`                                       | Daily per-lead-time error sums (rolling 30 days)                        |
-| `evaluation`         | `timestamp` (UTC key)                                  | Per scored slot: the ~24 h-ahead prediction and the actual price (#36)  |
+| `evaluation`         | `(timestamp, target_hours)`                            | Per scored slot and lead time (12/24/48 h): prediction and actual (#36) |
 | `umm_messages`       | `(message_id, version)`                                | Every UMM outage message version for the area (#123)                    |
 | `umm_periods`        | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable MW per unit and period                          |
 

@@ -108,6 +108,10 @@ class SpotPricePredictor(
         self.lead_time_accuracy: dict[str, dict[str, float | int]] = {}
         # Recent slots' day-ahead prediction next to the actual price (#36)
         self.evaluation: list[dict[str, Any]] = []
+        # The same series per lead time in EVALUATION_LEAD_TIMES (#113)
+        self.evaluation_snapshots: dict[float, list[dict[str, Any]]] = {}
+        # The day-ahead prediction of the current and coming slots (#113)
+        self.day_ahead_predictions: dict[str, float] = {}
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)

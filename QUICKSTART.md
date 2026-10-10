@@ -367,7 +367,31 @@ series:
 ```
 
 With Plotly Graph Card, use `meta.s`, `meta.t` and `meta.a` in a filter as in
-the forecast example above.
+the forecast example above. The arrays `t12` and `t48` hold what was predicted
+12 and 48 hours ahead of the same slots (`null` where there was no such
+prediction), for a third and fourth series.
+
+For more than 48 hours, use the diagnostic **Day-ahead prediction** sensor:
+its state is what was predicted a day ago for the slot that is current now,
+so Home Assistant's history keeps the day-ahead forecast. A plain history
+graph over it and the actual price needs no custom card:
+
+```yaml
+type: history-graph
+title: Forecast vs actual (a day ahead)
+hours_to_show: 168
+entities:
+  - entity: sensor.open_spot_forecast_dk1_day_ahead_prediction
+    name: Predicted a day ahead
+  - entity: sensor.stromligning_current_price_vat
+    name: Actual
+```
+
+Both sensors include the tariffs and VAT, so the lines compare directly; the
+history starts when the sensor is created.
+`sensor.open_spot_forecast_dk1_current_spot_price` is the actual price in this
+integration's unit, surcharge and VAT, and the one to use with the `dayahead`
+price source.
 
 ### Cheapest window (`get_forecast` action)
 

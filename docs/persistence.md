@@ -25,7 +25,7 @@ All learning data is stored in a single SQLite database:
 | `weather_history`    | `timestamp` (UTC slot key)                             | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23)                              |
 | `meta`               | `key`                                                  | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)                               |
 | `lead_time_accuracy` | `(date, bucket)`                                       | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error                                         |
-| `evaluation`         | `timestamp` (UTC slot key)                             | Per scored slot: the prediction made closest to 24 h ahead, the actual price and its lead time (#36)                                         |
+| `evaluation`         | `(timestamp, target_hours)`                            | Per scored slot (UTC slot key) and lead time (12, 24, 48 h): the prediction made closest to it, the actual price and its lead time (#36)     |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -40,7 +40,12 @@ key/value table, so this needs no schema change.
 `lead_time_accuracy`, `evaluation`, `entsoe_load`, `gas_prices`, `neighbour_prices`, `umm_messages` and
 `umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
-whenever it is written or reloaded; about 700 rows). Rows
+whenever it is written or reloaded; about 700 rows per lead time, #113). An
+`evaluation` table from before #113 (one row per slot, no `target_hours`
+column) is rebuilt once at startup by `migrate_evaluation_to_lead_times()`
+(`ml/evaluation_storage.py`): its rows are kept as the 24 h ones. The
+migration is detected by the table's columns, like v4's forecast columns, so
+it needs no schema version. Rows
 older than the 30-day rolling window are pruned whenever the metrics are
 refreshed. The table is dropped and recreated by `clear_all()`.
 

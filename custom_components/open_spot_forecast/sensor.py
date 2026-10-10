@@ -36,6 +36,7 @@ from .const import (
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from .day_ahead_sensor import DayAheadPredictionSensor
 from .evaluation_sensor import ForecastEvaluationSensor
 from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
 from .predbat_sensor import build_predbat_sensors
@@ -151,6 +152,10 @@ async def async_setup_entry(
         )
         sensors.append(
             ForecastEvaluationSensor(hass, entry, api_data, currency, output)
+        )
+        # The day-ahead prediction of the current slot, for the recorder (#113)
+        sensors.append(
+            DayAheadPredictionSensor(hass, entry, api_data, currency, output)
         )
     if entry.options.get(CONF_PREDBAT_SENSORS, DEFAULT_PREDBAT_SENSORS):
         # Predbat's import/export, today/tomorrow rate entities (#124)

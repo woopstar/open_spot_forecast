@@ -112,6 +112,31 @@ class PredictionStorageMixin(StorageMixinBase):
             for r in rows
         ]
 
+    def get_predictions_between(self, start: str, end: str) -> list[dict[str, Any]]:
+        """Return the stored predictions for the slots in ``[start, end)`` (blocking).
+
+        Instants are compared, so a prediction's local ``start`` matches
+        whatever its UTC offset.
+
+        Args:
+            start: The first slot's UTC key (``utc_slot_key``).
+            end: The UTC key of the slot after the last one.
+
+        Returns:
+            ``{"start", "price", "stored_at"}`` rows, oldest prediction first.
+        """
+        with self._lock:
+            conn = self._ensure_conn()
+            rows = conn.execute(
+                """SELECT start, price, stored_at
+                   FROM predictions
+                   WHERE julianday(start) >= julianday(?)
+                     AND julianday(start) < julianday(?)
+                   ORDER BY stored_at ASC""",
+                (start, end),
+            ).fetchall()
+        return [{"start": r[0], "price": r[1], "stored_at": r[2]} for r in rows]
+
     def get_pending_prediction_dates(self) -> list[str]:
         """Return distinct dates that have pending predictions (blocking).
 
