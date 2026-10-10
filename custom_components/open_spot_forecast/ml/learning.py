@@ -405,6 +405,8 @@ class LearningMixin(PredictorBase):
 
             self.record_lead_time_accuracy(matching_predictions, actual_price)
             self.record_evaluation(dt, matching_predictions, actual_price)
+            # The external forecasts stored for the slot, scored alike (#120)
+            self.record_external_accuracy(dt, actual_price)
 
             # --- Update per-slot volatility (EMA of MAE) ---
             mae = float(np.mean(metrics["abs_errors"]))
@@ -564,6 +566,7 @@ class LearningMixin(PredictorBase):
         self.evaluation = []
         self.evaluation_snapshots = {}
         self.day_ahead_predictions = {}
+        self.external_accuracy = {}
 
         # Clear storage file
         cleared = await self.storage.async_clear_storage()

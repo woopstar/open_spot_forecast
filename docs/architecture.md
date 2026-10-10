@@ -10,24 +10,25 @@ bias correction.
 
 ## Data Sources
 
-| Source                                      | Type                             | Used for                                                     |
-| ------------------------------------------- | -------------------------------- | ------------------------------------------------------------ |
-| `sensor.stromligning_current_price_ex_vat`  | Consumer price excl. VAT         | Displayed prices; minus spot: the tariffs (#107)             |
-| `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction              |
-| `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                                  |
-| `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud                           |
-| `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction             |
-| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)                     |
-| `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)                     |
-| `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training                          |
-| energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors              |
-| ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                              |
-| Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)                 |
-| ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)                     |
-| energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)                    |
-| Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)                 |
-| Nord Pool UMM API (no key)                  | Outage messages, every version   | `unavailable_*`, both phases, `UMM_REGIONS` (#123)           |
-| ENTSO-E outage documents (API key)          | Outage documents, DE/NL/BE/FR    | `unavailable_*`, both phases, `ENTSOE_OUTAGE_REGIONS` (#138) |
+| Source                                      | Type                             | Used for                                                      |
+| ------------------------------------------- | -------------------------------- | ------------------------------------------------------------- |
+| `sensor.stromligning_current_price_ex_vat`  | Consumer price excl. VAT         | Displayed prices; minus spot: the tariffs (#107)              |
+| `sensor.stromligning_spotprice_ex_vat`      | Raw spot price excl. VAT         | Price history, self-learning target, prediction               |
+| `binary_sensor.stromligning_tomorrow_*`     | Tomorrow's prices when available | Known data window extension                                   |
+| `weather.forecast_mellemlokken_23` (state)  | Current weather snapshot         | Wind, temperature, humidity, cloud                            |
+| `weather.get_forecasts` (hourly)            | 48h weather forecast             | Per-slot wind/temp/cloud/humidity for prediction              |
+| `sensor.solcast_pv_forecast_forecast_today` | Solar generation forecast        | Solar scaling factor (not a model input)                      |
+| `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)                      |
+| `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training                           |
+| energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors               |
+| ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                               |
+| Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)                  |
+| ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)                      |
+| energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)                     |
+| Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)                  |
+| Nord Pool UMM API (no key)                  | Outage messages, every version   | `unavailable_*`, both phases, `UMM_REGIONS` (#123)            |
+| ENTSO-E outage documents (API key)          | Outage documents, DE/NL/BE/FR    | `unavailable_*`, both phases, `ENTSOE_OUTAGE_REGIONS` (#138)  |
+| External forecast sensors (optional)        | Other integrations' forecasts    | Recorded and scored per lead time, never a model input (#120) |
 
 ## Component Architecture
 
@@ -261,6 +262,7 @@ Every 6 hours → Read weather forecast (weather.get_forecasts)
              │   Generate 672 predictions (7 days × 96 slots)
              │   Store predictions in SQLite for future learning
              │   Apply per-slot bias corrections
+             │   Record the configured external forecasts for the same slots
              │
 From 13:00 ──→ Re-read prices every ~5 min until tomorrow is complete
              │   (every slot of the next local day: 96, or 92/100 on DST days;

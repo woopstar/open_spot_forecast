@@ -1,4 +1,8 @@
-"""Diagnostic sensors for live ML forecast accuracy per lead time."""
+"""Diagnostic sensors for live ML forecast accuracy per lead time.
+
+With external forecast sensors configured (#120), each sensor's ``external``
+attribute holds the same metric for every recorded source in its bucket.
+"""
 
 from typing import Any
 
@@ -101,12 +105,31 @@ class LeadTimeAccuracySensor(ModelAttributionMixin, SensorEntity):
         value = self._bucket_stats().get(self.metric)
         return float(value) if value is not None else None
 
+    def _external_stats(self) -> dict[str, dict[str, float | int]]:
+        """Return this bucket's metric, bias and samples per external source (#120)."""
+        ml_predictor = self.api_data.get("ml_predictor")
+        if ml_predictor is None:
+            return {}
+        return {
+            source: {
+                self.metric: stats[self.metric],
+                "bias": stats["bias"],
+                "samples": stats["samples"],
+            }
+            for source, buckets in ml_predictor.external_accuracy.items()
+            if (stats := buckets.get(self.bucket))
+        }
+
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Return the sample count, mean bias and rolling window length."""
         stats = self._bucket_stats()
-        return {
+        attributes: dict[str, Any] = {
             "samples": stats.get("samples", 0),
             "bias": stats.get("bias"),
             "window_days": LEAD_TIME_WINDOW_DAYS,
         }
+        if external := self._external_stats():
+            # The recorded external forecasts over the same window, by sensor
+            attributes["external"] = external
+        return attributes

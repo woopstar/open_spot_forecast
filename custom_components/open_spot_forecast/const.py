@@ -367,6 +367,15 @@ LEAD_TIME_WINDOW_DAYS = 30
 # migrated into it.
 BIAS_FALLBACK_BUCKET = LEAD_TIME_BUCKETS[0][0]
 
+# External price forecasts recorded next to the model's own and scored per
+# lead time (#120): sensors with a forecast in their attributes (Stromligning's
+# forecast sensor, Energi Data Service). None by default
+CONF_EXTERNAL_FORECAST_SENSORS = "external_forecast_sensors"
+# The attributes an external forecast is read from, in this order:
+# Stromligning's forecast sensor (``prices``: start, price) and Energi Data
+# Service (``forecast``: hour, price)
+EXTERNAL_FORECAST_ATTRIBUTES = ("prices", "forecast")
+
 # Predicted vs actual (#36): per slot, the prediction made closest to this
 # long ahead is kept next to the actual price, for EVALUATION_KEEP_DAYS; the
 # evaluation sensor shows the last EVALUATION_WINDOW_HOURS

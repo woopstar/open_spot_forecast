@@ -43,7 +43,7 @@ Add it through the **full stack in this exact order**:
    with `en.json` (see `osf-translation-sync`).
 5. **`sensor_reader.py`** — Add a `read_*` method on `SensorReader` that reads
    the entity state/attributes and returns a normalized dict.
-6. **`updater.py`** — Add the entity to `SensorEntities` (and `sensor_config()`),
+6. **`sensor_entities.py`** and **`updater.py`** — Add the entity to `SensorEntities` (and `sensor_config()`),
    read the value in `ForecastUpdater._read_weather()` and pass it into the
    `weather_data` dict consumed by `SpotPricePredictor.predict()`.
 

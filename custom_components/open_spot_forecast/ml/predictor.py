@@ -15,6 +15,7 @@ from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS, UMM_REGIONS
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
+from .external_forecasts import ExternalForecastMixin
 from .features import FeatureMixin, optional_float
 from .gas_price import GasPriceIndex
 from .lead_time import LeadTimeMixin
@@ -30,7 +31,13 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class SpotPricePredictor(
-    FeatureMixin, ModelMixin, LearningMixin, CatchUpMixin, LeadTimeMixin, RetrainMixin
+    FeatureMixin,
+    ModelMixin,
+    LearningMixin,
+    CatchUpMixin,
+    LeadTimeMixin,
+    ExternalForecastMixin,
+    RetrainMixin,
 ):
     """ML-based spot price predictor using weather and historical price data."""
 
@@ -112,6 +119,8 @@ class SpotPricePredictor(
         self.evaluation_snapshots: dict[float, list[dict[str, Any]]] = {}
         # The day-ahead prediction of the current and coming slots (#113)
         self.day_ahead_predictions: dict[str, float] = {}
+        # Live accuracy of the external forecasts per source and bucket (#120)
+        self.external_accuracy: dict[str, dict[str, dict[str, float | int]]] = {}
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)

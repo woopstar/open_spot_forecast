@@ -35,7 +35,11 @@
           "dmi_api_key": "DMI API Key (alternative weather source)",
           "enable_ml_prediction": "Enable ML Predictions",
           "prediction_hours": "Prediction Hours (12 to 72; up to 168 with the compact format)",
-          "training_days": "Training days (price history the model learns from)"
+          "training_days": "Training days (price history the model learns from)",
+          "external_forecast_sensors": "External forecast sensors (recorded and scored next to the ML forecast)"
+        },
+        "data_description": {
+          "external_forecast_sensors": "Sensors with another price forecast in their attributes, e.g. Stromligning's forecast sensor (sensor.stromligning_forecasts_vat) or an Energi Data Service sensor with the Carnot forecast. Each forecast run stores what they show for the same slots as the ML forecast, and self-learning scores them per lead time (see the forecast MAE/RMSE sensors' external attribute). They never change the ML forecast. Pick sensors that show prices like this integration does: same unit, with tariffs and VAT."
         }
       }
     },
@@ -77,7 +81,8 @@
           "attribute_format": "Forecast attribute format",
           "include_known_prices": "Include confirmed prices in the forecast attribute",
           "predbat_sensors": "Predbat rate entities (import/export, today/tomorrow)",
-          "predbat_tariff": "Predbat fixed grid tariff per kWh excl. VAT (when no slot tariffs)"
+          "predbat_tariff": "Predbat fixed grid tariff per kWh excl. VAT (when no slot tariffs)",
+          "external_forecast_sensors": "External forecast sensors (recorded and scored next to the ML forecast)"
         },
         "data_description": {
           "entsoe_api_key": "Security token from the ENTSO-E Transparency Platform. Adds ENTSO-E's week-ahead load forecast to the model and is the price fallback when energy-charts.info has no prices. Stored in the config entry and never logged.",
@@ -87,7 +92,8 @@
           "include_known_prices": "Start the forecast attribute at the current slot with the confirmed spot prices (source: actual), then the predictions (source: predicted), as one continuous series. In the compact format, known_count gives the number of confirmed entries. Takes effect after the integration reloads.",
           "cross_border": "Two-stage model: learns the neighbouring bidding zones' prices from their weather and gives the forecasts to this zone's model (DK1: DE, NL, NO2, SE3, DK2; DK2: DK1, DE, SE4). Lowers the forecast error by about a sixth in the backtest, but trains two extra models per neighbour and stores their prices and weather: each training takes several times longer (tens of seconds on a Raspberry Pi 4). Takes effect after the integration reloads.",
           "predbat_sensors": "Add four sensors in the shape of Stromligning's rate entities for Predbat's apps.yaml: import today/tomorrow (the forecast with tariffs, surcharge and VAT, per kWh) and export today/tomorrow (the raw spot price excl. VAT). Today starts with the confirmed prices from midnight; tomorrow carries tomorrow and the following days as far as the attribute limit allows. Takes effect after the integration reloads.",
-          "predbat_tariff": "Grid tariff in your currency per kWh excl. VAT, added to the Predbat import price only when no per-slot tariff is known (the day-ahead source has none; Stromligning's consumer price already contains it, so keep 0 there). Takes effect after the integration reloads."
+          "predbat_tariff": "Grid tariff in your currency per kWh excl. VAT, added to the Predbat import price only when no per-slot tariff is known (the day-ahead source has none; Stromligning's consumer price already contains it, so keep 0 there). Takes effect after the integration reloads.",
+          "external_forecast_sensors": "Sensors with another price forecast in their attributes, e.g. Stromligning's forecast sensor (sensor.stromligning_forecasts_vat) or an Energi Data Service sensor with the Carnot forecast. Each forecast run stores what they show for the same slots as the ML forecast, and self-learning scores them per lead time (see the forecast MAE/RMSE sensors' external attribute). They never change the ML forecast. Pick sensors that show prices like this integration does: same unit, with tariffs and VAT."
         }
       }
     }

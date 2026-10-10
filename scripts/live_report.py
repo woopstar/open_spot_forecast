@@ -9,6 +9,8 @@ in the learning database of a running instance, which this script reads:
 - ``evaluation``: per slot, the prediction closest to a day ahead next to the
   actual price, kept for ``EVALUATION_KEEP_DAYS``, and the snapshots at the
   other ``EVALUATION_LEAD_TIMES`` (#113);
+- ``external_accuracy``: the same daily error sums for every recorded external
+  forecast (Stromligning, Energi Data Service; #120), per source and bucket;
 - ``meta``: the latest training's holdout MAE/RMSE (and the ``hpo_*`` keys of
   exports from before #92).
 
@@ -54,6 +56,8 @@ MIN_REPORT_DAYS = 14
 # The log line ModelMixin._train_models writes after every training
 TRAINING_LOG = re.compile(r"ML model trained in (\d+(?:\.\d+)?) s")
 _BUCKET_ORDER = [bucket for bucket, _ in LEAD_TIME_BUCKETS]
+# The model's own row in the per-source table (#120)
+MODEL_SOURCE = "open_spot_forecast"
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,8 @@ class LiveData:
     meta: dict[str, str]
     # The other lead times' snapshots (#113), by target hours
     snapshots: dict[float, list[EvaluationRow]] = field(default_factory=dict)
+    # The recorded external forecasts (#120): source -> (date, bucket) -> sums
+    external: dict[str, dict[tuple[date, str], ErrorSums]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -178,13 +184,28 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                     evaluation.append(kept)
                 else:
                     snapshots.setdefault(round(float(row[4]), 2), []).append(kept)
+        external: dict[str, dict[tuple[date, str], ErrorSums]] = {}
+        if "external_accuracy" in tables:
+            for source, day, bucket, *sums in conn.execute(
+                "SELECT source, date, bucket, samples, sum_error, sum_abs_error,"
+                " sum_sq_error FROM external_accuracy ORDER BY source"
+            ):
+                slot_date = date.fromisoformat(day)
+                if since is not None and slot_date < since:
+                    continue
+                external.setdefault(str(source), {})[(slot_date, bucket)] = (
+                    int(sums[0]),
+                    float(sums[1]),
+                    float(sums[2]),
+                    float(sums[3]),
+                )
         meta: dict[str, str] = {}
         if "meta" in tables:
             meta = {
                 str(key): str(value)
                 for key, value in conn.execute("SELECT key, value FROM meta")
             }
-    return LiveData(path, lead_time, evaluation, meta, snapshots)
+    return LiveData(path, lead_time, evaluation, meta, snapshots, external)
 
 
 def _local_date(utc_key: str, tz: tzinfo) -> date:
@@ -236,16 +257,32 @@ def evaluation_stats(rows: Sequence[EvaluationRow], tz: tzinfo) -> ErrorStats | 
     )
 
 
-def bucket_stats(data: LiveData) -> dict[str, ErrorStats]:
-    """Return the stats per lead-time bucket over every retained day."""
+def _stats_per_bucket(
+    daily: dict[tuple[date, str], ErrorSums],
+) -> dict[str, ErrorStats]:
+    """Return the stats per lead-time bucket of daily sums, in lead-time order."""
     stats: dict[str, ErrorStats] = {}
-    for bucket in _ordered_buckets(data):
+    for bucket in _in_lead_time_order({bucket for _, bucket in daily}):
         combined = error_stats(
-            [sums for (_, key), sums in data.lead_time.items() if key == bucket]
+            [sums for (_, key), sums in daily.items() if key == bucket]
         )
         if combined is not None:
             stats[bucket] = combined
     return stats
+
+
+def bucket_stats(data: LiveData) -> dict[str, ErrorStats]:
+    """Return the stats per lead-time bucket over every retained day."""
+    return _stats_per_bucket(data.lead_time)
+
+
+def source_stats(data: LiveData) -> dict[str, dict[str, ErrorStats]]:
+    """Return every external forecast's stats per lead-time bucket (#120)."""
+    return {
+        source: stats
+        for source, daily in sorted(data.external.items())
+        if (stats := _stats_per_bucket(daily))
+    }
 
 
 def weekly_stats(data: LiveData) -> dict[date, dict[str, ErrorStats]]:
@@ -269,12 +306,16 @@ def training_times(log_text: str) -> list[float]:
     return [float(match) for match in TRAINING_LOG.findall(log_text)]
 
 
-def _ordered_buckets(data: LiveData) -> list[str]:
-    """Return the export's buckets, known ones in lead-time order first."""
-    present = {bucket for _, bucket in data.lead_time}
+def _in_lead_time_order(present: set[str]) -> list[str]:
+    """Return buckets with the known ones in lead-time order first."""
     return [b for b in _BUCKET_ORDER if b in present] + sorted(
         present - set(_BUCKET_ORDER)
     )
+
+
+def _ordered_buckets(data: LiveData) -> list[str]:
+    """Return the export's buckets, known ones in lead-time order first."""
+    return _in_lead_time_order({bucket for _, bucket in data.lead_time})
 
 
 def _table(header: Sequence[str], rows: Sequence[Sequence[str]]) -> list[str]:
@@ -415,6 +456,39 @@ def _accuracy_lines(data: LiveData, units: Units, tz: tzinfo) -> list[str]:
     return lines
 
 
+def _source_lines(data: LiveData, units: Units) -> list[str]:
+    """Render the recorded external forecasts next to the model, per bucket."""
+    sources = source_stats(data)
+    if not sources:
+        return []
+    own = bucket_stats(data)
+    buckets = _in_lead_time_order(
+        set(own) | {bucket for stats in sources.values() for bucket in stats}
+    )
+    rows = []
+    for bucket in buckets:
+        per_source = {MODEL_SOURCE: own.get(bucket)} | {
+            source: stats.get(bucket) for source, stats in sources.items()
+        }
+        rows += [
+            [bucket, *_stats_row(source, stats, units)]
+            for source, stats in per_source.items()
+            if stats is not None
+        ]
+    return [
+        "## External forecasts",
+        "",
+        *_table(["Bucket", "Source", *_STATS_HEADER], rows),
+        "",
+        f"`{MODEL_SOURCE}` is the ML forecast (the lead-time accuracy above); the "
+        "other sources are the forecasts recorded from the configured sensors, "
+        "scored for the same slots and converted to the model's unit with the "
+        "entry's unit, tariffs, surcharge and VAT. A source shown in other terms "
+        "has a constant bias.",
+        "",
+    ]
+
+
 def _training_lines(
     data: LiveData, units: Units, times: list[float] | None
 ) -> list[str]:
@@ -476,6 +550,7 @@ def format_report(
         "",
         *_accuracy_lines(data, units, tz),
         "",
+        *_source_lines(data, units),
         *_training_lines(data, units, times),
     ]
     return "\n".join(lines) + "\n"
