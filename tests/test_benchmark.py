@@ -464,7 +464,7 @@ def test_requests_go_through_the_backtests_http_helper(
         return answer
 
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    monkeypatch.setattr("scripts.backtest.time.sleep", lambda seconds: None)
+    monkeypatch.setattr("scripts.backtest.time.sleep", lambda _seconds: None)
 
     payload = sources.fetch_json("https://x/predict", {"apikey": "k"}, b"{}")
 
