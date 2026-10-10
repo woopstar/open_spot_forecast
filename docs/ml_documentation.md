@@ -1201,9 +1201,10 @@ target day _T_ with two rules:
 
 - **Origin.** At lead _k_ a source is scored with its latest forecast
   published before `--cutoff` (default 12:00 local) on day _T − k_. For
-  _k = 1_ that is before the auction result for _T_; later, every source, OSF
-  included (`include_known_prices`), repeats the published prices. A forecast
-  published after the cutoff is never used for that lead.
+  _k = 1_ that is before the auction result for _T_; later, OSF
+  (`include_known_prices`) and EpexPredictor repeat the published prices
+  (Smartere Elforbrug does not). A forecast published after the cutoff is
+  never used for that lead.
 - **Resolution.** Every source is averaged to hours and compared with the
   hourly mean of the actual prices, so a 15-minute source (OSF,
   EpexPredictor) gets no advantage or penalty against an hourly one. A day is
@@ -1229,8 +1230,64 @@ gets archived, near-same-day weather forecasts and is optimistic from day 2
 on (see [Running](#running)), which is why OSF's forecast is collected live
 here.
 
-**No results are recorded yet.** OSF's own forecasts are collected from
-2026-10-10 on; record the paired table here once it covers 14 days or more
+**First results: Smartere Elforbrug against the naive floor (#158).**
+Recorded 2026-10-10 from `--backfill-days 90`: 345 forecasts published from
+2026-07-16 to 2026-10-10 (four a day, at about 06:12, 11:51, 14:45 and 20:12
+local, so lead 1 is scored with the 11:51 one), target days 2026-07-18 to
+2026-10-11, cutoff 12:00 local, hourly prices, EUR ct/kWh. Its horizon ends
+before lead 6. Overlap and rank correlation are those of the cheap-hours
+table, Smartere Elforbrug / naive. Forecasts: Smartere Elforbrug (Henrik
+Møller Jørgensen, EWII); actual prices: energy-charts (© Bundesnetzagentur |
+SMARD.de, CC BY 4.0).
+
+| Region | Lead | Days | Smartere MAE | RMSE |  Bias | Naive MAE | RMSE | Cheapest 3 h overlap | Rank correlation |
+| ------ | ---- | ---: | -----------: | ---: | ----: | --------: | ---: | -------------------: | ---------------: |
+| DK1    | 1d   |   86 |         3.26 | 4.52 | -0.22 |      4.82 | 6.97 |            86% / 98% |      0.74 / 0.87 |
+| DK1    | 2d   |   85 |         3.46 | 4.73 |  0.02 |      4.86 | 7.00 |            86% / 98% |      0.75 / 0.86 |
+| DK1    | 3d   |   84 |         3.40 | 4.73 | -0.01 |      4.91 | 7.04 |            93% / 98% |      0.80 / 0.86 |
+| DK1    | 4d   |   83 |         3.54 | 4.86 | -0.04 |      4.94 | 7.08 |            89% / 98% |      0.79 / 0.86 |
+| DK1    | 5d   |   82 |         3.78 | 5.28 |  0.22 |      4.98 | 7.12 |            93% / 98% |      0.78 / 0.86 |
+| DK2    | 1d   |   86 |         3.30 | 4.54 | -0.31 |      4.65 | 6.75 |            87% / 94% |      0.74 / 0.87 |
+| DK2    | 2d   |   85 |         3.49 | 4.75 | -0.08 |      4.68 | 6.78 |            85% / 94% |      0.74 / 0.87 |
+| DK2    | 3d   |   84 |         3.38 | 4.68 | -0.11 |      4.73 | 6.82 |            90% / 94% |      0.79 / 0.87 |
+| DK2    | 4d   |   83 |         3.54 | 4.82 | -0.14 |      4.75 | 6.86 |            93% / 94% |      0.78 / 0.87 |
+| DK2    | 5d   |   82 |         3.74 | 5.20 |  0.14 |      4.79 | 6.89 |            90% / 94% |      0.78 / 0.86 |
+
+- **The price level is a third better than the naive floor at every lead**
+  (DK1 1d MAE 3.26 against 4.82) and hardly gets worse with the lead (3.26 at
+  1d, 3.78 at 5d), with a bias of at most 0.31.
+- **The shape of the day is worse than last week's.** The same day a week
+  earlier ranks the hours better (0.87 against 0.74) and finds the cheapest
+  3-hour window more often (DK1 98 % against 86 %). The evening peak of the
+  1d forecast is in the actual hour on 27 of the 86 DK1 days, an hour late on
+  34 and an hour early on 13.
+- **This is not a comparison with OSF.** No OSF forecast exists for these
+  days (see below), and the backtest's numbers are for other days with
+  near-same-day weather. The table is the floor an OSF number has to be read
+  against once it is collected.
+
+**Sources checked against the real services (2026-10-10).**
+
+- `smartere`: its README states EUR/MWh and UTC, and the stored first slot
+  and price are those of the file. With the slots shifted before scoring, the
+  DK1 1d MAE is 3.93 two hours earlier (its times read as local time), 3.24
+  one hour earlier, 3.26 as stored and 3.90 one hour later: UTC is right, and
+  the forecast runs about half an hour late on average. It does not repeat
+  published prices (the 14:45 forecast still forecasts the same evening).
+- `epex`: the 115 slots of the first stored forecast whose price was already
+  published equal energy-charts' price to the cent, so the unit (EUR/MWh),
+  the 15-minute UTC slot starts and the first slot are right.
+- `carnot`, `osf`: **not run against the real service yet.** The dev machine
+  has no `CARNOT_API_KEY` / `CARNOT_USER` and no `HA_URL` / `HA_TOKEN`, so
+  both are skipped; Carnot's unit (DKK/MWh) is still the recorded shape's.
+
+**No paired results are recorded yet.** The collector is not scheduled
+anywhere and OSF's own forecast has not been collected once: the first
+`collect` (2026-10-10, 19:14 local, after the cutoff) stored Smartere
+Elforbrug and EpexPredictor only, for DK1 and DK2. It has to run on a machine
+that reaches Home Assistant and keeps `.cache/benchmark/` private (never a
+public CI artifact or branch: Smartere Elforbrug's forecasts may not be
+redistributed). Record the paired table here once it covers 14 days or more
 (`MIN_REPORT_DAYS`, as the live report).
 
 ### Zone weather (#22)
