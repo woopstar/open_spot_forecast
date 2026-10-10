@@ -6,8 +6,8 @@ training window first (from the day-ahead APIs, whatever the displayed price
 source, #24), then for every stored
 price day the zone weather (Open-Meteo's archived forecasts, #23), the
 Nordpool prognoses, with an ENTSO-E key the week-ahead load forecast
-(#30), where it helps the gas price (#28), in Nord Pool's areas its outage
-messages (#123) and, with the cross-border model,
+(#30), where it helps the gas price (#28), the outage messages (Nord Pool's
+UMMs, #123, or ENTSO-E's outage documents, #138) and, with the cross-border model,
 the neighbours' prices and zone weather (#29); if anything was added, the
 forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
@@ -26,8 +26,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .api.dayahead_prices import NeighbourPriceSource
+from .api.entsoe_outages import EntsoeOutageSource
+from .api.nordpool_umm import NordpoolUmmSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
-from .const import WEATHER_POINTS
+from .const import ENTSOE_OUTAGE_REGIONS, UMM_REGIONS, WEATHER_POINTS
 from .ml.gas_price import GAS_LOOKBACK_DAYS
 from .time_slots import local_midnight
 
@@ -35,7 +37,7 @@ if TYPE_CHECKING:
     from .api import NordpoolPrognosisSource
     from .api.entsoe_load import EntsoeLoadSource
     from .api.gas_prices import GasPriceSource
-    from .api.nordpool_umm import NordpoolUmmSource
+    from .api.outage_source import OutageSource
     from .api.time_series_source import HistorySource, TimeSeriesSource
     from .ml.predictor import SpotPricePredictor
     from .price_source import DayAheadPrices
@@ -70,6 +72,27 @@ def neighbour_sources(
     )
 
 
+def outage_source(
+    hass: HomeAssistant,
+    ml_predictor: SpotPricePredictor | None,
+    region: str,
+    entsoe_api_key: str | None,
+) -> OutageSource | None:
+    """Return the region's outage source, if the model uses one.
+
+    Nord Pool's UMMs in ``UMM_REGIONS`` (#123); with an ENTSO-E key the
+    platform's outage documents in ``ENTSOE_OUTAGE_REGIONS`` (#138). The
+    zones never overlap.
+    """
+    if ml_predictor is None:
+        return None
+    if region in UMM_REGIONS:
+        return NordpoolUmmSource(hass, ml_predictor.storage, region)
+    if entsoe_api_key and region in ENTSOE_OUTAGE_REGIONS:
+        return EntsoeOutageSource(hass, ml_predictor.storage, region, entsoe_api_key)
+    return None
+
+
 class HistoryUpdaterMixin:
     """Backfill and prune the stored history of a ``ForecastUpdater``."""
 
@@ -81,7 +104,7 @@ class HistoryUpdaterMixin:
     weather: OpenMeteoWeatherSource | None
     load: EntsoeLoadSource | None
     gas: GasPriceSource | None
-    outages: NordpoolUmmSource | None
+    outages: OutageSource | None
     # The cross-border model's neighbour sources (#29); empty when it is off
     neighbour_prices: list[NeighbourPriceSource]
     neighbour_weather: list[OpenMeteoWeatherSource]
@@ -156,7 +179,7 @@ class HistoryUpdaterMixin:
 
         Day-ahead price days first, then for the stored price days the zone
         weather, the Nordpool prognoses, the ENTSO-E load forecast, the gas
-        price (#28), the UMM outages (#123) and the cross-border model's
+        price (#28), the outages (#123, #138) and the cross-border model's
         neighbour prices and weather (#29). If anything was added the forecast is refreshed, so the model
         retrains on it.
         """
@@ -173,7 +196,9 @@ class HistoryUpdaterMixin:
             gas = await self._backfill_source(
                 self.gas, first - timedelta(days=GAS_LOOKBACK_DAYS), "Gas price"
             )
-            outages = await self._backfill_source(self.outages, first, "Nord Pool UMM")
+            outages = await self._backfill_source(
+                self.outages, first, self.outages.label if self.outages else ""
+            )
             changed = changed or weather or prognoses or load or gas or outages
             for source in [*self.neighbour_prices, *self.neighbour_weather]:
                 if await self._backfill_source(source, first, source.spec.name):

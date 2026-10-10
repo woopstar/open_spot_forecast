@@ -37,6 +37,8 @@ EPEX = (
 PRICES = "Prices: energy-charts.info (CC BY 4.0, Bundesnetzagentur | SMARD.de)"
 WEATHER = "Weather: Open-Meteo.com (CC BY 4.0)"
 PROGNOSES = "Prognoses: Nord Pool"
+UMM = "Outages: Nord Pool UMM"
+ENTSOE_OUTAGES = "Outages: ENTSO-E Transparency Platform"
 
 
 def _dayahead(**extra: Any) -> dict[str, Any]:
@@ -86,10 +88,15 @@ def test_model_attribution_credits_every_source_the_model_learns_from() -> None:
     assert model_attribution({"ml_predictor": model, "entsoe_load": True}) == (
         f"{PROGNOSES} · Load forecast: ENTSO-E Transparency Platform"
     )
-    # In Nord Pool's areas the model learns from its outage messages (#123)
-    assert model_attribution({"ml_predictor": model, "umm_outages": True}) == (
+    # Outages: the active source's credit, Nord Pool's UMMs (#123) or the
+    # ENTSO-E Transparency Platform's documents (#138)
+    assert model_attribution({"ml_predictor": model, "outages": UMM}) == (
         f"{PROGNOSES} · Outages: Nord Pool UMM"
     )
+    assert model_attribution({"ml_predictor": model, "outages": ENTSOE_OUTAGES}) == (
+        f"{PROGNOSES} · Outages: ENTSO-E Transparency Platform"
+    )
+    assert model_attribution({"ml_predictor": model, "outages": None}) == PROGNOSES
     # The cross-border model also learns from the neighbours' prices (#29)
     assert model_attribution({"ml_predictor": model, "cross_border": True}) == (
         f"{PROGNOSES} · Neighbour prices: energy-charts.info"

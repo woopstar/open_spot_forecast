@@ -1,7 +1,8 @@
-"""SQLite access for the stored Nord Pool UMM outage messages (#123).
+"""SQLite access for the stored outage messages (#123, #138).
 
-Two tables, both written by ``NordpoolUmmSource`` (``api/nordpool_umm.py``)
-and read by ``OutageIndex`` (``ml/outages.py``):
+Two tables, written by ``NordpoolUmmSource`` (``api/nordpool_umm.py``) or
+``EntsoeOutageSource`` (``api/entsoe_outages.py``) through the shared
+``OutageSource`` cycle, and read by ``OutageIndex`` (``ml/outages.py``):
 
 * ``umm_messages`` — every **version** of every message that named a unit
   in the region's area: when it was published and its status. A version
@@ -12,7 +13,7 @@ and read by ``OutageIndex`` (``ml/outages.py``):
   units into or out of it).
 
 Both tables are created with ``CREATE TABLE IF NOT EXISTS``. The source's
-coverage is kept in ``meta`` under ``source_state_umm_outages`` (JSON).
+coverage is kept in ``meta`` under ``source_state_<state_name>`` (JSON).
 """
 
 from collections.abc import Iterable

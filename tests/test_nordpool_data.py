@@ -2,7 +2,7 @@
 
 import json
 from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import aiohttp
 import pytest
@@ -19,7 +19,8 @@ def _response(status: int, payload: dict) -> MagicMock:
     resp = MagicMock()
     resp.status = status
     resp.headers = {}
-    resp.text = AsyncMock(return_value=json.dumps(payload))
+    resp.read = AsyncMock(return_value=json.dumps(payload).encode())
+    resp.get_encoding = Mock(return_value="utf-8")
     resp.__aenter__ = AsyncMock(return_value=resp)
     resp.__aexit__ = AsyncMock(return_value=False)
     return resp
@@ -352,7 +353,7 @@ async def test_production_uses_defaults_when_prognosis_missing():
 async def test_invalid_json_returns_none(caplog: pytest.LogCaptureFixture) -> None:
     """A 200 response that is not JSON is logged and yields no data."""
     response = _response(200, {})
-    response.text = AsyncMock(return_value="<html>blocked</html>")
+    response.read = AsyncMock(return_value=b"<html>blocked</html>")
     with patch(
         "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
         return_value=_session(response),
