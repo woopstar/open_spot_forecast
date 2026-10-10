@@ -61,8 +61,10 @@ class TomorrowAvailableSensor(PriceAttributionMixin, BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:
@@ -108,8 +110,10 @@ class MLModelTrainedSensor(ModelAttributionMixin, BinarySensorEntity):
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""
-        async_dispatcher_connect(
-            self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass, util_slugify(UPDATE_SIGNAL), self._handle_update
+            )
         )
 
     async def _handle_update(self) -> None:

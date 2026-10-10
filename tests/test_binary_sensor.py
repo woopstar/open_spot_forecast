@@ -1,6 +1,6 @@
 """Tests for the Open Spot Forecast binary sensor platform."""
 
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -173,3 +173,39 @@ async def test_ml_model_trained_sensor_handle_update():
     sensor.async_write_ha_state = Mock()
     await sensor._handle_update()
     sensor.async_write_ha_state.assert_called_once()
+
+
+# --- Removal (#156) ----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", [TomorrowAvailableSensor, MLModelTrainedSensor])
+async def test_the_dispatcher_listener_is_removed_with_the_entity(cls):
+    """A removed sensor (e.g. after an entry reload) no longer gets updates."""
+    hass = _hass()
+    sensor = cls(hass, _entry(), {})
+    await sensor.async_added_to_hass()
+    (dispatchers,) = hass.data.values()
+    assert sum(len(targets) for targets in dispatchers.values()) == 1
+
+    sensor._call_on_remove_callbacks()
+
+    assert sum(len(targets) for targets in dispatchers.values()) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cls", [TomorrowAvailableSensor, MLModelTrainedSensor])
+async def test_the_unsubscribe_callback_is_registered_for_removal(cls):
+    sensor = cls(_hass(), _entry(), {})
+    unsub = Mock()
+
+    with (
+        patch(
+            "custom_components.open_spot_forecast.binary_sensor.async_dispatcher_connect",
+            return_value=unsub,
+        ),
+        patch.object(sensor, "async_on_remove") as on_remove,
+    ):
+        await sensor.async_added_to_hass()
+
+    on_remove.assert_called_once_with(unsub)
