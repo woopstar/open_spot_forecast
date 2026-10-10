@@ -198,3 +198,14 @@ def test_the_quality_script_and_the_pre_commit_hook_run_the_check() -> None:
     # Once each for the file-size, format-check (CI) and all targets.
     assert script.count("run python3 scripts/check_file_size.py") == 3
     assert "args: [file-size]" in hooks
+
+
+def test_the_quality_script_lets_the_extra_arguments_select_the_tests() -> None:
+    """A hard-coded path would be run next to the selected file or test (#165)."""
+    script = (REPO / "scripts" / "quality.sh").read_text(encoding="utf-8")
+    pyproject = (REPO / "pyproject.toml").read_text(encoding="utf-8")
+
+    # The test and the all target; tests/ comes from pyproject.toml instead
+    assert script.count("run python -m pytest \\\n") == 2
+    assert "pytest tests" not in script
+    assert 'testpaths = ["tests"]' in pyproject

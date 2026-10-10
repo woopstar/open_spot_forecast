@@ -130,7 +130,9 @@ case "${1:-}" in
         run python3 scripts/check_coverage_floor.py
         ;;
     test)
-        run python -m pytest tests/ \
+        # No path here: pyproject.toml's testpaths selects tests/, so a path
+        # or node id in the extra args runs only that (#165).
+        run python -m pytest \
             -o cache_dir="${PYTEST_CACHE_DIR}" \
             --timeout=120 \
             --cov=custom_components \
@@ -168,7 +170,7 @@ case "${1:-}" in
         run python3 scripts/validate_translations.py
         echo ""
         echo "=== Tests ==="
-        run python -m pytest tests/ \
+        run python -m pytest \
             -o cache_dir="${PYTEST_CACHE_DIR}" \
             --timeout=120 \
             --cov=custom_components \
