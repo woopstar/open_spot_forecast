@@ -13,6 +13,7 @@ from custom_components.open_spot_forecast.api.http import HttpResponse
 from custom_components.open_spot_forecast.ml.series_storage import DAYAHEAD_PRICES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from custom_components.open_spot_forecast.price_output import PriceOutput
+from custom_components.open_spot_forecast.price_series import known_prices
 from custom_components.open_spot_forecast.price_source import (
     DayAheadPrices,
     PriceSettings,
@@ -181,12 +182,30 @@ def prices(storage: LearningStorage) -> Iterator[DayAheadPrices]:
 async def test_read_returns_today_and_tomorrow_in_the_currency(
     prices: DayAheadPrices,
 ) -> None:
-    data = await prices.async_read(TODAY)
+    # 13:00 CEST: the auction results for tomorrow are due
+    with patch("homeassistant.util.dt.utcnow", return_value=NOW + timedelta(hours=3)):
+        data = await prices.async_read(TODAY)
 
     # 80 EUR/MWh at 7.5 DKK/EUR = 0.6 DKK/kWh
     assert data["today"] == [pytest.approx(0.6)] * 96
     assert data["tomorrow"] == [pytest.approx(0.6)] * 96
     assert prices.license_info is None
+
+
+@pytest.mark.asyncio
+async def test_tomorrow_is_not_read_before_its_auction(
+    prices: DayAheadPrices, storage: LearningStorage
+) -> None:
+    """At 10:00 CEST tomorrow has no price anywhere: it is not even requested (#180)."""
+    data = await prices.async_read(TODAY)
+
+    assert data["today"] == [pytest.approx(0.6)] * 96
+    assert not known_prices(data["tomorrow"])
+    tomorrow = local_midnight(TODAY + timedelta(days=1))
+    assert (
+        storage.load_series(DAYAHEAD_PRICES, tomorrow, tomorrow + timedelta(days=1))
+        == []
+    )
 
 
 @pytest.mark.asyncio

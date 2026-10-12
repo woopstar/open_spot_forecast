@@ -8,7 +8,8 @@ update of ``[start, end)``:
 2. adds the source's refresh window (recent forecasts are still revised);
 3. skips holes the source did not have at an earlier request until their
    retry time: its known horizon ("no data yet beyond T") and gaps in older
-   history;
+   history; and never asks beyond what the source can have yet
+   (``available_until``);
 4. fetches the rest in request-sized chunks and upserts the rows, which
    reports whether anything changed (and so triggers a retrain);
 5. records what is still missing as holes, persisted in ``meta``.
@@ -133,6 +134,14 @@ class TimeSeriesSource(ABC):
             chunk for time_range in ranges for chunk in split_range(time_range, span)
         ]
 
+    def available_until(self, now: datetime) -> datetime | None:
+        """Return the moment up to which the source can have data at ``now``.
+
+        Nothing from it on is requested (a day-ahead price before its
+        auction, #180). None: the source has no such limit.
+        """
+        return None
+
     def retry_time(self, hole: TimeRange, now: datetime) -> datetime:
         """Return when a range the source did not have may be requested again."""
         if hole[1] > now - self.recent_window:
@@ -152,6 +161,9 @@ class TimeSeriesSource(ABC):
         now = dt_util.utcnow()
         if self.horizon_cutoff is not None:
             end = min(end, self.horizon_cutoff)
+        available = self.available_until(now)
+        if available is not None:
+            end = min(end, available)
         start, end = grid_range(start, end, self.spec.step_minutes)
         if start >= end:
             return False

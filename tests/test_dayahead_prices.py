@@ -1,8 +1,9 @@
 """Day-ahead prices from energy-charts.info with ENTSO-E as fallback (#27)."""
 
 import json
+import logging
 from collections.abc import Callable, Iterator
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -349,15 +350,140 @@ async def test_failed_or_empty_fallbacks_store_nothing(
 
 
 @pytest.mark.asyncio
-async def test_an_unexpected_energy_charts_status_is_logged(
+async def test_an_unexpected_energy_charts_status_names_the_zone_and_the_range(
     storage: LearningStorage, apis: FakeApis, caplog: pytest.LogCaptureFixture
 ) -> None:
-    apis.energy_charts = lambda _p: HttpResponse(404, "")
+    """A failed request says what was asked for, and is asked again next time."""
+    apis.energy_charts = lambda _p: HttpResponse(500, "")
+    source = _source(storage)
 
-    await _source(storage).async_update(DAY_START, DAY_END)
+    await source.async_update(DAY_START, DAY_END)
+    await source.async_update(DAY_START, DAY_END)
 
-    assert "energy-charts returned 404" in caplog.text
-    assert date(2026, 9, 24).isoformat() not in caplog.text
+    assert (
+        "energy-charts returned 500 for DK1, 2026-09-24 00:00 to 2026-09-25 00:00"
+        in caplog.text
+    )
+    assert len(apis.calls) == 2
+
+
+# --- Ranges energy-charts has nothing for (#180) --------------------------------------
+
+AFTERNOON = datetime(2026, 9, 24, 11, tzinfo=UTC)  # 13:00 CEST
+TOMORROW_END = DAY_END + timedelta(days=1)
+NO_CONTENT = HttpResponse(404, "no content available")
+
+
+def _published_until(end: datetime) -> Callable[[dict], HttpResponse]:
+    """energy-charts with prices up to ``end``: 404 for a range that starts later."""
+
+    def answer(params: dict) -> HttpResponse:
+        start = _start(params)
+        if start >= end:
+            return NO_CONTENT
+        count = int((end - start) / QUARTER)
+        return HttpResponse(200, json.dumps(_payload(start, count)))
+
+    return answer
+
+
+@pytest.mark.asyncio
+async def test_tomorrow_is_not_requested_before_the_auction_results(
+    storage: LearningStorage, apis: FakeApis
+) -> None:
+    """At 10:00 CEST only today can have prices: one request, for today."""
+    source = _source(storage)
+
+    await source.async_update(DAY_START, TOMORROW_END + timedelta(days=6))
+    await source.async_update(DAY_START, TOMORROW_END + timedelta(days=6))
+
+    (call,) = apis.calls
+    assert _start(call[1]) == DAY_START
+    assert datetime.fromisoformat(call[1]["end"]) == DAY_END - QUARTER
+    assert len(storage.load_series(DAYAHEAD_PRICES, DAY_START, TOMORROW_END)) == 96
+
+
+def test_the_last_publishable_day_follows_the_auction_hour(
+    storage: LearningStorage,
+) -> None:
+    source = _source(storage)
+
+    assert source.available_until(NOW) == DAY_END
+    assert source.available_until(datetime(2026, 9, 24, 10, 44, tzinfo=UTC)) == DAY_END
+    assert source.available_until(datetime(2026, 9, 24, 10, 45, tzinfo=UTC)) == (
+        TOMORROW_END
+    )
+    # Just after midnight the new tomorrow is a day away again
+    assert source.available_until(DAY_END + timedelta(minutes=2)) == TOMORROW_END
+
+
+@pytest.mark.asyncio
+async def test_no_content_for_tomorrow_is_a_hole_not_a_failure(
+    storage: LearningStorage, apis: FakeApis, caplog: pytest.LogCaptureFixture
+) -> None:
+    """After 12:45 energy-charts may not have tomorrow yet: quiet, and retried later."""
+    apis.energy_charts = _published_until(DAY_END)
+    source = _source(storage)
+    await source.async_update(DAY_START, TOMORROW_END)  # the morning: today only
+
+    with (
+        patch("homeassistant.util.dt.utcnow", return_value=AFTERNOON),
+        caplog.at_level(logging.DEBUG),
+    ):
+        await source.async_update(DAY_START, TOMORROW_END)
+        await source.async_update(DAY_START, TOMORROW_END)
+
+    # Tomorrow is asked for once it can be there; the next update asks nothing
+    assert [_start(params) for _, params in apis.calls] == [DAY_START, DAY_END]
+    assert len(storage.load_series(DAYAHEAD_PRICES, DAY_START, TOMORROW_END)) == 96
+    records = [r for r in caplog.records if "has no DK1 prices" in r.getMessage()]
+    assert [record.levelno for record in records] == [logging.DEBUG]
+    assert "2026-09-25 00:00 to 2026-09-26 00:00" in records[0].getMessage()
+
+    # Five minutes later it is asked for again, and stored once it is there
+    apis.energy_charts = _published_until(TOMORROW_END)
+    with patch(
+        "homeassistant.util.dt.utcnow", return_value=AFTERNOON + timedelta(minutes=6)
+    ):
+        assert await source.async_update(DAY_START, TOMORROW_END) is True
+    assert len(storage.load_series(DAYAHEAD_PRICES, DAY_START, TOMORROW_END)) == 192
+
+
+@pytest.mark.asyncio
+async def test_no_content_for_a_delivered_day_is_a_warning_and_retried_hourly(
+    storage: LearningStorage, apis: FakeApis, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A day that is over and still missing is worth a line, with zone and range."""
+    apis.energy_charts = lambda _p: NO_CONTENT
+    source = _source(storage, region="NL")
+    yesterday = (DAY_START - timedelta(days=1), DAY_START)
+
+    with caplog.at_level(logging.DEBUG):
+        await source.async_update(*yesterday)
+        await source.async_update(*yesterday)
+
+    assert len(apis.calls) == 1
+    (record,) = [r for r in caplog.records if "has no NL prices" in r.getMessage()]
+    assert record.levelno == logging.WARNING
+    assert "2026-09-23 00:00 to 2026-09-24 00:00" in record.getMessage()
+    assert source.retry_time(yesterday, NOW) == NOW + timedelta(hours=1)
+
+    with patch("homeassistant.util.dt.utcnow", return_value=NOW + timedelta(hours=2)):
+        await source.async_update(*yesterday)
+    assert len(apis.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_entsoe_is_still_asked_when_energy_charts_has_no_content(
+    storage: LearningStorage, apis: FakeApis
+) -> None:
+    apis.energy_charts = lambda _p: NO_CONTENT
+    source = _source(storage, key=KEY)
+
+    assert await source.async_update(DAY_START, DAY_END) is True
+
+    assert [label for label, _ in apis.calls] == ["energy-charts", "ENTSO-E"]
+    assert len(storage.load_series(DAYAHEAD_PRICES, DAY_START, DAY_END)) == 96
 
 
 @pytest.mark.asyncio

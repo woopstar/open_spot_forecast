@@ -190,7 +190,12 @@ results:
 - Prices are stored raw in `dayahead_prices` (EUR/MWh per UTC 15-minute
   slot) through the gap-aware time-series source (#32): only missing slots
   are requested, tomorrow from 12:45 CET (when the auction results are due)
-  and then every 5 minutes until it is complete.
+  and then every 5 minutes until it is complete. Before 12:45 tomorrow is
+  not requested, and a later day never is (#180). energy-charts answers
+  404 for a range it has no prices for: that is remembered as a gap and
+  asked for again later (a day that is already over and still missing:
+  hourly, with a warning that names the zone and the days), not treated as
+  a failed request.
 - They are converted to the configured currency per kWh with the ECB
   reference rate of each day (the latest one on or before it, fetched from
   the ECB data API once a day, `api/exchange_rates.py`). If the ECB cannot

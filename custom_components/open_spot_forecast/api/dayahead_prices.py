@@ -2,12 +2,17 @@
 
 ``DayAheadPriceSource`` keeps the ``dayahead_prices`` table (raw EUR/MWh
 per UTC 15-minute slot) current through the shared ``TimeSeriesSource``:
-only missing slots are requested, and tomorrow is asked for again from
-12:45 CET, when the auction results are due, then every few minutes.
+only missing slots are requested, and tomorrow is asked for from 12:45 CET,
+when the auction results are due, then every few minutes. Before that hour
+tomorrow is not requested at all, and no day after tomorrow ever is
+(``available_until``, #180).
 
 * **energy-charts.info** (``/price?bzn=``, no key) is asked first. Its
   licence depends on the zone and comes with every response
-  (``license_info``, kept for attribution).
+  (``license_info``, kept for attribution). It answers 404 ("no content
+  available") for a range it has no prices for: that is "nothing yet",
+  remembered as a hole and asked for again at its retry time, not a failed
+  request.
 * **ENTSO-E** (Transparency Platform, ``documentType=A44``) is asked when a
   security token is configured and energy-charts failed or did not cover the
   whole request. The token is sent as a query parameter and never logged.
@@ -27,6 +32,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from ..const import ENERGY_CHARTS_API, REGIONS
 from ..ml.series_storage import DAYAHEAD_PRICES, neighbour_prices
@@ -55,6 +61,13 @@ _AUCTION_TZ = ZoneInfo("Europe/Berlin")
 _AUCTION_RESULTS = time(12, 45)
 # One request covers at most this many local days
 _MAX_REQUEST_DAYS = 31
+# energy-charts' answer for a range without any price ("no content available")
+_NO_CONTENT = 404
+
+
+def _auction_day_start(now: datetime) -> datetime:
+    """Return the start of the delivery day that contains ``now`` (CET)."""
+    return datetime.combine(now.astimezone(_AUCTION_TZ).date(), time(), _AUCTION_TZ)
 
 
 def _quarter_rows(
@@ -143,6 +156,8 @@ class DayAheadPriceSource(TimeSeriesSource):
     request_interval = 2.0
     # After 12:45 CET, ask for tomorrow's prices every few minutes
     revalidate_after = timedelta(minutes=5)
+    # A delivered day the source still lacks is asked for again this often
+    delivered_retry_after = timedelta(hours=1)
 
     def __init__(
         self,
@@ -170,10 +185,27 @@ class DayAheadPriceSource(TimeSeriesSource):
         # The licence of the latest energy-charts response (attribution)
         self.license_info: str | None = None
 
+    def available_until(self, now: datetime) -> datetime:
+        """Return the end of the last delivery day that can be published.
+
+        Tomorrow's from 12:45 CET on, when the auction results are due;
+        today's before. A later day has no price anywhere yet, so asking for
+        it only costs a request (and a 404) per zone.
+        """
+        local_now = now.astimezone(_AUCTION_TZ)
+        days = 2 if local_now.time() >= _AUCTION_RESULTS else 1
+        return _auction_day_start(now) + timedelta(days=days)
+
     def retry_time(self, hole: TimeRange, now: datetime) -> datetime:
-        """Ask for unpublished prices when the auction results are due."""
+        """Ask for unpublished prices when the auction results are due.
+
+        A day that is already delivered and still missing (the source lags,
+        or lacks it) is asked for hourly while it is recent, daily after.
+        """
         if hole[1] <= now - self.recent_window:
             return now + self.history_retry_after
+        if hole[1] <= _auction_day_start(now):
+            return now + self.delivered_retry_after
         local_now = now.astimezone(_AUCTION_TZ)
         results = datetime.combine(local_now.date(), _AUCTION_RESULTS, _AUCTION_TZ)
         if local_now < results:
@@ -219,9 +251,24 @@ class DayAheadPriceSource(TimeSeriesSource):
                 "end": (end - _SLOT).astimezone(self.tz).isoformat(timespec="minutes"),
             },
         )
-        if response is None or response.status != 200:
-            if response is not None:
-                _LOGGER.warning("energy-charts returned %d", response.status)
+        if response is None:
+            return None
+        span = f"{start.astimezone(self.tz):%Y-%m-%d %H:%M} to {end.astimezone(self.tz):%Y-%m-%d %H:%M}"
+        if response.status == _NO_CONTENT:
+            # Nothing for the range: expected for a day that is being
+            # delivered or auctioned, worth a warning for one that is over
+            delivered = start < _auction_day_start(dt_util.utcnow())
+            _LOGGER.log(
+                logging.WARNING if delivered else logging.DEBUG,
+                "energy-charts has no %s prices for %s",
+                self.zone,
+                span,
+            )
+            return []
+        if response.status != 200:
+            _LOGGER.warning(
+                "energy-charts returned %d for %s, %s", response.status, self.zone, span
+            )
             return None
         try:
             payload = json.loads(response.text)
