@@ -37,6 +37,8 @@ class PredictorBase:
     wind_model: NumpyRandomForest
     solar_model: NumpyRandomForest
     price_model: NumpyGradientBoosting
+    # The price model of the first forecast days, with a lagged price (#135)
+    near_model: NumpyGradientBoosting
     wind_scaler: dict[str, float]
     solar_scaler: dict[str, float]
     price_scaler: dict[str, float]

@@ -73,6 +73,9 @@ class SpotPricePredictor(
             n_estimators=100, max_depth=10, random_state=42
         )
         self.price_model = create_price_model()
+        # Near-term model (#135): the price model's inputs plus yesterday's
+        # price in the same slot, for the first NEAR_TERM_DAYS forecast days
+        self.near_model = create_price_model()
 
         # Feature scalers (simple numpy-based scaling)
         self.wind_scaler = {"mean": 0, "std": 1}

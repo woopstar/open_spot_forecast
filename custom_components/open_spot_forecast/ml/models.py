@@ -10,7 +10,7 @@ import numpy as np
 
 from homeassistant.util import dt as dt_util
 
-from ..const import BIAS_FALLBACK_BUCKET
+from ..const import BIAS_FALLBACK_BUCKET, NEAR_TERM_REGIONS
 from ..price_series import known_prices
 from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
@@ -22,6 +22,12 @@ from .features import (
 )
 from .gbm import NumpyGradientBoosting
 from .lead_time import prediction_bucket
+from .price_lags import (
+    NEAR_TERM_DAYS,
+    PriceLagIndex,
+    near_term_inputs,
+    slot_start,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -107,13 +113,55 @@ class ModelMixin(PredictorBase):
         columns = cross.fit(starts) if train else cross.predict(starts)
         return np.column_stack([X, columns])
 
+    def _near_term(
+        self, features: list[dict], rows: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the near-term model's rows and which slots it serves (#135).
+
+        The rows are the price model's ``rows`` with each slot's price in
+        the same slot of its reference day (``PriceLagIndex``, from the
+        stored price history): the day before a training row's day, the
+        last known day for a prediction row. The model serves the slots
+        whose lag is at most ``NEAR_TERM_DAYS`` old.
+        """
+        lags = PriceLagIndex.from_days(self.price_history, self.tz)
+        starts = [slot_start(feature) for feature in features]
+        return (
+            near_term_inputs(rows, lags.column(starts)),
+            lags.near_term(starts, NEAR_TERM_DAYS),
+        )
+
+    def _train_near_model(
+        self, features: list[dict], X: np.ndarray, y: np.ndarray
+    ) -> None:
+        """Fit the near-term model on the price model's rows plus the lagged price.
+
+        Only in ``NEAR_TERM_REGIONS``. Elsewhere, and after a failed fit, it
+        stays untrained: the price model then serves every forecast day.
+        """
+        model = NumpyGradientBoosting(**self.price_model.get_params())
+        if self.region not in NEAR_TERM_REGIONS:
+            self.near_model = model
+            return
+        try:
+            model.fit(*with_masked_nordpool(self._near_term(features, X)[0], y))
+        except Exception as err:
+            _LOGGER.warning(
+                "Near-term price model not trained, the price model serves "
+                "every forecast day: %s",
+                err,
+            )
+            model = create_price_model()
+        self.near_model = model
+
     def _train_models(self) -> None:
         """Train the price model on all stored price history.
 
         Training rows come from ``get_all_historical_prices`` (stored
         actuals and prognoses), never from the current forecast's features.
         Today's prices must already be in price_history (see
-        RetrainMixin.record_training_prices).
+        RetrainMixin.record_training_prices). The near-term model (#135) is
+        fitted on the same rows plus the lagged price.
         """
         began = time.monotonic()
         try:
@@ -155,6 +203,7 @@ class ModelMixin(PredictorBase):
             # The live model trains on all rows, so the most recent days
             # (closest to what is being predicted) are part of it
             self.price_model.fit(*with_masked_nordpool(X, y))
+            self._train_near_model(all_features, X, y)
 
             _LOGGER.info(
                 "ML model trained in %.1f s: holdout MAE=%.2f, RMSE=%.2f, "
@@ -173,6 +222,7 @@ class ModelMixin(PredictorBase):
         except Exception as err:
             _LOGGER.error("Error training ML models: %s", err, exc_info=True)
             self.is_trained = False
+            self.near_model = create_price_model()
             self._store_holdout_metrics(None, None)
 
     def _store_holdout_metrics(self, mae: float | None, rmse: float | None) -> None:
@@ -255,6 +305,11 @@ class ModelMixin(PredictorBase):
         raw_prices = (
             self.price_model.predict(feature_vectors) if features else np.empty(0)
         )
+        # The first forecast days come from the near-term model (#135)
+        if features and self.near_model.trees:
+            near_rows, near_term = self._near_term(features, feature_vectors)
+            if near_term.any():
+                raw_prices[near_term] = self.near_model.predict(near_rows[near_term])
         # The lead time of every prediction of this run is measured from now
         now = dt_util.now()
 

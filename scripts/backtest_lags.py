@@ -10,8 +10,13 @@ cutoff, whatever its horizon; a training row's is the day before its own
 rows show every lag age the forecast days have, next to ``price_lag_days``).
 
 No variant lowered the MAE at every horizon in the backtest (see
-docs/ml_documentation.md → Backtesting → Lagged prices), so the integration
-does not have these features; ``--lags`` reproduces the experiment.
+docs/ml_documentation.md → Backtesting → Lagged prices), so the price model
+does not have these features; ``--lags`` reproduces the experiment. The
+first one helps the first forecast days, which is what the **near-term
+model** (#135) uses it for: ``NearTermModel`` routes the forecast days the
+integration's near-term model serves to a model with that column, as
+``ModelMixin`` does, on the integration's own ``PriceLagIndex``
+(``ml/price_lags.py``), which the experiment's index here extends.
 """
 
 from __future__ import annotations
@@ -20,14 +25,18 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, tzinfo
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from custom_components.open_spot_forecast.ml.features import floor_epoch, optional_float
+from custom_components.open_spot_forecast.ml import price_lags
+from custom_components.open_spot_forecast.ml.price_lags import NEAR_TERM_FEATURE
+
+if TYPE_CHECKING:
+    from .backtest import Forecaster, PriceSeries
 
 LAG_NAMES: tuple[str, ...] = (
-    "price_same_slot_last_known_day",
+    NEAR_TERM_FEATURE,
     "price_mean_last_7_known_days",
     "price_same_slot_last_week",
     "price_lag_days",
@@ -72,8 +81,8 @@ class LagConfig:
         return cls(chosen, mixed_ages)
 
 
-class PriceLagIndex:
-    """Known prices by slot, for the lagged price features (#119).
+class PriceLagIndex(price_lags.PriceLagIndex):
+    """The integration's lag index with the lag variants #119 tried.
 
     The index only ever holds the prices visible from the origin: the
     backtest's history cut at the horizon cutoff.
@@ -91,16 +100,11 @@ class PriceLagIndex:
             mixed_ages: Training rows show lag ages 1-7 (``training_lead``)
                 instead of 1 day.
         """
-        self._tz = tz
+        super().__init__(prices, tz)
         self._mixed_ages = mixed_ages
-        self._prices: dict[int, float] = {}
         totals: dict[date, list[float]] = {}
-        for epoch, value in prices.items():
-            price = optional_float(value)
-            if price is None:
-                continue
-            self._prices[int(epoch)] = price
-            day = datetime.fromtimestamp(int(epoch), tz).date()
+        for epoch, price in self._prices.items():
+            day = datetime.fromtimestamp(epoch, tz).date()
             totals.setdefault(day, [0.0, 0.0])
             totals[day][0] += price
             totals[day][1] += 1
@@ -108,30 +112,10 @@ class PriceLagIndex:
             day: (total, int(count)) for day, (total, count) in totals.items()
         }
         self._means: dict[tuple[date, int], float | None] = {}
-        # The local date of the latest known price; None without any
-        self.last_known_day: date | None = max(totals) if totals else None
 
-    def reference_day(self, start: datetime) -> date | None:
-        """Return the slot's reference day.
-
-        The last known day for a slot after the history (a target row,
-        whatever its lead time); for a slot inside it (a training row) the
-        day before, or ``training_lead`` days before with mixed ages. None
-        without any prices.
-        """
-        if self.last_known_day is None:
-            return None
-        day = start.astimezone(self._tz).date()
-        if day > self.last_known_day:
-            return self.last_known_day
-        lead = training_lead(day) if self._mixed_ages else 1
-        return day - timedelta(days=lead)
-
-    def same_slot(self, start: datetime, day: date) -> float | None:
-        """Return the price of ``start``'s local wall-clock slot on ``day``."""
-        local = start.astimezone(self._tz)
-        moment = datetime.combine(day, local.time(), tzinfo=self._tz)
-        return self._prices.get(floor_epoch(moment, self._tz))
+    def _training_lead(self, day: date) -> int:
+        """Return a training row's lag age: 1 day, or ``training_lead`` with mixed ages."""
+        return training_lead(day) if self._mixed_ages else 1
 
     def mean_until(self, day: date, days: int = LAG_MEAN_DAYS) -> float | None:
         """Return the mean known price of the ``days`` local days ending on ``day``.
@@ -184,3 +168,36 @@ class PriceLagIndex:
             lags = self.for_slot(datetime.fromtimestamp(start, self._tz))
             rows.append([math.nan if lags[n] is None else lags[n] for n in names])
         return np.array(rows, dtype=float).reshape(len(rows), len(names))
+
+
+@dataclass
+class NearTermModel:
+    """Two models per origin, as the integration's near-term routing (#135).
+
+    ``near`` (a model with the ``NEAR_TERM_FEATURE`` lag) forecasts the
+    target slots whose lag is at most ``days`` old, counted from the last
+    known day of the history; ``plain`` forecasts the rest.
+    """
+
+    plain: Forecaster
+    near: Forecaster
+    tz: tzinfo
+    days: int
+    name: str
+
+    def forecast(self, history: PriceSeries, targets: np.ndarray) -> np.ndarray:
+        """Return ``plain``'s forecast with the near-term slots from ``near``."""
+        predicted = np.array(self.plain.forecast(history, targets), dtype=float)
+        index = price_lags.PriceLagIndex(
+            dict(zip(history.starts.tolist(), history.prices.tolist(), strict=True)),
+            self.tz,
+        )
+        near_term = index.near_term(
+            [datetime.fromtimestamp(start, self.tz) for start in targets.tolist()],
+            self.days,
+        )
+        if near_term.any():
+            # Every target, so both models share the origin's cached inputs
+            near = np.asarray(self.near.forecast(history, targets), dtype=float)
+            predicted[near_term] = near[near_term]
+        return predicted

@@ -289,6 +289,13 @@ are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
 [ML Documentation](ml_documentation.md#feature-vector-26-features)).
 
+In DK1 and DK2 the first two forecast days come from a second regressor of the same
+kind, the **near-term model** (#135): the same rows plus yesterday's price
+in the same slot, an input that is only as fresh at prediction as in
+training for those days (see
+[Near-Term Model](ml_documentation.md#near-term-model-135)). It is not a
+sub-model: each forecast slot is predicted by exactly one of the two.
+
 ```
 Features (26):
   [day_of_week, is_weekend, holiday, slot_sin, slot_cos, morning_peak,

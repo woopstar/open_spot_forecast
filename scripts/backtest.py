@@ -65,6 +65,7 @@ from custom_components.open_spot_forecast.const import (
     ENTSOE_API,
     ENTSOE_OUTAGE_BORDERS,
     INSTRAT_GAS_API,
+    NEAR_TERM_REGIONS,
     NEIGHBOURS,
     OPEN_METEO_ARCHIVE_API,
     REGIONS,
@@ -91,12 +92,16 @@ from custom_components.open_spot_forecast.ml.gas_price import (
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 from custom_components.open_spot_forecast.ml.outages import OutageIndex, day_ahead_gate
+from custom_components.open_spot_forecast.ml.price_lags import (
+    NEAR_TERM_DAYS,
+    NEAR_TERM_FEATURE,
+)
 from custom_components.open_spot_forecast.ml.public_holidays import public_holiday
 from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherIndex
 from custom_components.open_spot_forecast.time_series import iso_weeks
 
 from .backtest_entsoe_outages import load_entsoe_outages
-from .backtest_lags import LagConfig, PriceLagIndex
+from .backtest_lags import LagConfig, NearTermModel, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 from .backtest_umm import PlantOutageIndex, load_outages_db, load_umm_outages
 
@@ -862,50 +867,48 @@ def build_models(
     nordpool: NordpoolInputs | None = None,
     lags: LagConfig | None = None,
     outages: OutageIndex | None = None,
+    near_term_days: int = 0,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
     With ``cross`` the GBM rows are two-stage cross-border models (#29);
     ``nordpool`` gives them a live export's prognoses (#91), ``lags`` the
     lagged price columns (#119) and ``outages`` the UMM outages (#123).
+    With ``near_term_days`` each GBM row is two models, as in the
+    integration (#135): one with yesterday's same-slot price for the first
+    ``near_term_days`` forecast days, the plain one for the rest.
     """
     models: list[Forecaster] = []
     skipped: dict[str, str] = {}
     stages = ", two-stage" if cross else ""
+    if near_term_days:
+        stages += f", near-term {near_term_days}d"
+    inputs: dict[str, Any] = {
+        "zone": zone,
+        "region": region,
+        "load": load,
+        "cross": cross,
+        "gas": gas,
+        "nordpool": nordpool,
+        "outages": outages,
+    }
+
+    def gbm(kind: type[CurrentModel | LightGbmReference], name: str) -> Forecaster:
+        if not near_term_days:
+            return kind(tz, name=name, lags=lags, **inputs)
+        near = kind(tz, name=name, lags=LagConfig((NEAR_TERM_FEATURE,)), **inputs)
+        return NearTermModel(
+            kind(tz, name=name, **inputs), near, tz, near_term_days, name
+        )
+
     for name in names:
         if name == "naive":
             models.append(NaiveLastWeek(tz))
         elif name == "current":
-            models.append(
-                CurrentModel(
-                    tz,
-                    name=f"current (NumPy GBM{stages})",
-                    zone=zone,
-                    region=region,
-                    load=load,
-                    cross=cross,
-                    gas=gas,
-                    nordpool=nordpool,
-                    lags=lags,
-                    outages=outages,
-                )
-            )
+            models.append(gbm(CurrentModel, f"current (NumPy GBM{stages})"))
         elif name == "lightgbm":
             if _lightgbm_available():
-                models.append(
-                    LightGbmReference(
-                        tz,
-                        name=f"lightgbm (reference{stages})",
-                        zone=zone,
-                        region=region,
-                        load=load,
-                        cross=cross,
-                        gas=gas,
-                        nordpool=nordpool,
-                        lags=lags,
-                        outages=outages,
-                    )
-                )
+                models.append(gbm(LightGbmReference, f"lightgbm (reference{stages})"))
             else:
                 skipped[f"lightgbm (reference{stages})"] = (
                     "lightgbm not installed (pip install -r requirements_backtest.txt)"
@@ -1249,6 +1252,14 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="with --lags: training rows lag 1-7 days (hashed per day) instead of 1",
     )
+    parser.add_argument(
+        "--near-term-days",
+        type=int,
+        help="forecast days served by the near-term model with yesterday's "
+        f"same-slot price (#135; default: as the integration, {NEAR_TERM_DAYS} "
+        f"in {', '.join(sorted(NEAR_TERM_REGIONS))} and 0, one model for "
+        "every day, elsewhere)",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     args = parser.parse_args(argv)
@@ -1279,7 +1290,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         parser.error(f"--nordpool-db: no file {args.nordpool_db}")
     if args.lag_ages and args.lags is None:
         parser.error("--lag-ages needs --lags")
+    if args.near_term_days is None:
+        args.near_term_days = NEAR_TERM_DAYS if args.region in NEAR_TERM_REGIONS else 0
+    if args.near_term_days < 0:
+        parser.error("--near-term-days must be >= 0")
     if args.lags is not None:
+        # The lag experiment is on one model for every day
+        args.near_term_days = 0
         try:
             args.lags = LagConfig.parse(args.lags, args.lag_ages)
         except ValueError as err:
@@ -1380,7 +1397,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             index=outage_index,
         )
     models, skipped = build_models(
-        names, tz, zone, args.region, load, cross, gas, nordpool, args.lags, outages
+        names,
+        tz,
+        zone,
+        args.region,
+        load,
+        cross,
+        gas,
+        nordpool,
+        args.lags,
+        outages,
+        args.near_term_days,
     )
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
