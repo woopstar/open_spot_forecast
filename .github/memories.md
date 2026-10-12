@@ -141,7 +141,10 @@ Open-Meteo weather next) is a `TimeSeriesSource` subclass (`api/time_series_sour
 over a `SeriesSpec` table (`ml/series_storage.py`, created in `LearningStorage._create_schema`).
 Subclasses implement `_fetch(start, end)` (rows, `[]` for "nothing", `None` for a failed
 request) and may override `chunks()` / `max_request_span`, `refresh_from()` (revised
-forecasts), `keys()` (keyed tables) and `retry_time()`. `async_update(start, end)` requests
+forecasts), `keys()` (keyed tables), `retry_time()` and `available_until()` (never request
+beyond it: day-ahead prices end with today before 12:45 CET and with tomorrow after, #180).
+A source's "no data for this range" answer (energy-charts: 404) is `[]`, not `None`, so the
+hole and its retry time are recorded; log a failed request with its zone and range. `async_update(start, end)` requests
 only missing grid points, skips remembered holes until their retry time (the horizon is
 open-ended), upserts (a change moves `last_data_write` → retrain) and persists the state in
 `meta`. Range helpers (`missing_ranges`, `split_range`, …) and `SourceState` live in

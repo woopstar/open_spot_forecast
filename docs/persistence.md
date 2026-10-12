@@ -225,7 +225,9 @@ source fetches only what it is missing:
   anything after it is requested again before its retry time (for Nordpool
   15 minutes for recent data, 1 day for older history). A failed request records nothing,
   so it is retried at the next update. `horizon_cutoff` hides everything
-  after a moment, for backtests.
+  after a moment, for backtests, and `available_until()` keeps a source
+  from asking for what cannot exist yet (the day-ahead prices of a day
+  whose auction has not run, #180).
 
 Nord Pool's outage messages (#123, `ml/outage_storage.py`) are not grid
 rows: `NordpoolUmmSource` (`api/nordpool_umm.py`) stores every published
