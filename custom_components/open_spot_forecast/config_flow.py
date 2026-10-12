@@ -3,8 +3,6 @@
 import logging
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigFlowResult
 from homeassistant.core import callback
@@ -77,6 +75,7 @@ from .const import (
     TRAINING_DAYS_OPTIONS,
 )
 from .sensor_entities import external_forecast_sensors
+from .validation import vol
 
 _LOGGER = logging.getLogger(__name__)
 

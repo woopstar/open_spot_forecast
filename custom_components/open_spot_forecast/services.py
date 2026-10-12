@@ -19,8 +19,6 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import (
     HomeAssistant,
@@ -47,6 +45,7 @@ from .price_source import PriceSettings
 from .spot_prices import known_until, with_known_prices
 from .tariffs import TariffSchedule
 from .time_slots import floor_to_slot, parse_utc
+from .validation import vol
 
 SERVICE_GET_FORECAST = "get_forecast"
 SERVICE_RESET_LEARNING = "reset_learning"

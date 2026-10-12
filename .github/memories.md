@@ -40,6 +40,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `price_output.py`        | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
 | `tariffs.py`             | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days repeat the latest day's time of day (#107)                        |
 | `attribution.py`         | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
+| `validation.py`          | `vol` — the schema library Home Assistant validates with (probatio, voluptuous before it); never import either directly (#195)                              |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
