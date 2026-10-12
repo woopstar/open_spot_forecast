@@ -1462,7 +1462,8 @@ SMARD.de, CC BY 4.0).
   near-same-day weather. The table is the floor an OSF number has to be read
   against once it is collected.
 
-**Sources checked against the real services (2026-10-10).**
+**Sources checked against the real services (2026-10-10; `carnot` and
+`osf` 2026-10-12).**
 
 - `smartere`: its README states EUR/MWh and UTC, and the stored first slot
   and price are those of the file. With the slots shifted before scoring, the
@@ -1473,18 +1474,42 @@ SMARD.de, CC BY 4.0).
 - `epex`: the 115 slots of the first stored forecast whose price was already
   published equal energy-charts' price to the cent, so the unit (EUR/MWh),
   the 15-minute UTC slot starts and the first slot are right.
-- `carnot`, `osf`: **not run against the real service yet.** The dev machine
-  has no `CARNOT_API_KEY` / `CARNOT_USER` and no `HA_URL` / `HA_TOKEN`, so
-  both are skipped; Carnot's unit (DKK/MWh) is still the recorded shape's.
+- `carnot` (first real run 2026-10-12 13:16 UTC, DK1): 168 hourly prices
+  from the next full hour (14:00 UTC) to seven days ahead. The **unit is
+  DKK/MWh** as assumed: converted, the 32 hours whose price was already
+  published average 0.79 of the published prices (118 against 180 EUR/MWh
+  in the first hour); read as EUR/MWh or per kWh they would be off by a
+  factor of 7.5 or 1000. Like Smartere Elforbrug it **does not repeat
+  published prices**: those 32 hours are forecasts, 37 EUR/MWh off on
+  average. Whether `utctime` is UTC cannot be told from one forecast (read
+  one hour earlier, as stored and one hour later the error over those hours
+  is 35.8, 37.4 and 42.0); check it as for Smartere Elforbrug, with shifted
+  slots, once a few weeks are scored.
+- `osf` (first real run 2026-10-12 13:15 UTC, a DK1 instance): the
+  `get_forecast` action over Home Assistant's REST API returned 672
+  15-minute raw spot prices in `DKK/kWh`, from the end of the confirmed
+  prices (2026-10-13 22:00 UTC, local midnight; tomorrow's prices were
+  already published) to seven days on, stored as 70-379 EUR/MWh. Unit, grid
+  and first slot are as expected.
 
-**No paired results are recorded yet.** The collector is not scheduled
-anywhere and OSF's own forecast has not been collected once: the first
-`collect` (2026-10-10, 19:14 local, after the cutoff) stored Smartere
-Elforbrug and EpexPredictor only, for DK1 and DK2. It has to run on a machine
-that reaches Home Assistant and keeps `.cache/benchmark/` private (never a
-public CI artifact or branch: Smartere Elforbrug's forecasts may not be
-redistributed). Record the paired table here once it covers 14 days or more
-(`MIN_REPORT_DAYS`, as the live report).
+**No paired results are recorded yet**: `report` says "No day has every
+source". All four sources were collected together for the first time on
+2026-10-12 at 15:15 local, by hand and after the 12:00 cutoff, so that run
+only counts from lead 2 on (delivery day 2026-10-14) and OSF had no
+forecast for the next day in it. Over the 98 hours all four forecast beyond
+the published prices (to 2026-10-17 23:00 UTC) their means are 117
+(`carnot`), 139 (`epex`), 161 (`smartere`) and 187 (`osf`) EUR/MWh: the
+sources disagree by a factor of 1.6 on the level of the same week, which
+the actual prices will settle.
+
+The collector is still not scheduled anywhere. For the paired table it has
+to run **every day before 12:00 local** (e.g. 09:00 and 11:30), when OSF's
+forecast still starts with tomorrow, on a machine that reaches Home
+Assistant and keeps `.cache/benchmark/` private (never a public CI artifact
+or branch: Smartere Elforbrug's forecasts may not be redistributed). Record
+the paired table here once it covers 14 days or more (`MIN_REPORT_DAYS`, as
+the live report); with a first morning run on 2026-10-13 that is 2026-10-27
+at the earliest.
 
 ### Zone weather (#22)
 
