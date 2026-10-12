@@ -1,6 +1,7 @@
 """Tests for the ML self-learning startup path."""
 
 from unittest.mock import AsyncMock, Mock
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -34,6 +35,7 @@ async def test_load_learning_data_makes_no_network_calls():
 def test_price_history_keeps_the_newest_days_when_older_ones_arrive_later() -> None:
     """A backfill adds older days after today's (#27): trimming keeps the newest."""
     predictor = SpotPricePredictor.__new__(SpotPricePredictor)
+    predictor.tz = ZoneInfo("Europe/Copenhagen")
     predictor.price_history = []
     predictor.max_history_days = 3
 

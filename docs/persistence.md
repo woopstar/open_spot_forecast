@@ -174,7 +174,10 @@ rewrote, merged and dropped.
 ## Price History
 
 The ML layer keeps its price history as one entry per local day (one price
-per 15-minute slot from local midnight, `None` if missing). Since #24 it is
+per 15-minute slot from local midnight, `None` if missing), in memory
+exactly as it is read back from the database: a list that runs past
+midnight (today's prices followed by tomorrow's) is split into its days
+when it is stored (`store_daily_prices`, #173). Since #24 it is
 stored as one `spot_prices` row per UTC slot (`ml/price_storage.py`): a
 long history is not rewritten as a JSON blob per day on every save, only
 the days that changed since they were last written or read are, and

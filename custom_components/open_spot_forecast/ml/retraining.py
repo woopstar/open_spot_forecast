@@ -42,27 +42,35 @@ class RetrainMixin(PredictorBase):
     def record_training_prices(
         self, prices: Sequence[float | None], date: str | None = None
     ) -> None:
-        """Store the day's prices for training and note whether they changed.
+        """Store the known prices for training and note whether they changed.
 
-        A new date or changed prices mark the price history as updated,
-        which triggers a retrain on this forecast run. Invalid prices (see store_daily_prices)
-        are not stored and change nothing.
+        A day that was not stored yet or whose prices changed marks the
+        price history as updated, which triggers a retrain on this forecast
+        run. Each local day of ``prices`` is compared with its own entry
+        (``store_daily_prices`` keeps one per day), so re-sending today's
+        and tomorrow's prices changes nothing. Invalid prices are not stored
+        and change nothing either.
 
         Args:
-            prices: Known prices for the day (today, plus tomorrow once published)
-            date: Date string (YYYY-MM-DD), defaults to today
+            prices: Known prices from local midnight of ``date`` on (today,
+                followed by tomorrow once published)
+            date: Date string (YYYY-MM-DD) of the first slot, defaults to today
         """
         if date is None:
             date = dt_util.now().strftime("%Y-%m-%d")
 
-        previous = next(
-            (e.get("prices") for e in self.price_history if e.get("date") == date),
-            None,
-        )
+        previous = {
+            entry.get("date"): list(entry.get("prices") or [])
+            for entry in self.price_history
+        }
         if not self.store_daily_prices(prices, date):
             return
 
-        if previous is not None and same_prices(previous, prices):
+        if all(
+            entry.get("date") in previous
+            and same_prices(previous[entry.get("date")], entry.get("prices") or [])
+            for entry in self.price_history
+        ):
             return
 
         self._prices_updated_at = dt_util.utcnow()
