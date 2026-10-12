@@ -15,7 +15,6 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
-import voluptuous as vol
 
 from homeassistant.util import dt as dt_util
 
@@ -47,6 +46,7 @@ from custom_components.open_spot_forecast.time_slots import (
     slots_in_local_day,
     utc_slot_key,
 )
+from custom_components.open_spot_forecast.validation import vol
 
 pytestmark = pytest.mark.usefixtures("copenhagen_time_zone")
 

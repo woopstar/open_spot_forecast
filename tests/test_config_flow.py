@@ -4,7 +4,6 @@ from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-import voluptuous as vol
 
 from custom_components.open_spot_forecast.config_flow import (
     OpenSpotForecastConfigFlow,
@@ -19,6 +18,7 @@ from custom_components.open_spot_forecast.const import (
     DEFAULT_REGION,
     REGIONS,
 )
+from custom_components.open_spot_forecast.validation import vol
 
 
 def _config_flow() -> Any:

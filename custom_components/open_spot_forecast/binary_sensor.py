@@ -4,8 +4,11 @@ import logging
 from datetime import timedelta
 from typing import Any
 
+# Home Assistant 2026.10 defines the device class in binary_sensor.const and
+# imports it into the package without re-exporting it; the package is the one
+# path that also exists in earlier versions (#195)
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
+    BinarySensorDeviceClass,  # pyright: ignore[reportPrivateImportUsage]
     BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
