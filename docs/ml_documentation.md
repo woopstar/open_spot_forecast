@@ -357,9 +357,15 @@ messages stored a slot nothing is announced for is 0; before the first
 fetch, and outside `UMM_REGIONS`, the two features are NaN in both phases.
 Nord Pool publishes UMMs for its own delivery areas (`UMM_AREAS`: DK, SE,
 NO, FI and the Baltics), and the backtest can measure every one of them, but
-the model uses them only where the backtest found they help: DK1 (see
-[Nord Pool UMM outages](#nord-pool-umm-outages-123); in DK2 they lower the
-day-1 error and raise the error at days 2-7).
+the model uses them only where the backtest found they help, and since #175
+that is **no region**: `UMM_REGIONS` is empty, so the two features are
+unknown (NaN) in every installation's rows and no instance fetches the
+messages. DK1 had them from #123 to #175; with the near-term model they
+lower no day's error there, and on recent origins they raise days 2-7 (see
+[Nord Pool UMM outages](#nord-pool-umm-outages-123)). In DK2 they lower the
+day-1 error and raise the error at days 2-7. The source, the tables and
+`OutageIndex` stay, so the backtest keeps measuring them. Messages an
+instance stored before #175 stay in its database, unused.
 
 DE, NL, BE and FR publish their unavailability on the **ENTSO-E
 Transparency Platform** instead (#138, `api/entsoe_outages.py`, with the
@@ -1125,7 +1131,8 @@ pipeline:
   (`umm_messages` / `umm_periods` of a learning-database export, read-only)
   instead, see [Outages from a live export](#outages-from-a-live-export-168).
   `--outages-plants-only` keeps `unavailable_production` and leaves the
-  grid feature unknown.
+  grid feature unknown; `--outages-near-term-only` gives the features to
+  the near-term model alone (#175).
 - **ENTSO-E load only with a key.** `--load entsoe` (token in the
   `ENTSOE_API_KEY` environment variable, never cached or printed) adds
   feature 16 from ENTSO-E's week-ahead forecasts, one request per ISO week
@@ -1776,17 +1783,93 @@ say:
   samples per leaf see a sparse signal (a few outage episodes per 60-day
   window).
 
-**Decision**: `UMM_REGIONS` is `{"DK1"}`: a lower day-1 error and no higher
-error later. DK2 stays off (the day-1 gain does not pay for days 2-7), and
-the other Nord Pool areas stay off until measured (`UMM_AREAS` lets the
-backtest run them). Training rows with the outage state as of each lead
-time (as the Nordpool-masked copies do for the prognoses, #91) is the
-obvious next step for DK2.
+**Decision (2026-10-02, superseded below)**: `UMM_REGIONS` is `{"DK1"}`: a
+lower day-1 error and no higher error later. DK2 stays off (the day-1 gain
+does not pay for days 2-7), and the other Nord Pool areas stay off until
+measured (`UMM_AREAS` lets the backtest run them). Training rows with the
+outage state as of each lead time (as the Nordpool-masked copies do for the
+prognoses, #91) is the obvious next step for DK2.
 
 ```bash
-python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages none
-python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
-python -m scripts.backtest --region DK2 --window-days 60 --horizon-days 7 --outages umm
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --near-term-days 0 --outages none
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --near-term-days 0 --outages umm
+python -m scripts.backtest --region DK2 --window-days 60 --horizon-days 7 --near-term-days 0 --outages umm
+```
+
+**Re-measured with the near-term model (#175).** Two things changed after
+that decision. The near-term model (#135) gives forecast days 1-2 yesterday's
+slot price, and the weeks from late August 2026 brought an episode the year
+to 2026-09-29 had averaged away. Both regions, 60-day window,
+`--horizon-days 7`, `--near-term-days 2`, production model (NumPy GBM), MAE
+in EUR ct/kWh. `both` gives the outage features to both price models (what
+DK1 ran from #135 on), `near-term only` to the near-term model alone
+(`--outages-near-term-only`: the model for days 3-7 has them unknown), which
+is where their information age matches training. Recorded 2026-10-12.
+
+365 daily origins from 2025-10-06 to 2026-10-05:
+
+| Zone | Outage features | 1d       | 2d       | 3d       | 4d       | 5d       | 6d       | 7d       |
+| ---- | --------------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- |
+| DK1  | none            | **2.19** | **2.42** | **2.53** | **2.55** | **2.56** | 2.60     | **2.62** |
+| DK1  | both            | 2.20     | 2.47     | 2.55     | 2.56     | 2.57     | 2.60     | 2.63     |
+| DK1  | near-term only  | 2.20     | 2.47     | 2.53     | 2.55     | 2.56     | 2.60     | 2.62     |
+| DK2  | none            | **2.47** | **2.70** | **2.73** | **2.74** | **2.76** | **2.76** | **2.79** |
+| DK2  | both            | 2.48     | 2.79     | 2.80     | 2.87     | 2.91     | 2.91     | 2.96     |
+| DK2  | near-term only  | 2.48     | 2.79     | 2.73     | 2.74     | 2.76     | 2.76     | 2.79     |
+
+The 40 daily origins from 2026-08-27 to 2026-10-05:
+
+| Zone | Outage features | 1d       | 2d       | 3d       | 4d       | 5d       | 6d       | 7d       |
+| ---- | --------------- | -------- | -------- | -------- | -------- | -------- | -------- | -------- |
+| DK1  | none            | **3.19** | **3.60** | **3.49** | **3.48** | **3.55** | **3.70** | **3.64** |
+| DK1  | both            | 3.21     | 3.72     | 3.97     | 3.95     | 4.09     | 4.17     | 4.16     |
+| DK1  | near-term only  | 3.21     | 3.72     | 3.49     | 3.48     | 3.55     | 3.70     | 3.64     |
+| DK2  | none            | **3.41** | **3.81** | **3.60** | **3.61** | **3.65** | **3.64** | **3.66** |
+| DK2  | both            | 3.44     | 3.87     | 3.77     | 3.93     | 3.90     | 3.87     | 3.86     |
+| DK2  | near-term only  | 3.44     | 3.87     | 3.60     | 3.61     | 3.65     | 3.64     | 3.66     |
+
+With one model for every day (`--near-term-days 0`, main before #135) the
+same 40 origins give DK1 3.38 / 3.50 / 3.49 / 3.48 / 3.55 / 3.70 / 3.64
+without the features and 3.43 / 3.84 / 3.97 / 3.95 / 4.09 / 4.17 / 4.16 with
+them, and the year 2.31 / 2.48 / 2.53 / 2.55 / 2.56 / 2.60 / 2.62 against
+2.29 / 2.49 / 2.55 / 2.56 / 2.57 / 2.60 / 2.63.
+
+What the numbers say:
+
+- **With the near-term model the features lower no day's error**, in either
+  region, on the year or on the recent weeks. Their one gain, day 1 (2.31 →
+  2.29 in DK1 with one model), is smaller than what yesterday's slot price
+  gives (2.31 → 2.19), and on top of that price they add nothing (2.19
+  against 2.20).
+- **Days 3-7 are where they cost**: +0.3 to +0.5 ct/kWh in DK1 and +0.2 to
+  +0.3 in DK2 on the recent origins, +0.07 to +0.17 in DK2 on the year. A
+  training row has its day-ahead gate's complete outage picture, a slot
+  days ahead only what was published by the origin; one long episode in a
+  60-day window is enough for the trees to split on a state the forecast
+  rows do not have.
+- **Giving them to the near-term model only removes that cost and still
+  does not pay**: days 3-7 equal `none` by construction, days 1-2 are
+  0.01-0.12 worse than `none`.
+- LightGBM uses the signal better at day 1 (DK1 year 2.21 → 2.18, DK2 2.50
+  → 2.45) and shows the same loss later in DK2 (2.82 → 2.96 at 5d) and on
+  DK1's recent origins (3.63 → 4.31 at 5d). The depth-3 production model
+  gains less and loses as much.
+- On these 40 origins the near-term model itself is 0.19 better at day 1
+  and 0.10 **worse** at day 2 than one model in DK1 (3.50 → 3.60): a
+  two-day-old price misleads when the level moves fast. The year, which
+  `NEAR_TERM_DAYS` = 2 was chosen on, has day 2 0.06 better.
+
+**Decision**: `UMM_REGIONS` is empty. No region meets the rule (a lower
+day-1 error and no higher error later) any more, with the features in both
+models or in the near-term model only. The source, the storage and
+`OutageIndex` stay, and `UMM_AREAS` keeps every Nord Pool area measurable.
+What would have to change before they return: training rows that show the
+outage state as known at each lead time, not at the gate.
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --outages none
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --outages umm
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2026-08-27 --end 2026-10-05 --outages umm --outages-near-term-only
 ```
 
 ### ENTSO-E outages (#138)
@@ -2043,14 +2126,14 @@ DK1 and DK2, 365 daily origins from 2025-10-06 to 2026-10-05, 60-day window,
 `price_same_slot_last_known_day`, days 3-7 from the plain model. MAE in EUR
 ct/kWh, **one model / with the near-term model**. Recorded 2026-10-12.
 
-| Zone | Model                                        | 1d              | 2d              | 3d          | 4d          | 5d          | 6d          | 7d          |
-| ---- | -------------------------------------------- | --------------- | --------------- | ----------- | ----------- | ----------- | ----------- | ----------- |
-| DK1  | current (NumPy GBM)                          | 2.31 / **2.19** | 2.48 / **2.42** | 2.53 / 2.53 | 2.55 / 2.55 | 2.56 / 2.56 | 2.60 / 2.60 | 2.62 / 2.62 |
-| DK1  | lightgbm (reference)                         | 2.31 / 2.21     | 2.52 / 2.44     | 2.59 / 2.59 | 2.61 / 2.61 | 2.64 / 2.64 | 2.67 / 2.67 | 2.70 / 2.70 |
-| DK1  | current, `--outages umm` (DK1 in production) | 2.29 / **2.20** | 2.49 / **2.47** | 2.55 / 2.55 | 2.56 / 2.56 | 2.57 / 2.57 | 2.60 / 2.60 | 2.63 / 2.63 |
-| DK1  | lightgbm, `--outages umm`                    | 2.21 / 2.18     | 2.49 / 2.46     | 2.56 / 2.56 | 2.58 / 2.58 | 2.62 / 2.62 | 2.62 / 2.62 | 2.65 / 2.65 |
-| DK2  | current (NumPy GBM)                          | 2.54 / **2.47** | 2.70 / 2.70     | 2.73 / 2.73 | 2.74 / 2.74 | 2.76 / 2.76 | 2.76 / 2.76 | 2.79 / 2.79 |
-| DK2  | lightgbm (reference)                         | 2.58 / 2.50     | 2.75 / 2.76     | 2.81 / 2.81 | 2.83 / 2.83 | 2.82 / 2.82 | 2.83 / 2.83 | 2.87 / 2.87 |
+| Zone | Model                                     | 1d              | 2d              | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | ----------------------------------------- | --------------- | --------------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DK1  | current (NumPy GBM)                       | 2.31 / **2.19** | 2.48 / **2.42** | 2.53 / 2.53 | 2.55 / 2.55 | 2.56 / 2.56 | 2.60 / 2.60 | 2.62 / 2.62 |
+| DK1  | lightgbm (reference)                      | 2.31 / 2.21     | 2.52 / 2.44     | 2.59 / 2.59 | 2.61 / 2.61 | 2.64 / 2.64 | 2.67 / 2.67 | 2.70 / 2.70 |
+| DK1  | current, `--outages umm` (DK1 until #175) | 2.29 / **2.20** | 2.49 / **2.47** | 2.55 / 2.55 | 2.56 / 2.56 | 2.57 / 2.57 | 2.60 / 2.60 | 2.63 / 2.63 |
+| DK1  | lightgbm, `--outages umm`                 | 2.21 / 2.18     | 2.49 / 2.46     | 2.56 / 2.56 | 2.58 / 2.58 | 2.62 / 2.62 | 2.62 / 2.62 | 2.65 / 2.65 |
+| DK2  | current (NumPy GBM)                       | 2.54 / **2.47** | 2.70 / 2.70     | 2.73 / 2.73 | 2.74 / 2.74 | 2.76 / 2.76 | 2.76 / 2.76 | 2.79 / 2.79 |
+| DK2  | lightgbm (reference)                      | 2.58 / 2.50     | 2.75 / 2.76     | 2.81 / 2.81 | 2.83 / 2.83 | 2.82 / 2.82 | 2.83 / 2.83 | 2.87 / 2.87 |
 
 With the **cross-border model** (`--cross-border`; the near-term model gets
 the same stage-1 columns as the price model):

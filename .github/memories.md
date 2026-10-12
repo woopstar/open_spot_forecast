@@ -302,9 +302,12 @@ Nordpool's `consumption_forecast`. The ENTSO-E key is optional in the config and
 `unavailable_production` / `unavailable_transmission` (#123) are Nord Pool UMM outages per slot
 (`OutageIndex.for_slot(start, origin)`, `ml/outages.py`), **as known at an origin**: training rows
 use `day_ahead_gate(day)` (12:00 CET the day before), prediction rows now; every message version is
-stored (`umm_messages`/`umm_periods`); only `UMM_REGIONS` (DK1: the backtest found day 1 better and
-days 2-7 unchanged; DK2 got worse at days 2-7) fetch them, `UMM_AREAS` is where the backtest can run
-them; NaN before the first fetch and elsewhere, 0 when nothing is announced. Never aggregate the
+stored (`umm_messages`/`umm_periods`); only `UMM_REGIONS` fetch them, and that set is **empty
+since #175**: with the near-term model the features lower no day's error in DK1 (and raised days
+2-7 by 0.3-0.5 ct/kWh on the origins from 2026-08-27), DK2 always got worse at days 2-7.
+`UMM_AREAS` is where the backtest can run them (`--outages umm`, `--outages-near-term-only`);
+tests that need a region with the features use the `umm_in_dk1` fixture (`tests/conftest.py`).
+NaN before the first fetch and elsewhere, 0 when nothing is announced. Never aggregate the
 latest versions only. `for_slot()` bisects a step function built once per UTC day and origin from
 the periods in force (#167): never loop over the stored periods per slot (ENTSO-E archives hold
 tens of thousands a month).

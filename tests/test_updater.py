@@ -1168,7 +1168,10 @@ def test_the_outage_messages_need_the_model_and_a_region_they_help(
     used: bool,
 ) -> None:
     """Nord Pool's UMMs in ``UMM_REGIONS``; with a key ENTSO-E's documents (#138)."""
-    with patch(f"{HISTORY}.ENTSOE_OUTAGE_REGIONS", frozenset({"DE"})):
+    with (
+        patch(f"{HISTORY}.ENTSOE_OUTAGE_REGIONS", frozenset({"DE"})),
+        patch(f"{HISTORY}.UMM_REGIONS", frozenset({"DK1"})),
+    ):
         harness = make(region=region, ml=ml, entsoe_key=entsoe_key)
 
     assert (harness.updater.outages is harness.outages) is used
@@ -1177,8 +1180,19 @@ def test_the_outage_messages_need_the_model_and_a_region_they_help(
     assert (harness.api_data["outages"] is None) is not used
 
 
+def test_no_region_has_an_outage_source_by_default(
+    make: Callable[..., Harness],
+) -> None:
+    """``UMM_REGIONS`` and ``ENTSOE_OUTAGE_REGIONS`` are empty (#175)."""
+    for region, key in (("DK1", None), ("DK2", None), ("DE", "token")):
+        harness = make(region=region, ml=True, entsoe_key=key)
+
+        assert harness.updater.outages is None
+        assert harness.api_data["outages"] is None
+
+
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.usefixtures("copenhagen_time_zone", "umm_in_dk1")
 async def test_run_forecast_refreshes_the_outage_messages(
     make: Callable[..., Harness],
 ) -> None:
@@ -1217,7 +1231,7 @@ async def test_a_failing_outage_source_does_not_block_the_forecast(
 
 
 @pytest.mark.asyncio
-@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.usefixtures("copenhagen_time_zone", "umm_in_dk1")
 async def test_the_outage_messages_are_backfilled_and_pruned_with_the_history(
     make: Callable[..., Harness],
 ) -> None:

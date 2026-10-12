@@ -84,7 +84,7 @@ def test_a_training_stores_its_duration_and_the_model_options(
     assert json.loads(meta["model_options"]) == {
         "cross_border": False,
         "near_term": True,
-        "outages": True,
+        "outages": False,
         "training_days": predictor.max_history_days,
     }
     assert meta["model_options_since"] == predictor.model_options_since.isoformat()

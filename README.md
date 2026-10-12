@@ -24,9 +24,10 @@ and continuously improves accuracy via per-slot bias correction.
 - **26-feature model** — 15-minute time of day, public holidays, sun
   position over the bidding zone, ENTSO-E's week-ahead load forecast (with
   an API key), the natural-gas price (in regions where it helps), planned
-  and unplanned outages of plants and interconnectors from Nord Pool's
-  urgent market messages or the ENTSO-E Transparency Platform (where they
-  help), zone weather from Open-Meteo (wind at 80 m,
+  and unplanned outages of plants and interconnectors (measured for Nord
+  Pool's urgent market messages and the ENTSO-E Transparency Platform, and
+  currently used in no region: they did not lower the error), zone weather
+  from Open-Meteo (wind at 80 m,
   temperature, irradiance, pressure, humidity across the bidding zone;
   trained on archived forecasts, like the forecasts it predicts from) and
   market-demand features, implemented in pure NumPy (no scikit-learn
@@ -149,8 +150,9 @@ for the Stromligning entities in its `apps.yaml`: see
   (no key) or, for DE, NL, BE and FR, the
   [ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)'s outage
   documents (API key): unavailable plant and interconnector capacity per
-  slot, as known when each price was set, in the regions where it improves
-  the forecast (DK1)
+  slot, as known when each price was set. No region fetches them at the
+  moment: the backtest found no region where they lower the error at every
+  forecast day
 - **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
   learns the neighbours' day-ahead prices from their weather and feeds the
   forecasts to the region's model (more CPU per training)

@@ -868,6 +868,7 @@ def build_models(
     lags: LagConfig | None = None,
     outages: OutageIndex | None = None,
     near_term_days: int = 0,
+    outages_near_term_only: bool = False,
 ) -> tuple[list[Forecaster], dict[str, str]]:
     """Instantiate the requested models; return them plus {skipped name: reason}.
 
@@ -897,8 +898,10 @@ def build_models(
         if not near_term_days:
             return kind(tz, name=name, lags=lags, **inputs)
         near = kind(tz, name=name, lags=LagConfig((NEAR_TERM_FEATURE,)), **inputs)
+        # The outage features only where their age matches training (#175)
+        plain_inputs = inputs | {"outages": None} if outages_near_term_only else inputs
         return NearTermModel(
-            kind(tz, name=name, **inputs), near, tz, near_term_days, name
+            kind(tz, name=name, **plain_inputs), near, tz, near_term_days, name
         )
 
     for name in names:
@@ -1215,6 +1218,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "the grid feature unknown (#168)",
     )
     parser.add_argument(
+        "--outages-near-term-only",
+        action="store_true",
+        help="with outages and the near-term model: only the near-term model "
+        "gets the outage features (#175)",
+    )
+    parser.add_argument(
         "--cross-border",
         action="store_true",
         help="two-stage model with the neighbouring zones' prices (#29)",
@@ -1408,6 +1417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.lags,
         outages,
         args.near_term_days,
+        args.outages_near_term_only,
     )
 
     print(f"Loading {args.region} prices from energy-charts ...", file=sys.stderr)
