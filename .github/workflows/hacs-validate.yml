@@ -1,7 +1,13 @@
 name: Code validation
 
+# The HACS action looks the branch up by name through the GitHub API, so the branch has to
+# exist while the check runs. Both checks are required on main, which keeps it there.
 on:
   push:
+    branches:
+      - main
+  pull_request:
+    types: [opened, synchronize, reopened]
   schedule:
     - cron: "0 0 * * *"
 
