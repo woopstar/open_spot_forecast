@@ -25,6 +25,12 @@ logs
 *.db-shm
 *.db-wal
 
+# local credentials of the dev-only tools (backtest, benchmark collector);
+# .env.example lists the names
+.env
+.env.*
+!.env.example
+
 # Home Assistant configuration
 config/*
 !config/configuration.yaml
