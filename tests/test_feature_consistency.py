@@ -68,8 +68,15 @@ WEATHER_FEATURES = (
 
 
 @pytest.fixture
-def predictor(tmp_path: Path) -> Iterator[SpotPricePredictor]:
-    """Predictor with real SQLite storage in Copenhagen time."""
+def predictor(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> Iterator[SpotPricePredictor]:
+    """Predictor with real SQLite storage in Copenhagen time.
+
+    With the UMM outage features (``umm_in_dk1``), so every feature of the
+    vector has a source in these tests.
+    """
+    request.getfixturevalue("umm_in_dk1")
     hass = Mock()
     hass.config.path.return_value = str(tmp_path / ".storage")
     predictor = SpotPricePredictor(hass, "DK1")
@@ -466,6 +473,33 @@ def test_training_rows_only_see_messages_published_by_their_day_ahead_gate(
     )
 
 
+def test_without_a_region_in_umm_regions_stored_messages_reach_no_row(
+    tmp_path: Path,
+) -> None:
+    """No region uses the outage features (#175): unknown in both phases, even
+    with messages in the database from an earlier version."""
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    predictor = SpotPricePredictor(hass, "DK1")
+    try:
+        predictor.storage.upsert_umm_rows(_umm_rows(SLOT))
+        _store_history(predictor, SLOT)
+        row = _training_row(predictor, SLOT)
+        live = predictor._combine_features(
+            [slot_time_features(SLOT)],
+            {},
+            outages=predictor._outage_index(_umm_rows(SLOT)),
+        )[0]
+    finally:
+        predictor.storage.close()
+
+    assert predictor._outage_index(_umm_rows(SLOT)) is None
+    for features in (row, live):
+        assert features["unavailable_production"] is None
+        assert features["unavailable_transmission"] is None
+
+
+@pytest.mark.usefixtures("umm_in_dk1")
 def test_outages_are_unknown_without_stored_messages_and_outside_nord_pool(
     tmp_path: Path,
 ) -> None:

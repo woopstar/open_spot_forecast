@@ -257,11 +257,14 @@ GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
 # unplanned outages of production units and interconnectors) for its own
 # delivery areas, the Nordics and the Baltics; DE, NL, BE and FR publish on
 # the ENTSO-E platform instead (ENTSOE_OUTAGE_BORDERS, #138). The backtest
-# can measure every area; the model uses them only in UMM_REGIONS, where the
-# backtest found a lower day-1 error and no higher error later (DK1; in DK2
-# days 2-7 got worse, see docs/ml_documentation.md)
+# can measure every area (UMM_AREAS); the model uses the features only in
+# UMM_REGIONS, where the day-1 error drops and no later day's rises. No
+# region meets that any more (#175): DK1 did on the year to 2026-09-29, but
+# with the near-term model (#135) the features lower no day's error, and on
+# the origins from 2026-08-27 they raise days 2-7 by 0.3-0.5 ct/kWh; DK2
+# never did (docs/ml_documentation.md → Nord Pool UMM outages)
 UMM_AREAS = frozenset({"DK1", "DK2", "SE3", "SE4", "NO2", "FI", "EE", "LT", "LV"})
-UMM_REGIONS = frozenset({"DK1"})
+UMM_REGIONS: frozenset[str] = frozenset()
 # Regions with the near-term price model (#135): a second model with
 # yesterday's same-slot price for the first forecast days (ml/price_lags.py).
 # Only where the backtest measured it: in DK1 and DK2 the day-1 MAE drops by

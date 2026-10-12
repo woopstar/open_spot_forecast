@@ -586,6 +586,7 @@ async def test_pruning_moves_the_covered_start(
 def test_the_model_uses_it_where_the_backtest_found_it_helps() -> None:
     assert {"DK1", "DK2", "SE3", "SE4", "NO2", "FI", "EE", "LT", "LV"} == UMM_AREAS
     assert not {"DE", "NL", "BE", "FR"} & UMM_AREAS
-    # DK2: a lower day-1 error, but days 2-7 got worse (docs/ml_documentation.md)
-    assert {"DK1"} == UMM_REGIONS
+    # No region any more (#175): with the near-term model the features lower
+    # no day's error in DK1, and DK2's days 2-7 got worse (docs/ml_documentation.md)
+    assert frozenset() == UMM_REGIONS
     assert UMM_REGIONS <= UMM_AREAS

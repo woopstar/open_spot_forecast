@@ -11,6 +11,7 @@ import pytest
 
 from custom_components.open_spot_forecast.const import NEAR_TERM_REGIONS
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
+from custom_components.open_spot_forecast.ml.outages import OutageIndex
 from custom_components.open_spot_forecast.ml.price_lags import (
     NEAR_TERM_DAYS,
     NEAR_TERM_FEATURE,
@@ -129,6 +130,30 @@ def test_build_models_routes_both_gbm_rows_with_near_term_days() -> None:
     assert isinstance(reference.near, LightGbmReference)
     assert reference.plain.lags is None
     assert reference.near.lags == LagConfig((NEAR_TERM_FEATURE,))
+
+
+def test_outage_features_can_go_to_the_near_term_model_only() -> None:
+    """--outages-near-term-only: the model for days 3+ gets none (#175)."""
+    outages = OutageIndex([])
+
+    (both,), _ = build_models(["current"], TZ, outages=outages, near_term_days=2)
+    (near_only,), _ = build_models(
+        ["current"],
+        TZ,
+        outages=outages,
+        near_term_days=2,
+        outages_near_term_only=True,
+    )
+
+    assert isinstance(both, NearTermModel) and isinstance(near_only, NearTermModel)
+    assert isinstance(both.plain, CurrentModel) and both.plain.outages is outages
+    assert isinstance(near_only.plain, CurrentModel)
+    assert isinstance(near_only.near, CurrentModel)
+    assert near_only.plain.outages is None
+    assert near_only.near.outages is outages
+    args = backtest.parse_args(["--outages", "umm", "--outages-near-term-only"])
+    assert args.outages_near_term_only is True
+    assert backtest.parse_args([]).outages_near_term_only is False
 
 
 def test_near_term_model_equals_its_two_models_on_their_days() -> None:
