@@ -1655,19 +1655,72 @@ python -m scripts.backtest --region DK2 --window-days 60 --horizon-days 7 --outa
 
 ### ENTSO-E outages (#138)
 
-DE, NL, BE and FR, 365 daily origins, 60-day window (the production
-window), `--horizon-days 7`, with the zone weather; `--outages none`
-against `--outages entsoe`. Training rows get the documents published (the
-current revision's `createdDateTime`) by their day-ahead gate, target rows
-those published before the horizon cutoff. MAE in EUR ct/kWh, **without /
-with** the two outage features.
+DE, NL, BE and FR, 365 daily origins from 2025-09-24 to 2026-09-23, 60-day
+window (the production window), `--horizon-days 7`, with the zone weather;
+`--outages none` against `--outages entsoe`. Training rows get the documents
+published (the current revision's `createdDateTime`) by their day-ahead
+gate, target rows those published before the horizon cutoff. MAE in EUR
+ct/kWh, **without / with** the two outage features. Recorded 2026-10-12,
+from the documents as the platform served them that day (events of 2025-07
+to 2026-09).
 
-<!-- ENTSOE_OUTAGE_RESULTS -->
+| Zone | Model                | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | -------------------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DE   | current (NumPy GBM)  | 2.11 / 2.13 | 2.23 / 2.25 | 2.26 / 2.28 | 2.26 / 2.29 | 2.27 / 2.29 | 2.28 / 2.30 | 2.30 / 2.33 |
+| DE   | lightgbm (reference) | 1.98 / 2.00 | 2.13 / 2.16 | 2.17 / 2.22 | 2.20 / 2.24 | 2.22 / 2.22 | 2.23 / 2.24 | 2.24 / 2.28 |
+| NL   | current (NumPy GBM)  | 2.16 / 2.17 | 2.29 / 2.33 | 2.33 / 2.39 | 2.35 / 2.42 | 2.36 / 2.45 | 2.39 / 2.48 | 2.41 / 2.51 |
+| NL   | lightgbm (reference) | 2.13 / 2.06 | 2.27 / 2.27 | 2.32 / 2.33 | 2.35 / 2.36 | 2.38 / 2.40 | 2.42 / 2.43 | 2.46 / 2.48 |
+| BE   | current (NumPy GBM)  | 2.27 / 2.25 | 2.40 / 2.42 | 2.45 / 2.47 | 2.47 / 2.50 | 2.49 / 2.52 | 2.51 / 2.54 | 2.52 / 2.53 |
+| BE   | lightgbm (reference) | 2.22 / 2.19 | 2.40 / 2.39 | 2.43 / 2.46 | 2.47 / 2.53 | 2.51 / 2.55 | 2.54 / 2.58 | 2.58 / 2.59 |
+| FR   | current (NumPy GBM)  | 2.58 / 2.53 | 2.78 / 2.76 | 2.89 / 2.87 | 2.95 / 2.94 | 2.98 / 3.00 | 3.04 / 3.06 | 3.06 / 3.10 |
+| FR   | lightgbm (reference) | 2.43 / 2.38 | 2.70 / 2.67 | 2.82 / 2.77 | 2.88 / 2.80 | 2.90 / 2.86 | 2.93 / 2.94 | 2.96 / 2.96 |
+
+The naive row is unchanged per zone (DE 3.72-3.79, NL 3.40-3.44, BE
+3.37-3.42, FR 3.63-3.67). What the numbers say:
+
+- **FR is the one zone where the production model gains at day 1 and keeps
+  it for some days**: −0.05 at 1d, −0.02 at 2d and 3d, −0.01 at 4d, then
+  +0.02 at 5d and 6d and +0.04 at 7d. LightGBM gains −0.05 at 1d and −0.03
+  to −0.08 through day 5 and is level after (+0.01, 0.00).
+- **DE gets worse at every horizon**: +0.02 to +0.03 for the production
+  model, 0.00 to +0.05 for LightGBM.
+- **NL gets worse for the production model**, from +0.01 at 1d to +0.10 at
+  7d. LightGBM gains −0.07 at day 1 (RMSE 3.62 → 3.45) and stays within
+  +0.02 later, so the day-1 signal is there, but the production model does
+  not pick it up.
+- **BE shows DK2's pattern**: −0.02 at 1d, +0.01 to +0.03 at days 2-7 (see
+  [Nord Pool UMM outages](#nord-pool-umm-outages-123)).
+
+**Decision**: `ENTSOE_OUTAGE_REGIONS` is `{"FR"}`. DE, NL and BE stay off;
+`ENTSOE_OUTAGE_BORDERS` keeps them measurable. The decision was taken on the
+first run of this backtest (PR #152, 2026-10-10, with the default origins
+of that day: FR 2.64 / 2.55 at 1d, a gain through day 4, level at day 5,
++0.04 at 7d). This run finds the same shape with a smaller gain that ends
+a day earlier; the two differ in their origins and in the documents'
+revisions, so the difference cannot be put down to either. FR does not
+meet the rule `UMM_REGIONS` follows (a lower day-1 error and no higher
+error later): it trades days 1-4 against days 5-7.
+
+**What this backtest cannot see.** The platform serves only the current
+revision of a document, so a document counts from its latest revision's
+publication on, and most documents are revised after the fact. Of the
+periods in the archive, the share whose stored revision was published only
+after the period had **ended** — invisible to every training gate and
+every forecast of that period — is 88 % in DE (72 356 periods), 74 % in FR
+(26 871), 63 % in NL (4 070) and 35 % in BE (3 836). The table therefore
+measures a fraction of what an install collects (its archive keeps every
+revision from the first fetch on), and a later run of the same commands
+sees the documents revised in between from a later moment on. A
+re-measurement from a live archive is #168.
 
 ```bash
-ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages none
-ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages entsoe
+ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --start 2025-09-24 --end 2026-09-23 --outages none
+ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --start 2025-09-24 --end 2026-09-23 --outages entsoe
 ```
+
+The same two commands with `--region NL`, `BE` and `FR`. With the pinned
+origins every outage month is complete and cached after the first run;
+the DE run with outages takes about 5 minutes, like the one without (#167).
 
 ### ENTSO-E load forecast (#30)
 
