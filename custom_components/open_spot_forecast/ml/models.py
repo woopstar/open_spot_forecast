@@ -205,10 +205,11 @@ class ModelMixin(PredictorBase):
             self.price_model.fit(*with_masked_nordpool(X, y))
             self._train_near_model(all_features, X, y)
 
+            seconds = time.monotonic() - began
             _LOGGER.info(
                 "ML model trained in %.1f s: holdout MAE=%.2f, RMSE=%.2f, "
                 "samples=%d, days=%d",
-                time.monotonic() - began,
+                seconds,
                 mae,
                 rmse,
                 len(all_prices),
@@ -218,12 +219,14 @@ class ModelMixin(PredictorBase):
             self.is_trained = True
             self.training_samples = len(all_prices)
             self._store_holdout_metrics(mae, rmse)
+            self._store_training_info(seconds)
 
         except Exception as err:
             _LOGGER.error("Error training ML models: %s", err, exc_info=True)
             self.is_trained = False
             self.near_model = create_price_model()
             self._store_holdout_metrics(None, None)
+            self._store_training_info(None)
 
     def _store_holdout_metrics(self, mae: float | None, rmse: float | None) -> None:
         """Keep the latest training's holdout MAE/RMSE and persist them in meta.

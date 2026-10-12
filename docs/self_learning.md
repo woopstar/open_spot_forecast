@@ -353,6 +353,10 @@ Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 | `holdout_mae`         | Latest training's holdout MAE (see below)             |
 | `holdout_rmse`        | Latest training's holdout RMSE                        |
 | `holdout_trained_at`  | When that training ran (UTC ISO)                      |
+| `training_seconds`    | How long that training took (s)                       |
+| `stage1_seconds`      | Its cross-border stage-1 part (s), with that model    |
+| `model_options`       | What shapes the model: cross-border, window, …        |
+| `model_options_since` | First training with those options (UTC ISO)           |
 
 (¹) In the live state only: Home Assistant's recorder does not store it
 (`_unrecorded_attributes`, #103). With 96 slots it would push the
