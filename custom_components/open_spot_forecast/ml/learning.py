@@ -23,8 +23,10 @@ from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
 
-# Errors kept per slot: the pooled lists and each lead-time bucket's list
+# Errors kept per slot: the pooled lists feed the MAE and the learning metrics;
+# each lead-time bucket's shorter list feeds its bias offset (#129)
 MAX_ERROR_SAMPLES = 100
+MAX_BUCKET_ERROR_SAMPLES = 25
 _POOLED_KEYS = ("errors", "abs_errors", "pct_errors", "predictions", "actuals")
 
 
@@ -40,8 +42,11 @@ def add_matched_errors(
 
     Each error (predicted - actual) goes into the slot's pooled lists and,
     by the prediction's lead time, into ``bucket_errors`` (#118), which the
-    bias offsets are learned from. Every list keeps its last
-    ``MAX_ERROR_SAMPLES`` errors.
+    bias offsets are learned from. The pooled lists keep their last
+    ``MAX_ERROR_SAMPLES`` errors, each bucket its last
+    ``MAX_BUCKET_ERROR_SAMPLES``: with the 6-9 forecast runs a day seen live
+    that is about 3.5 days of errors for day 1-3 and a day for day 4+, as fast
+    as the lead-time bias was seen to drift (#129).
 
     Args:
         metrics: The slot's error metrics (see ``new_slot_metrics``).
@@ -60,7 +65,10 @@ def add_matched_errors(
 
     per_bucket = metrics.setdefault("bucket_errors", {})
     for bucket, errors in bucket_errors(predictions, actual_price).items():
-        per_bucket[bucket] = (per_bucket.get(bucket, []) + errors)[-MAX_ERROR_SAMPLES:]
+        per_bucket[bucket] = per_bucket.get(bucket, []) + errors
+    for bucket, errors in per_bucket.items():
+        if len(errors) > MAX_BUCKET_ERROR_SAMPLES:
+            per_bucket[bucket] = errors[-MAX_BUCKET_ERROR_SAMPLES:]
     for key in _POOLED_KEYS:
         if len(metrics[key]) > MAX_ERROR_SAMPLES:
             metrics[key] = metrics[key][-MAX_ERROR_SAMPLES:]

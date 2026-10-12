@@ -22,6 +22,7 @@ from custom_components.open_spot_forecast.ml.bias_storage import (
 )
 from custom_components.open_spot_forecast.ml.lead_time import prediction_bucket
 from custom_components.open_spot_forecast.ml.learning import (
+    MAX_BUCKET_ERROR_SAMPLES,
     MAX_ERROR_SAMPLES,
     add_matched_errors,
     new_slot_metrics,
@@ -251,8 +252,36 @@ def test_add_matched_errors_bounds_every_list() -> None:
         add_matched_errors(metrics, [_prediction(start, 3, 1.1)], 1.0)
 
     assert len(metrics["errors"]) == MAX_ERROR_SAMPLES
-    assert len(metrics["bucket_errors"]["day_1"]) == MAX_ERROR_SAMPLES
+    assert len(metrics["bucket_errors"]["day_1"]) == MAX_BUCKET_ERROR_SAMPLES
     assert metrics["count"] == MAX_ERROR_SAMPLES + 10
+
+
+def test_a_bucket_keeps_its_newest_errors() -> None:
+    """The bucket window (#129) is shorter than the pooled one and drops the oldest."""
+    assert MAX_BUCKET_ERROR_SAMPLES < MAX_ERROR_SAMPLES
+    start = _tomorrow_noon()
+    metrics = new_slot_metrics()
+    prices = [1.0 + i / 100 for i in range(MAX_BUCKET_ERROR_SAMPLES + 5)]
+
+    for price in prices:
+        add_matched_errors(metrics, [_prediction(start, 30, price)], 1.0)
+
+    assert metrics["bucket_errors"]["day_2"] == pytest.approx(
+        [price - 1.0 for price in prices[-MAX_BUCKET_ERROR_SAMPLES:]]
+    )
+    assert len(metrics["errors"]) == MAX_BUCKET_ERROR_SAMPLES + 5
+
+
+def test_bucket_errors_kept_under_the_old_bound_shrink_on_the_next_match() -> None:
+    """Lists stored with the 100-error bound of #118 are trimmed by any later match."""
+    start = _tomorrow_noon()
+    metrics = new_slot_metrics()
+    metrics["bucket_errors"] = {"day_2": [0.5] * MAX_ERROR_SAMPLES}
+
+    add_matched_errors(metrics, [_prediction(start, 3, 1.1)], 1.0)
+
+    assert len(metrics["bucket_errors"]["day_2"]) == MAX_BUCKET_ERROR_SAMPLES
+    assert metrics["bucket_errors"]["day_1"] == [pytest.approx(0.1)]
 
 
 def test_learning_from_an_actual_price_updates_each_bucket(
