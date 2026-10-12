@@ -2,8 +2,11 @@
 
 ## Model
 
-A single **Gradient Boosting** regressor predicts the spot price from 24
-features. It is a histogram-based GBM in the style of LightGBM, implemented
+A **Gradient Boosting** regressor predicts the spot price from the 26
+features below; in DK1 and DK2 a second one with one more column,
+yesterday's price in the same slot, predicts the first two forecast days
+(see [Near-Term Model](#near-term-model-135)). Both are a histogram-based GBM in
+the style of LightGBM, implemented
 in pure NumPy (`NumpyGradientBoosting` in `ml/gbm.py`). LightGBM and
 scikit-learn's `HistGradientBoostingRegressor` cannot be runtime
 dependencies: neither has musllinux wheels, and Home Assistant OS and
@@ -97,10 +100,12 @@ practice each scheduled run retrains; without new data (e.g. two runs back to
 back) it does not. Forecast runs are
 serialized so two retrains never overlap.
 
-Trained trees, including the stage-1 models of the cross-border model, are
+Trained trees, including the near-term model (#135) and the stage-1 models
+of the cross-border model, are
 kept in memory only, so the first forecast after a restart always retrains
 from the persisted history. The log line
-`ML model trained in … s: holdout MAE=…` gives each training's duration.
+`ML model trained in … s: holdout MAE=…` gives each training's duration
+(the holdout copy, the price model and the near-term model).
 
 **No hyperparameter optimization** (#92). Until #92 a weekly grid search
 (`n_estimators` ∈ {100, 200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2},
@@ -311,7 +316,10 @@ prediction:
   day's mean price was tested as a consistent replacement: it lowered the
   30-day 1d MAE from 3.27 to 3.17 ct/kWh but raised 2d/3d MAE from 3.30/3.31
   to 4.16/4.13, because that day is not yet known two or more days ahead. It
-  was not kept.
+  was not kept. A realised price is only an input of the
+  [near-term model](#near-term-model-135), which serves the forecast days
+  where it is as old as in training: `price_same_slot_last_known_day`, a
+  27th column after these 26 (the price model's vector is unchanged).
 - `solar_radiation_mean` and `solar_power_estimate`: the inverter's
   instantaneous output (W) in training, Solcast's daily kWh estimate
   (constant over all slots) at prediction. The configured Solcast sensor
@@ -457,6 +465,80 @@ option is off by default
 because of that cost and the extra requests (energy-charts and Open-Meteo,
 per neighbour), not because of accuracy.
 
+## Near-Term Model (#135)
+
+The canonical features hold no realised price. Yesterday's price in the
+same slot is the strongest single input for tomorrow's price, but one model
+serves forecast days 1-7: it would learn the lag from one-day-old training
+rows and then be handed a lag up to seven days old, which lowers the day-1
+error and raises it from day 3 on (#119, see
+[Lagged prices](#lagged-prices-119)). So in the regions of
+`NEAR_TERM_REGIONS` (`const.py`: DK1 and DK2) the forecast comes from **two
+price models**:
+
+| Model                          | Serves                                 | Columns                                                  |
+| ------------------------------ | -------------------------------------- | -------------------------------------------------------- |
+| Price model (`price_model`)    | from day 3 after the last known day on | the 26 features, then any cross-border columns           |
+| Near-term model (`near_model`) | days 1-2 after the last known day      | the same, with `price_same_slot_last_known_day` after 26 |
+
+`price_same_slot_last_known_day` (`NEAR_TERM_FEATURE`, `PriceLagIndex` in
+`ml/price_lags.py`) is the raw spot price in the slot's local wall-clock
+slot on its **reference day**:
+
+- a **training row**'s reference day is the day before its own: a
+  one-day-old lag;
+- a **prediction row**'s is the **last known day**, the local day of the
+  latest stored price (today, or tomorrow once it is published), whatever
+  the row's lead time. No row sees a price of its own day or a later one.
+
+A forecast starts where the known prices end, so its first day has a
+one-day-old lag, as in training, and its second a two-day-old one. The
+near-term model serves the rows whose lag is at most `NEAR_TERM_DAYS` = 2
+days old (`PriceLagIndex.near_term`), the price model the rest. The routing
+follows the lag's age, not the lead time in hours: at 08:00, before
+tomorrow's prices are published, days 1-2 are tomorrow and the day after;
+from the afternoon on they are the two days after tomorrow. `predict()`
+stores the prices it is given (`record_training_prices`) before
+`_generate_predictions` reads the lag, so the first forecast day always lags
+to the newest known day.
+
+Both models are `create_price_model()` models and are fitted in the same
+training on the same rows (`ModelMixin._train_models`, the near-term model
+last): with the Nordpool-masked copies (#91) and, with the cross-border
+model, the same stage-1 columns, which are computed once. The lag is NaN
+where the reference day has no stored price in that slot (the first day of
+the history, the hour a DST change skips), which the model handles. If the
+near-term fit fails, a warning is logged and the price model serves every
+day until the next training; the holdout MAE/RMSE are the price model's
+alone, so they compare across versions.
+
+**Self-learning is unchanged.** Stored predictions, lead-time accuracy and
+the bias offsets are per slot and lead-time bucket, whichever model made the
+prediction. A bucket can hold predictions of both models (at 08:00 the
+`day_2` bucket, 24-48 h ahead, covers the end of forecast day 1 and the
+start of day 2, both near-term; in the afternoon `day_3` covers day 2 and
+day 3), so an offset follows the mean error of the mix it corrects.
+
+**Regions.** `NEAR_TERM_REGIONS` is `{"DK1", "DK2"}`, the two regions the
+backtest measured: in both, with and without the cross-border model, day 1
+is 2.6-5.2 % better, day 2 better or equal, and days 3-7 are the price
+model's own. Every other region keeps one model: its training and its
+forecast are unchanged. The tables are under
+[Backtesting](#near-term-routing-135).
+
+**Cost.** One more fit per training, on the same rows with one more
+column. On synthetic full history (see [Training Window](#training-window)
+→ Footprint; one aarch64 core of the development container while two
+backtests shared the machine, recorded 2026-10-12) a DK1 training took
+1.06 → 1.33 s at a 60-day window, 1.46 → 2.08 s at 120 days and 2.20 →
+3.14 s at the default 180 days: +0.3 to +0.9 s, about 40 % at the default.
+With the cross-border model, whose stage-1 fits dominate, the same fit adds
+about 1-2 s to 8-20 s (5-10 %). On a Raspberry Pi 4, 5-10 times slower,
+that is 5-10 s more per training. The lag lookup itself (`PriceLagIndex`,
+one dictionary of the stored prices) is built once per training and once
+per forecast. Nothing is stored: like the price model, the near-term model
+is refitted after a restart.
+
 ## Data Sources
 
 | Source                                                | Type                | Resolution    | Used for                                                   |
@@ -560,6 +642,12 @@ ENTSO-E's outage documents (#138) fill the same tables for DE, NL, BE and
 FR; the platform only serves a document's current revision, so each
 document enters at its latest revision's publication time and the archive
 grows the version history from then on.
+
+The near-term model's lagged price (#135) is read from the stored price
+history in both phases (`PriceLagIndex.from_days(price_history)`): a
+training row gets the price one day before it, a prediction row the price
+of the last known day, never a price from the row's own day on (see
+[Near-Term Model](#near-term-model-135)).
 
 The zone weather is one stored table for both phases:
 
@@ -826,6 +914,10 @@ development container, recorded 2026-10-02:
 | 120 d  |       0.77 s |        6.4 s |
 | 180 d  |        1.1 s |        9.6 s |
 
+In DK1 and DK2 the near-term model (#135) adds one more fit to each training,
+about 40 % at the default window without the cross-border model and 5-10 %
+with it (see [Near-Term Model](#near-term-model-135) → Cost).
+
 A Raspberry Pi 4 core is roughly 5-10 times slower, so expect 5-10 s per
 training at the default there, and 50-100 s with the cross-border model, in
 the executor, a few times a day (whenever an input changed, see
@@ -1078,13 +1170,21 @@ python -m scripts.backtest --region DK1 --window-days 60 --gas
 python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --end 2026-09-25 --nordpool-db .cache/live/dk1_live.db
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day [--lag-ages]
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --near-term-days 0
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
 ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages entsoe
 python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --start 2026-12-10 --end 2027-01-10 --outages-db .cache/live/de_live.db [--outages-plants-only]
 ```
 
 `--region` accepts every OSF region. `--horizon-days` scores more forecast
-days per origin (default 3; 7 covers days 3-7 of the forecast). `--days holidays` scores only the
+days per origin (default 3; 7 covers days 3-7 of the forecast).
+`--near-term-days N` routes the first N forecast days of the `current` and
+`lightgbm` rows to a second model with yesterday's same-slot price
+(`NearTermModel`, #135), and the rows are then named `…, near-term Nd`. The
+default is what the integration does for the region: `NEAR_TERM_DAYS` (2)
+in `NEAR_TERM_REGIONS` (DK1, DK2), 0 elsewhere. `--near-term-days 0` is one
+model for every day: the rows of every table recorded before #135, and the
+"before" of a near-term comparison. `--days holidays` scores only the
 target days that are public holidays and not Sundays (and only runs the
 origins that forecast one), to measure a change on the days the `holiday`
 feature is for. Run the backtest before and after every
@@ -1899,13 +1999,87 @@ What the numbers say:
   carry the level, so the swings are smaller, but the lag still does not
   lower the error at every horizon.
 - **Nothing passes the issue's rule** (lower MAE at every horizon in both
-  regions), so the integration keeps its 24 features. The day-1 gain is
-  real and is the subject of #135 (a near-term model for forecast days
-  1-2 next to the plain one for days 3-7).
+  regions), so the price model keeps its features without a lag. The day-1
+  gain is real and is what the [near-term model](#near-term-model-135)
+  (#135) takes: a second model with yesterday's slot price for forecast
+  days 1-2, next to the plain one for days 3-7.
 
 ```bash
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags all
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day,price_lag_days --lag-ages
+```
+
+### Near-term routing (#135)
+
+DK1 and DK2, 365 daily origins from 2025-10-06 to 2026-10-05, 60-day window,
+`--horizon-days 7`, retrained daily, with the zone weather.
+`--near-term-days 0` (one model, main before #135) against
+`--near-term-days 2`: forecast days 1-2 from a second model with
+`price_same_slot_last_known_day`, days 3-7 from the plain model. MAE in EUR
+ct/kWh, **one model / with the near-term model**. Recorded 2026-10-12.
+
+| Zone | Model                                        | 1d              | 2d              | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | -------------------------------------------- | --------------- | --------------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DK1  | current (NumPy GBM)                          | 2.31 / **2.19** | 2.48 / **2.42** | 2.53 / 2.53 | 2.55 / 2.55 | 2.56 / 2.56 | 2.60 / 2.60 | 2.62 / 2.62 |
+| DK1  | lightgbm (reference)                         | 2.31 / 2.21     | 2.52 / 2.44     | 2.59 / 2.59 | 2.61 / 2.61 | 2.64 / 2.64 | 2.67 / 2.67 | 2.70 / 2.70 |
+| DK1  | current, `--outages umm` (DK1 in production) | 2.29 / **2.20** | 2.49 / **2.47** | 2.55 / 2.55 | 2.56 / 2.56 | 2.57 / 2.57 | 2.60 / 2.60 | 2.63 / 2.63 |
+| DK1  | lightgbm, `--outages umm`                    | 2.21 / 2.18     | 2.49 / 2.46     | 2.56 / 2.56 | 2.58 / 2.58 | 2.62 / 2.62 | 2.62 / 2.62 | 2.65 / 2.65 |
+| DK2  | current (NumPy GBM)                          | 2.54 / **2.47** | 2.70 / 2.70     | 2.73 / 2.73 | 2.74 / 2.74 | 2.76 / 2.76 | 2.76 / 2.76 | 2.79 / 2.79 |
+| DK2  | lightgbm (reference)                         | 2.58 / 2.50     | 2.75 / 2.76     | 2.81 / 2.81 | 2.83 / 2.83 | 2.82 / 2.82 | 2.83 / 2.83 | 2.87 / 2.87 |
+
+With the **cross-border model** (`--cross-border`; the near-term model gets
+the same stage-1 columns as the price model):
+
+| Zone | Model                           | 1d              | 2d              | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | ------------------------------- | --------------- | --------------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| DK1  | current (NumPy GBM, two-stage)  | 1.92 / **1.87** | 2.04 / **2.02** | 2.09 / 2.09 | 2.11 / 2.11 | 2.12 / 2.12 | 2.16 / 2.16 | 2.18 / 2.18 |
+| DK1  | lightgbm (reference, two-stage) | 1.85 / 1.82     | 2.01 / 1.99     | 2.05 / 2.05 | 2.07 / 2.07 | 2.12 / 2.12 | 2.15 / 2.15 | 2.18 / 2.18 |
+| DK2  | current (NumPy GBM, two-stage)  | 2.15 / **2.06** | 2.31 / **2.26** | 2.35 / 2.35 | 2.36 / 2.36 | 2.38 / 2.38 | 2.38 / 2.38 | 2.40 / 2.40 |
+| DK2  | lightgbm (reference, two-stage) | 2.12 / 2.05     | 2.29 / 2.26     | 2.35 / 2.35 | 2.35 / 2.35 | 2.38 / 2.38 | 2.38 / 2.38 | 2.41 / 2.41 |
+
+RMSE of the production model, one model / near-term, at 1d and 2d: DK1
+3.46 / 3.33 and 3.66 / 3.61; DK2 3.78 / 3.69 and 3.98 / 4.01; two-stage DK1
+3.02 / 2.98 and 3.13 / 3.11; two-stage DK2 3.29 / 3.21 and 3.51 / 3.45. The
+naive row is 3.98-4.05 (DK1) and 4.19-4.26 (DK2) at every horizon.
+
+What the numbers say:
+
+- **Days 3-7 are the plain model's rows, unchanged to the cent**, by
+  construction: the routing takes the day-1 gain of #119 without its
+  day-3+ loss.
+- **Day 1 improves in every configuration**, for both learners:
+
+  | Configuration            | 1d MAE      | Change | 2d MAE      | Change |
+  | ------------------------ | ----------- | -----: | ----------- | -----: |
+  | DK1                      | 2.31 → 2.19 | −5.2 % | 2.48 → 2.42 | −2.4 % |
+  | DK1 with the UMM outages | 2.29 → 2.20 | −3.9 % | 2.49 → 2.47 | −0.8 % |
+  | DK1 cross-border         | 1.92 → 1.87 | −2.6 % | 2.04 → 2.02 | −1.0 % |
+  | DK2                      | 2.54 → 2.47 | −2.8 % | 2.70 → 2.70 |    0 % |
+  | DK2 cross-border         | 2.15 → 2.06 | −4.2 % | 2.31 → 2.26 | −2.2 % |
+
+- **No forecast day's MAE rises anywhere.** The one number that gets worse
+  is DK2's single-stage 2d RMSE (3.98 → 4.01): a two-day-old lag is worth
+  nothing there without the neighbours' stage-1 prices. A one-day near-term
+  model (`--near-term-days 1`: the 1d column with the one-model 2d column)
+  would avoid that and cost the other four configurations their day-2 gain.
+- **Next to yesterday's price the outage features add nothing at day 1**:
+  DK1 ends at 2.19 without them and 2.20 with them (see #175).
+
+**Decision**: `NEAR_TERM_DAYS` = 2 and `NEAR_TERM_REGIONS` = `{"DK1",
+"DK2"}`. #135 asked for a day-1 gain of at least 4 % before paying for a
+second fit per training. Two of the five configurations reach it (DK1
+single-stage, DK2 cross-border), one is at 3.9 % and two are at 2.6-2.8 %,
+so the bar is not met everywhere; the model is on in both regions because
+the gain is there in every configuration, no day's MAE is worse in any, and
+the fit costs about a second (see
+[Near-Term Model](#near-term-model-135) → Cost). Taking a region out again
+is removing it from `NEAR_TERM_REGIONS`. The other regions are not measured.
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --near-term-days 0
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --near-term-days 2
+python -m scripts.backtest --region DK2 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --near-term-days 2 [--cross-border]
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --near-term-days 2 --outages umm
 ```
 
 ### Baseline

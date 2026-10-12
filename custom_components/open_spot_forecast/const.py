@@ -262,6 +262,13 @@ GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
 # days 2-7 got worse, see docs/ml_documentation.md)
 UMM_AREAS = frozenset({"DK1", "DK2", "SE3", "SE4", "NO2", "FI", "EE", "LT", "LV"})
 UMM_REGIONS = frozenset({"DK1"})
+# Regions with the near-term price model (#135): a second model with
+# yesterday's same-slot price for the first forecast days (ml/price_lags.py).
+# Only where the backtest measured it: in DK1 and DK2 the day-1 MAE drops by
+# 3-5 % and no forecast day's MAE rises, with and without the cross-border
+# model (docs/ml_documentation.md → Near-Term Model). Other regions are not
+# measured and keep one model
+NEAR_TERM_REGIONS = frozenset({"DK1", "DK2"})
 
 # The ENTSO-E Transparency Platform's outage documents (#138): production and
 # generation unit unavailability (A77/A80) are requested per bidding zone,

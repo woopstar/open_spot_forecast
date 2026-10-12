@@ -196,10 +196,15 @@ def test_training_fits_masked_copies_on_each_side_of_the_split(
     ):
         _train(predictor)
 
-    (holdout_X, holdout_y), (live_X, live_y) = fits
+    (holdout_X, holdout_y), (live_X, live_y), (near_X, near_y) = fits
     fit_days, all_days = 4 * SLOTS_PER_DAY, 5 * SLOTS_PER_DAY
     assert len(holdout_X) == len(holdout_y) == 2 * fit_days
     assert len(live_X) == len(live_y) == 2 * all_days
+    # The near-term model (#135) is fitted like the live one, with its lag column
+    assert near_X.shape == (2 * all_days, len(FEATURE_NAMES) + 1)
+    np.testing.assert_array_equal(near_y, live_y)
+    assert _has_prognosis(near_X[:all_days]).all()
+    assert not _has_prognosis(near_X[all_days:]).any()
     # Both copies of a fit row have the fit side's (Monday-Thursday) targets
     assert float(np.max(holdout_y)) < SHIFTED_LEVEL - 20
     np.testing.assert_array_equal(holdout_y[:fit_days], holdout_y[fit_days:])

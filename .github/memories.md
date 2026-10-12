@@ -54,6 +54,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)                                                                                 |
 | `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                                                                                                  |
 | `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)                                                                                 |
+| `price_lags.py`         | `PriceLagIndex` / `NEAR_TERM_DAYS` — yesterday's same-slot price (`price_same_slot_last_known_day`), the near-term model's extra column (#135)                                                                 |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                                                                                           |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                                                                                                |
 | `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                                                                                               |
@@ -312,9 +313,19 @@ build model input rows there, never with `build_feature_vector()` alone.
 Adding or removing a feature is a model change — see the `osf-ml-change` skill and update
 `docs/ml_documentation.md`.
 Lagged prices (same slot yesterday / last week, 7-day mean) were backtested in #119 and not
-kept: they help at 1-2 days and hurt at 3-7 days (`docs/ml_documentation.md` → Lagged prices).
-The experiment lives in `scripts/backtest_lags.py` (`--lags`), never in `ml/`; the follow-up
-is #135 (a near-term model for forecast days 1-2).
+kept in the price model: they help at 1-2 days and hurt at 3-7 days (`docs/ml_documentation.md`
+→ Lagged prices). The experiment lives in `scripts/backtest_lags.py` (`--lags`).
+The **near-term model** (#135, `near_model`, only in `NEAR_TERM_REGIONS` = DK1 and DK2, the
+regions measured: day-1 MAE −2.6 to −5.2 %, no day worse) takes the day-1 gain
+instead: a second `create_price_model()` model, fitted in `_train_models` on the price model's rows plus
+`price_same_slot_last_known_day` (`PriceLagIndex` in `ml/price_lags.py`, inserted after the 26
+features by `near_term_inputs()`), which `_generate_predictions` uses for the rows whose lag is
+at most `NEAR_TERM_DAYS` (2) days old, counted from the last day with stored prices; the price
+model serves the rest and every row when the near-term model is not fitted. A training row lags
+to the day before it, a prediction row to the last known day; never give a row a price of its
+own day or later, and never add the lag to the price model's own vector. The backtest routes
+the same way (`--near-term-days`, default as the integration per region; 0 = one model, the
+tables recorded before #135).
 
 ## Slot Granularity — 96 Slots
 

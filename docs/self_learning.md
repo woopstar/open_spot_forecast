@@ -105,6 +105,13 @@ week. Lists stored under the old bound are trimmed by the next match. The
 numbers come from one export; the follow-up measurement after 14 days on #128
 re-checks them (#169).
 
+In DK1 and DK2 a prediction comes from one of two price models, by the age of the
+lagged price it can use (the near-term model for the first two forecast
+days, #135, see [ML Documentation](ml_documentation.md#near-term-model-135)).
+Offsets stay per slot and lead-time bucket whichever model predicted: a
+bucket's errors are those of the predictions stored in it, so its offset
+follows the mix of models that fills it.
+
 Example: If the model consistently predicts 1.00 but the actual price is 1.30
 for slot 47 (11:45), the offset converges to about -0.30, and future
 predictions for that slot get 0.30 added. The same works for a slot that clears
