@@ -57,9 +57,9 @@ bias correction.
 │  │   ┌──────────▼──────────┐                                   │  │
 │  │   │   ML Predictor      │                                   │  │
 │  │   │                     │                                   │  │
-│  │   │  Price Model:       │  14 features → spot price        │  │
+│  │   │  Price Model:       │  26 features → spot price        │  │
 │  │   │  GradientBoosting   │  (pure numpy, no sklearn needed) │  │
-│  │   │  200 trees, lr=0.1  │                                   │  │
+│  │   │  200 trees, lr=0.05 │                                   │  │
 │  │   │                     │                                   │  │
 │  │   │  Feature Mixin      │  wind/solar/time extraction      │  │
 │  │   │  Learning Mixin     │  self-learning + bias correction │  │
@@ -283,18 +283,19 @@ known-data end → predict → save.
 
 ## Model: Single Price Predictor
 
-The system uses **one model** — a Gradient Boosting regressor that takes 23
+The system uses **one model** — a Gradient Boosting regressor that takes 26
 features and directly predicts the spot price. Wind, solar, and temperature
 are input features, not separate sub-models. Training and prediction rows
 come from the same `build_feature_row()`; an unknown input is NaN (see
 [ML Documentation](ml_documentation.md#feature-vector-26-features)).
 
 ```
-Features (23):
+Features (26):
   [day_of_week, is_weekend, holiday, slot_sin, slot_cos, morning_peak,
    sun_elevation, sun_azimuth, since_sunrise, since_sunset,
    consumption_forecast, solar_generation, wind_offshore, wind_onshore,
-   net_demand, wind_share, load_forecast,
+   net_demand, wind_share, load_forecast, gas_price,
+   unavailable_production, unavailable_transmission,
    zone_wind, zone_wind_power, zone_temperature, zone_irradiance,
    zone_pressure, zone_humidity]
                     │
