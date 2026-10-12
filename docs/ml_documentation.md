@@ -388,9 +388,13 @@ document, so the first fetch stores each document once, at its latest
 revision's publication time, and the archive gains the earlier versions of
 later revisions only as the updates store them (a training row sees a
 document from the stored revision's publication on — a conservative view,
-never a leaked one). The model uses them in `ENTSOE_OUTAGE_REGIONS`, where
-the backtest found they help (see
-[ENTSO-E outages](#entso-e-outages-138)).
+never a leaked one). The model would use them in `ENTSOE_OUTAGE_REGIONS`,
+which is **empty**: no zone meets the rule the outage features follow, so
+no installation fetches these documents (see
+[ENTSO-E outages](#entso-e-outages-138)). Whether a region's model uses an
+outage source is decided in one place, `outage_source_kind()`
+(`ml/outages.py`, #187): the update cycle creates the source from it and
+the predictor reads the stored rows by it.
 
 **Tested and not kept** (#119): lagged prices. The vector has no realised
 price in it, and the naive "same slot last week" baseline was within
@@ -1910,15 +1914,23 @@ The naive row is unchanged per zone (DE 3.72-3.79, NL 3.40-3.44, BE
 - **BE shows DK2's pattern**: −0.02 at 1d, +0.01 to +0.03 at days 2-7 (see
   [Nord Pool UMM outages](#nord-pool-umm-outages-123)).
 
-**Decision**: `ENTSOE_OUTAGE_REGIONS` is `{"FR"}`. DE, NL and BE stay off;
-`ENTSOE_OUTAGE_BORDERS` keeps them measurable. The decision was taken on the
-first run of this backtest (PR #152, 2026-10-10, with the default origins
-of that day: FR 2.64 / 2.55 at 1d, a gain through day 4, level at day 5,
-+0.04 at 7d). This run finds the same shape with a smaller gain that ends
-a day earlier; the two differ in their origins and in the documents'
-revisions, so the difference cannot be put down to either. FR does not
-meet the rule `UMM_REGIONS` follows (a lower day-1 error and no higher
-error later): it trades days 1-4 against days 5-7.
+**Decision**: `ENTSOE_OUTAGE_REGIONS` is **empty**; `ENTSOE_OUTAGE_BORDERS`
+keeps DE, NL, BE and FR measurable. FR was the candidate: on the first run
+of this backtest (PR #152, 2026-10-10, with the default origins of that
+day) it scored 2.64 / 2.55 at 1d, a gain through day 4, level at day 5,
++0.04 at 7d, and this section recorded "`ENTSOE_OUTAGE_REGIONS` is
+`{"FR"}`" from then until #187. The constant in `const.py` never held FR,
+though, and the predictor only read outage rows in `UMM_REGIONS`, so no
+installation ever fetched or used an ENTSO-E outage document. It stays that
+way, for the reason this run already gave: FR does not meet the rule the
+outage features follow (a lower day-1 error and no higher error later), it
+trades days 1-4 against days 5-7, with a smaller gain than the first run
+(the two differ in their origins and in the documents' revisions, so the
+difference cannot be put down to either). Since #175 no Nord Pool area
+meets that rule either. Enabling FR would take a backtest with the
+near-term model for FR (`--near-term-days 0` and `2`) that satisfies the
+rule; the code path from the constant to the model's rows is in place and
+tested (#187).
 
 **What this backtest cannot see.** The platform serves only the current
 revision of a document, so a document counts from its latest revision's

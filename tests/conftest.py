@@ -29,12 +29,9 @@ def umm_in_dk1() -> Iterator[None]:
     No region has them since #175 (``UMM_REGIONS`` is empty); the source, the
     storage and the features stay, and stay tested, through this fixture.
     """
-    regions = frozenset({"DK1"})
-    module = "custom_components.open_spot_forecast"
-    with (
-        patch(f"{module}.history_updater.UMM_REGIONS", regions),
-        patch(f"{module}.ml.predictor.UMM_REGIONS", regions),
-        patch(f"{module}.ml.training_info.UMM_REGIONS", regions),
+    with patch(
+        "custom_components.open_spot_forecast.ml.outages.UMM_REGIONS",
+        frozenset({"DK1"}),
     ):
         yield
 

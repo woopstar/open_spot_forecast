@@ -11,7 +11,7 @@ import numpy as np
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS, UMM_REGIONS
+from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS
 from ..price_series import is_invalid_price_series, known_prices
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
@@ -22,7 +22,7 @@ from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
 from .models import ModelMixin, create_price_model
 from .numpy_models import NumpyRandomForest
-from .outages import OutageIndex
+from .outages import OutageIndex, outage_source_kind
 from .retraining import RetrainMixin
 from .storage import LearningStorage
 from .training_info import TrainingInfoMixin
@@ -288,14 +288,15 @@ class SpotPricePredictor(
         )
 
     def _outage_index(self, rows: list[dict[str, Any]] | None) -> OutageIndex | None:
-        """Return the UMM outages (#123) of stored rows; None where not used.
+        """Return the outages (#123, #138) of stored rows; None where not used.
 
-        Only regions in ``UMM_REGIONS`` (where the backtest found it helps)
-        have the source, in training and prediction alike, so elsewhere both
-        phases leave the features unknown rather than 0; so do both before
-        any message is stored.
+        Only regions with an outage source (``outage_source_kind``: Nord
+        Pool's UMMs or ENTSO-E's documents, where the backtest found they
+        help) have the features, in training and prediction alike, so
+        elsewhere both phases leave them unknown rather than 0; so do both
+        before any message is stored.
         """
-        if not rows or self.region not in UMM_REGIONS:
+        if not rows or outage_source_kind(self.region) is None:
             return None
         return OutageIndex(rows)
 

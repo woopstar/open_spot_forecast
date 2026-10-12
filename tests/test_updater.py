@@ -39,6 +39,7 @@ from custom_components.open_spot_forecast.updater import (
 
 MODULE = "custom_components.open_spot_forecast.updater"
 HISTORY = "custom_components.open_spot_forecast.history_updater"
+OUTAGES = "custom_components.open_spot_forecast.ml.outages"
 INTEGRATION = Path(__file__).parent.parent / "custom_components/open_spot_forecast"
 CPH = ZoneInfo("Europe/Copenhagen")
 SPOT_TODAY = [0.5] * 96
@@ -1169,8 +1170,8 @@ def test_the_outage_messages_need_the_model_and_a_region_they_help(
 ) -> None:
     """Nord Pool's UMMs in ``UMM_REGIONS``; with a key ENTSO-E's documents (#138)."""
     with (
-        patch(f"{HISTORY}.ENTSOE_OUTAGE_REGIONS", frozenset({"DE"})),
-        patch(f"{HISTORY}.UMM_REGIONS", frozenset({"DK1"})),
+        patch(f"{OUTAGES}.ENTSOE_OUTAGE_REGIONS", frozenset({"DE"})),
+        patch(f"{OUTAGES}.UMM_REGIONS", frozenset({"DK1"})),
     ):
         harness = make(region=region, ml=ml, entsoe_key=entsoe_key)
 

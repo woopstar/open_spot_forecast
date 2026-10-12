@@ -307,6 +307,10 @@ since #175**: with the near-term model the features lower no day's error in DK1 
 2-7 by 0.3-0.5 ct/kWh on the origins from 2026-08-27), DK2 always got worse at days 2-7.
 `UMM_AREAS` is where the backtest can run them (`--outages umm`, `--outages-near-term-only`);
 tests that need a region with the features use the `umm_in_dk1` fixture (`tests/conftest.py`).
+`ENTSOE_OUTAGE_REGIONS` is empty too (FR was only ever in the docs, #187). Whether a region's
+model uses an outage source is decided by `outage_source_kind(region)` in `ml/outages.py` alone:
+`outage_source()` (update cycle), `SpotPricePredictor._outage_index()` and `model_options()` all
+call it; never test `UMM_REGIONS` / `ENTSOE_OUTAGE_REGIONS` anywhere else.
 NaN before the first fetch and elsewhere, 0 when nothing is announced. Never aggregate the
 latest versions only. `for_slot()` bisects a step function built once per UTC day and origin from
 the periods in force (#167): never loop over the stored periods per slot (ENTSO-E archives hold
