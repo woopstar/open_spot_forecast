@@ -162,6 +162,8 @@ class CrossBorderModels:
         self.storage = storage
         self.zones: tuple[str, ...] = NEIGHBOURS.get(region, ())
         self._models = {zone: Stage1Model() for zone in self.zones}
+        # How long the latest fit of every neighbour took (#178)
+        self.fit_seconds: float | None = None
 
     def fit(self, starts: Sequence[datetime]) -> np.ndarray:
         """Refit every neighbour's models on the stored history of ``starts``' span.
@@ -186,10 +188,11 @@ class CrossBorderModels:
             except Exception as err:
                 _LOGGER.warning("Stage-1 price model for %s failed: %s", zone, err)
                 self._models[zone] = Stage1Model()
+        self.fit_seconds = time.monotonic() - began
         _LOGGER.info(
             "Stage-1 price models of %s fitted in %.1f s",
             ", ".join(self.zones),
-            time.monotonic() - began,
+            self.fit_seconds,
         )
         return columns
 

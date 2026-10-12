@@ -56,6 +56,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)                                                                                 |
 | `price_lags.py`         | `PriceLagIndex` / `NEAR_TERM_DAYS` — yesterday's same-slot price (`price_same_slot_last_known_day`), the near-term model's extra column (#135)                                                                 |
 | `models.py`             | `ModelMixin` — training + prediction                                                                                                                                                                           |
+| `training_info.py`      | `TrainingInfoMixin` — the latest training's duration and the model options with the date they last changed, in `meta` (#178)                                                                                   |
 | `learning.py`           | `LearningMixin` — self-learning, bias correction, error metrics                                                                                                                                                |
 | `catch_up.py`           | `CatchUpMixin` — startup replay of stored predictions against known prices (`catch_up_learning`)                                                                                                               |
 | `gbm.py`                | `NumpyGradientBoosting` — the price model: histogram GBM (binned features, leaf-wise depth-limited trees, native NaN)                                                                                          |
@@ -204,7 +205,9 @@ model or feature change; the baseline is in `docs/ml_documentation.md` → Backt
 export read-only (`?immutable=1`) and prints per-bucket MAE/RMSE/bias from
 `lead_time_accuracy`, the `evaluation` MAE, the holdout metrics and the covered dates
 (`--currency DKK` / `--eur-per-unit` → EUR ct/kWh, `--since`, `--log` for
-`ML model trained in … s`). Exports go to the git-ignored `.cache/live/`, never the
+`ML model trained in … s`, an INFO line HA does not log by default). Since #178 the export
+carries `training_seconds`, `model_options` and `model_options_since` in `meta`
+(`ml/training_info.py`): take the training time and the `--since` date from there. Exports go to the git-ignored `.cache/live/`, never the
 repository root (location-revealing weather; `.gitignore` blocks root learning DBs and
 `-shm`/`-wal`, see `docs/persistence.md` → Live Exports for Analysis). Procedure: `docs/ml_documentation.md` →
 Live accuracy.

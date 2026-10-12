@@ -25,6 +25,7 @@ from .numpy_models import NumpyRandomForest
 from .outages import OutageIndex
 from .retraining import RetrainMixin
 from .storage import LearningStorage
+from .training_info import TrainingInfoMixin
 from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class SpotPricePredictor(
     LeadTimeMixin,
     ExternalForecastMixin,
     RetrainMixin,
+    TrainingInfoMixin,
 ):
     """ML-based spot price predictor using weather and historical price data."""
 
@@ -100,6 +102,12 @@ class SpotPricePredictor(
         self.holdout_mae: float | None = None
         self.holdout_rmse: float | None = None
         self.holdout_trained_at: datetime | None = None
+        # Its duration, and since when the model options are what they are
+        # (see training_info.py), persisted in meta
+        self.training_seconds: float | None = None
+        self.stage1_seconds: float | None = None
+        self.model_options_since: datetime | None = None
+        self._model_options_stored: str | None = None
 
         # A retrain can take minutes and forecast runs can overlap, so
         # serialize predict() — two threads must never fit the same model

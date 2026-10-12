@@ -471,7 +471,9 @@ class LearningMixin(PredictorBase):
             latest training's ``holdout_mae``, ``holdout_rmse`` and
             ``holdout_trained_at`` (None before a successful training)
         """
-        return self._comparison_metrics() | self.holdout_metrics()
+        return (
+            self._comparison_metrics() | self.holdout_metrics() | self.training_info()
+        )
 
     def _comparison_metrics(self) -> dict[str, Any]:
         """Return the self-learning metrics of predictions compared to actuals."""
@@ -644,6 +646,7 @@ class LearningMixin(PredictorBase):
             self.solar_scale = data.get("solar_scale", 1.0)
             self._solar_scale_samples = data.get("solar_scale_samples", 0)
             self._restore_holdout_metrics(data)
+            self._restore_training_info(data)
             if any(key in data for key in OBSOLETE_HPO_META_KEYS):
                 await self._forget_tuned_hyperparameters()
 

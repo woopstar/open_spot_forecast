@@ -678,4 +678,9 @@ class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
             attrs["holdout_mae"] = metrics.get("holdout_mae")
             attrs["holdout_rmse"] = metrics.get("holdout_rmse")
             attrs["holdout_trained_at"] = metrics.get("holdout_trained_at")
+            # Its duration and what shapes the model, since when (#178)
+            attrs["training_seconds"] = metrics.get("training_seconds")
+            attrs["stage1_seconds"] = metrics.get("stage1_seconds")
+            attrs["model_options"] = metrics.get("model_options")
+            attrs["model_options_since"] = metrics.get("model_options_since")
         return attrs

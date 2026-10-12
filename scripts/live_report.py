@@ -28,6 +28,7 @@ repository root::
 """
 
 import argparse
+import json
 import math
 import re
 import sqlite3
@@ -382,7 +383,35 @@ def _coverage_lines(data: LiveData) -> list[str]:
     trained_at = data.meta.get("holdout_trained_at")
     if trained_at:
         lines.append(f"- Latest training: {trained_at}.")
+    since = _options_since(data)
+    if since is not None and days and since.date() > days[0]:
+        lines.append(
+            f"- **The model options changed on {since.date()} (UTC), inside the "
+            f"reported period**: the earlier days are another model's. Report "
+            f"one model with `--since {since.date() + timedelta(days=1)}`."
+        )
     return lines
+
+
+def _options_since(data: LiveData) -> datetime | None:
+    """Return when the export's model options last changed (#178), if stored."""
+    try:
+        return datetime.fromisoformat(str(data.meta.get("model_options_since")))
+    except ValueError:
+        return None
+
+
+def _options_line(data: LiveData) -> str | None:
+    """Render the stored model options and since when they apply (#178)."""
+    try:
+        options = json.loads(data.meta.get("model_options") or "")
+    except ValueError:
+        return None
+    if not isinstance(options, dict) or not options:
+        return None
+    listed = ", ".join(f"`{key}` = {value}" for key, value in sorted(options.items()))
+    since = data.meta.get("model_options_since", "an unknown time")
+    return f"- Model options since {since}: {listed}."
 
 
 def _stats_row(label: str, stats: ErrorStats, units: Units) -> list[str]:
@@ -579,6 +608,18 @@ def _training_lines(
         )
     if "training_samples" in data.meta:
         lines.append(f"- Training samples: {data.meta['training_samples']}.")
+    seconds = _optional_float(data.meta.get("training_seconds"))
+    if seconds is not None:
+        stage1 = _optional_float(data.meta.get("stage1_seconds"))
+        part = (
+            f", {stage1:.1f} s of it the cross-border stage 1"
+            if stage1 is not None
+            else ""
+        )
+        lines.append(f"- Latest training took {seconds:.1f} s{part}.")
+    options = _options_line(data)
+    if options is not None:
+        lines.append(options)
     hpo = {key: data.meta[key] for key in OBSOLETE_HPO_META_KEYS if key in data.meta}
     best = _optional_float(hpo.get("hpo_best_mae"))
     if best is not None:

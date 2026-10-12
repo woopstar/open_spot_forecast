@@ -105,7 +105,13 @@ of the cross-border model, are
 kept in memory only, so the first forecast after a restart always retrains
 from the persisted history. The log line
 `ML model trained in … s: holdout MAE=…` gives each training's duration
-(the holdout copy, the price model and the near-term model).
+(the holdout copy, the price model and the near-term model); it is INFO,
+so the latest duration is also kept in `meta` (`training_seconds`, and
+`stage1_seconds` for the cross-border stage-1 fits) and shown as attributes
+of the learning-metrics sensor, next to `model_options` and
+`model_options_since`: what shapes the model (cross-border model, training
+days, near-term model, outage features) and since which training (#178,
+`ml/training_info.py`).
 
 **No hyperparameter optimization** (#92). Until #92 a weekly grid search
 (`n_estimators` ∈ {100, 200, 300}, `learning_rate` ∈ {0.05, 0.1, 0.2},
@@ -1230,9 +1236,14 @@ learning-database export:
   no blend is shipped**: instances keep these errors from the release with
   #157 on, so the first export with 14 days of them decides.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
-  count, and the `hpo_*` keys of an export from before #92.
-- **Coverage**: the dates the data spans, with a warning below 14 days.
-  `--since YYYY-MM-DD` keeps only slots from that local date on.
+  count, how long the latest training took (`training_seconds`, and
+  `stage1_seconds` with the cross-border model), the model options and
+  since when they apply (`model_options`, `model_options_since`, #178), and
+  the `hpo_*` keys of an export from before #92.
+- **Coverage**: the dates the data spans, with a warning below 14 days, and
+  one when the model options changed inside the reported period (the
+  earlier days are another model's). `--since YYYY-MM-DD` keeps only slots
+  from that local date on.
 
 The tables are in the model's unit (raw spot price excl. VAT,
 currency/kWh). `--eur-per-unit RATE` (EUR per currency unit, e.g. the
@@ -1244,9 +1255,12 @@ it.
 Procedure:
 
 1. Update the Home Assistant instance to the current `main` and turn on the
-   option under test (e.g. **Cross-border model**). Note the date: the
-   database keeps the older version's lead-time sums for 30 days, and
-   `--since` (the first local date on the new version) leaves them out.
+   option under test (e.g. **Cross-border model**). The database keeps the
+   older version's lead-time sums for 30 days, and `--since` (the first
+   local date on the new version) leaves them out. From #178 on the export
+   itself says when: `model_options_since` is the first training with the
+   options it lists, and the report warns if that is inside the period. For
+   a version before #178, note the date.
 2. Let it run for **14 days or more** on that version.
 3. Export the database with SQLite's online backup, which is consistent
    while Home Assistant writes to it (a plain copy of the `.db` file misses
@@ -1262,9 +1276,20 @@ Procedure:
    repository root**: they hold weather snapshots and forecasts that reveal
    the installation's location.
 
-4. Run the report, with the training times from the Home Assistant log
+4. Run the report. It prints the latest training's duration from the
+   export (`training_seconds`, #178). `--log` adds the median over every
+   training in a Home Assistant log
    (`ML model trained in … s: holdout MAE=…`, one line per training; see
-   [Retraining](#retraining)):
+   [Retraining](#retraining)); those lines are INFO, which Home Assistant
+   does not log by default, so the instance needs this in
+   `configuration.yaml` first:
+
+   ```yaml
+   logger:
+     logs:
+       custom_components.open_spot_forecast.ml.models: info
+       custom_components.open_spot_forecast.ml.cross_border: info
+   ```
 
    ```bash
    python -m scripts.live_report .cache/live/dk1_live.db --region DK1 --currency DKK --since 2026-10-01 --log .cache/live/home-assistant.log

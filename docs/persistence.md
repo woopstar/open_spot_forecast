@@ -40,6 +40,15 @@ and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
 training, deleted after a failed one, and restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
+Next to them (#178, `ml/training_info.py`): `training_seconds`, the
+duration of that training, and `stage1_seconds`, the part the cross-border
+stage-1 fits took (only with that model), both deleted after a failed
+training; `model_options`, a JSON object of what shapes the model
+(`cross_border`, `training_days`, `near_term`, `outages`); and
+`model_options_since`, the UTC time of the first training with those
+options. A restart keeps it and a changed option moves it, so an export
+says by itself which model made the predictions it scores and from when.
+
 `lead_time_accuracy`, `evaluation`, `external_forecasts`, `external_accuracy`, `external_slot_errors`, `entsoe_load`, `gas_prices`,
 `neighbour_prices`, `umm_messages` and `umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
