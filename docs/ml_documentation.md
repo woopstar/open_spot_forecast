@@ -1155,11 +1155,38 @@ Procedure:
    the cross-border model, the median training time on the Raspberry Pi in
    its **Cost** paragraph (see [Cross-Border Model](#cross-border-model-29)).
 
-**No live results are recorded yet.** The only DK1 export so far
-(2026-09-28) held one day of self-learning, from a version with
+**First 15-day DK1 export (2026-09-28 to 2026-10-12, #129).** The first
+export (2026-09-28) held one day of self-learning, from a version with
 hyperparameter optimization (#92) and without the cross-border model:
 day 1 MAE 3.41 and day 2 4.62 EUR ct/kWh (133 and 155 samples, bias −1.75
-and −3.78), too few days to compare with the backtest.
+and −3.78). The second, taken 2026-10-12, covers 15 days, but of two
+versions: the pooled bias offsets (before #118) until the 2026-10-10
+release and the per-bucket offsets (#128) for the last 2-3 days, so it
+measures the pooled correction, not #128. `--since 2026-09-28`, EUR ct/kWh:
+
+| Bucket     | Samples | Days |  MAE | RMSE |  Bias | Daily MAE | Daily RMSE |
+| :--------- | ------: | ---: | ---: | ---: | ----: | --------: | ---------: |
+| day_1      |    1373 |   15 | 2.70 | 3.42 | +0.68 |      2.72 |       3.42 |
+| day_2      |    8379 |   15 | 3.35 | 4.30 | +1.88 |      3.45 |       4.55 |
+| day_3      |    8916 |   14 | 3.61 | 4.69 | +1.74 |      3.63 |       4.73 |
+| day_4_plus |   34481 |   13 | 4.76 | 6.22 | +1.88 |      4.59 |       6.03 |
+
+Per ISO week the MAE was 2.42 / 2.59 / 2.82 / 3.74 (week of 2026-09-28)
+and 3.12 / 4.30 / 4.46 / 5.28 (week of 2026-10-05) for day 1 / 2 / 3 / 4+.
+The evaluation series (the prediction closest to 24 h ahead, 8 days, 671
+slots) had MAE 4.27, RMSE 5.14 and bias +3.82; the latest holdout MAE was
+2.87 (RMSE 4.36, 9408 training samples). The bias changed sign over the
+period (day 1: −1.7 ct/kWh on the first day, +4.2 on 2026-10-10) and moved
+1.8-3.2 ct/kWh from one day to the next; the pooled offsets, learned from
+100 errors per slot, did not keep up, which is what set the per-bucket
+error window (see [Bias Correction](self_learning.md#bias-correction)).
+
+The 3 days since the 2026-10-10 release (`--since 2026-10-10`: day 1 MAE
+2.72, day 2 3.32, day 3 3.56, day 4+ 5.83; bias +2.6 to +3.9) say nothing
+about #128 yet: its offsets started as copies of the pooled ones (mean −1.3
+ct/kWh in all four buckets) and each bucket had 4-35 errors per slot. The
+per-bucket correction is measured after 14 days on #128 (follow-up issue
+#169).
 
 ### Benchmark against external forecasts (#115)
 

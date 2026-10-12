@@ -46,7 +46,7 @@ Each 15-minute slot (0-95) has an additive offset per lead-time bucket
 learned via exponential moving average (#15, #118):
 
 ```
-mean_error           = mean(predicted - actual)   # the slot's last 100 errors in the bucket
+mean_error           = mean(predicted - actual)   # the slot's last 25 errors in the bucket
 raw_bias             = offset[slot][bucket] + mean_error
 offset[slot][bucket] = 0.9 × offset[slot][bucket] + 0.1 × raw_bias
 corrected            = raw_prediction - offset[slot][bucket]
@@ -70,7 +70,8 @@ bias of −1.75 and a day-2 bias of −3.78 ct/kWh (see
 every lead time under-corrected the long leads and over-corrected the short
 ones, so since #118 each bucket learns its own, from its own errors: a matched
 slot's errors are kept pooled (`errors`, for the MAE and the metrics) and per
-bucket (`bucket_errors`, the last 100 per bucket) in `error_metrics`.
+bucket (`bucket_errors`, the last `MAX_BUCKET_ERROR_SAMPLES` = 25 per bucket, see
+below) in `error_metrics`.
 
 When a prediction is made, its lead time (`slot start − now`,
 `prediction_bucket()` in `ml/lead_time.py`) picks the bucket whose offset is
@@ -79,6 +80,30 @@ not learned its own offset yet uses the `day_1` offset (`BIAS_FALLBACK_BUCKET`
 in `const.py`), and its first update starts the EMA from that offset, since
 the predictions it learns from had it subtracted. Without any offset the
 prediction is unchanged.
+
+**Error window (#129).** A slot's actual price arrives once, so each bucket's
+EMA runs once per slot per day, on the mean of the bucket's last 25 errors
+(`MAX_BUCKET_ERROR_SAMPLES` in `ml/learning.py`; the pooled lists keep 100,
+`MAX_ERROR_SAMPLES`, for the MAE and the learning metrics). The bound was set
+from the first DK1 export with 15 days of lead-time accuracy (2026-09-28 to
+2026-10-12, 6-9 forecast runs a day, a 7-day horizon, see
+[Live accuracy](ml_documentation.md#live-accuracy-94)), in which the lead-time
+bias drifted fast: the daily bias per bucket moved 1.8 (day 1) to 3.2 (day 4+)
+ct/kWh from one day to the next, and its autocorrelation fell below 0.3 after
+two to three days (day 1-3) or after one day (day 4+). As a predictor of the
+next day's bias, a trailing mean over the last 3-4 days was best for day 1 and
+day 2 (residual MAE 1.4 and 1.7 ct/kWh, against 2.2 and 2.5 uncorrected), the
+latest day alone for day 3 and day 4+ (2.2 and 3.2, against 2.4 and 3.5), and
+windows of 7 days or more were worse than no correction for day 3 and day 4+.
+A matched slot adds about one error per forecast run to each of `day_1`,
+`day_2` and `day_3` (~7 a day) and about four times as many to `day_4_plus`
+(days 4-7 of the horizon), so 25 errors per bucket span ~3.5 days for day 1-3
+and ~1 day for day 4+, the memory that data asks for, while the EMA (one update
+a day at 0.1) adds its own ~10-day smoothing on top. The 100-error bound used
+until #129 spanned ~14 days for day 1-3 and would have lagged the drift by a
+week. Lists stored under the old bound are trimmed by the next match. The
+numbers come from one export; the follow-up measurement after 14 days on #128
+re-checks them (#169).
 
 Example: If the model consistently predicts 1.00 but the actual price is 1.30
 for slot 47 (11:45), the offset converges to about -0.30, and future
