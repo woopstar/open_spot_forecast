@@ -98,7 +98,7 @@ from custom_components.open_spot_forecast.time_series import iso_weeks
 from .backtest_entsoe_outages import load_entsoe_outages
 from .backtest_lags import LagConfig, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
-from .backtest_umm import load_umm_outages
+from .backtest_umm import PlantOutageIndex, load_outages_db, load_umm_outages
 
 SLOT_SECONDS = 15 * 60
 # Origins with less history than this are skipped (the naive model needs a week).
@@ -1199,6 +1199,19 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--outages-db",
+        type=Path,
+        help="learning-DB export (e.g. .cache/live/*.db): the outage message "
+        "versions the instance stored, as known at each origin (#168), "
+        "instead of --outages",
+    )
+    parser.add_argument(
+        "--outages-plants-only",
+        action="store_true",
+        help="with --outages or --outages-db: unavailable_production only, "
+        "the grid feature unknown (#168)",
+    )
+    parser.add_argument(
         "--cross-border",
         action="store_true",
         help="two-stage model with the neighbouring zones' prices (#29)",
@@ -1254,6 +1267,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         )
     if args.outages == "entsoe" and not os.environ.get("ENTSOE_API_KEY"):
         parser.error("--outages entsoe needs the ENTSO-E token in ENTSOE_API_KEY")
+    if args.outages_db is not None and args.outages != "none":
+        parser.error("--outages-db replaces --outages: give one of them")
+    if args.outages_db is not None and not args.outages_db.is_file():
+        parser.error(f"--outages-db: no file {args.outages_db}")
+    if args.outages_plants_only and args.outages == "none" and args.outages_db is None:
+        parser.error("--outages-plants-only needs --outages or --outages-db")
     if (args.nordpool_day1 or args.nordpool_no_copies) and args.nordpool_db is None:
         parser.error("--nordpool-day1 and --nordpool-no-copies need --nordpool-db")
     if args.nordpool_db is not None and not args.nordpool_db.is_file():
@@ -1335,10 +1354,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             copies=not args.nordpool_no_copies,
         )
     outages = None
-    if args.outages == "umm":
+    outage_index = PlantOutageIndex if args.outages_plants_only else OutageIndex
+    if args.outages_db is not None:
+        print(f"Loading outages from {args.outages_db} ...", file=sys.stderr)
+        outages = load_outages_db(args.outages_db, outage_index)
+    elif args.outages == "umm":
         print(f"Loading {args.region} outages from Nord Pool UMM ...", file=sys.stderr)
         outages = load_umm_outages(
-            args.region, data_first, data_last, args.cache_dir, _http_get_json
+            args.region,
+            data_first,
+            data_last,
+            args.cache_dir,
+            _http_get_json,
+            index=outage_index,
         )
     elif args.outages == "entsoe":
         print(f"Loading {args.region} outages from ENTSO-E ...", file=sys.stderr)
@@ -1349,6 +1377,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.cache_dir,
             os.environ["ENTSOE_API_KEY"],
             _http_get_bytes,
+            index=outage_index,
         )
     models, skipped = build_models(
         names, tz, zone, args.region, load, cross, gas, nordpool, args.lags, outages

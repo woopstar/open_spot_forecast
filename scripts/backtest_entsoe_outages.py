@@ -98,12 +98,14 @@ def load_entsoe_outages(
     api_key: str,
     fetch: Callable[[str], bytes],
     today: date | None = None,
+    index: type[OutageIndex] = OutageIndex,
 ) -> OutageIndex:
     """Load the zone's ENTSO-E outages for events on the UTC days ``first``..``last``.
 
     One request series per calendar month (a long outage appears in each
     month it touches; the index counts a period once). Months that ended
-    before ``today`` are cached as parsed rows in ``cache_dir``.
+    before ``today`` are cached as parsed rows in ``cache_dir``. ``index``
+    is the index class the rows go into.
     """
     today = today or date.today()
     rows: list[dict[str, Any]] = []
@@ -122,4 +124,4 @@ def load_entsoe_outages(
                 cache_dir.mkdir(parents=True, exist_ok=True)
                 cache_file.write_text(json.dumps(month), encoding="utf-8")
         rows.extend(month)
-    return OutageIndex(rows)
+    return index(rows)

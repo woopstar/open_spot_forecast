@@ -1010,6 +1010,13 @@ pipeline:
   gives day 1 its prognosis, as in a morning run. Training adds the masked
   copies (#91); `--nordpool-no-copies` reproduces the training before it.
   Only origins inside the export's history are meaningful.
+- **Outages from the API archive or from an export.** `--outages umm` and
+  `--outages entsoe` fetch the messages per month and cache them;
+  `--outages-db PATH` (#168) reads the versions a live instance stored
+  (`umm_messages` / `umm_periods` of a learning-database export, read-only)
+  instead, see [Outages from a live export](#outages-from-a-live-export-168).
+  `--outages-plants-only` keeps `unavailable_production` and leaves the
+  grid feature unknown.
 - **ENTSO-E load only with a key.** `--load entsoe` (token in the
   `ENTSOE_API_KEY` environment variable, never cached or printed) adds
   feature 16 from ENTSO-E's week-ahead forecasts, one request per ISO week
@@ -1062,6 +1069,7 @@ ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --ho
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day [--lag-ages]
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
 ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages entsoe
+python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --start 2026-12-10 --end 2027-01-10 --outages-db .cache/live/de_live.db [--outages-plants-only]
 ```
 
 `--region` accepts every OSF region. `--horizon-days` scores more forecast
@@ -1692,6 +1700,68 @@ so little, as far as the data shows:
 ```bash
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load none
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
+```
+
+### Outages from a live export (#168)
+
+The ENTSO-E platform serves only a document's **latest revision** (#138), so
+the API-based backtest gives every training row a document from its last
+revision's publication on; in DE a long outage is revised dozens of times,
+and most of its life is then invisible at the rows' day-ahead gates. A live
+instance does not have that gap going forward: `EntsoeOutageSource` stores
+what was published since its last update at every forecast run, so its
+learning database holds the versions as they appeared.
+
+`--outages-db <export>` replays that archive (`load_outages_db` in
+`scripts/backtest_umm.py`): every stored version goes into the same
+`OutageIndex` the integration uses, so a training row gets the versions
+stored by its day-ahead gate and a target row those stored before the
+horizon cutoff, and a revision the instance fetched later never reaches an
+earlier origin. The export is opened read-only and immutable. Two limits
+follow from what an instance keeps:
+
+- **Only origins inside the archive are meaningful.** Retention prunes the
+  periods that ended before the training window, and the version history is
+  real only from the day the instance first ran the source: at its first
+  fetch every document enters at its then-latest revision, as in the API
+  backtest. With a 60-day window, the first origin whose training rows all
+  have real history is 60 days after that day, so an export needs **60 days
+  on the source plus the days to score**.
+- `--outages-plants-only` (`PlantOutageIndex`) drops
+  `unavailable_transmission`, which for ENTSO-E zones is a count of
+  restricted grid assets, not MW (A78 carries no nominal capacity).
+
+**Check against the API archive.** Nord Pool's UMM API keeps every version,
+so for a Nord Pool area the export and the API must agree. DK1, the
+2026-10-12 export (messages stored for events from 2026-07-08 on), 60-day
+window, 26 daily origins from 2026-09-10 to 2026-10-05, `--models current`,
+MAE in EUR ct/kWh, recorded 2026-10-12:
+
+| Outages                              |   1d |   2d |   3d |
+| ------------------------------------ | ---: | ---: | ---: |
+| `--outages none`                     | 3.68 | 3.73 | 3.62 |
+| `--outages umm` (API archive)        | 3.72 | 4.15 | 4.27 |
+| `--outages-db` (export)              | 3.72 | 4.15 | 4.27 |
+| `--outages-db --outages-plants-only` | 3.55 | 3.97 | 4.04 |
+
+The export reproduces the API archive to the cent (RMSE too: 5.49 / 5.91 /
+6.06 both), which is what the option is for. The other rows are 26 origins
+of one autumn and no basis for a decision; that the two outage features
+raised the day-2 and day-3 error in these weeks is followed up in #175.
+
+**DE, NL and BE are not measured yet**: no export of an instance in one of
+those zones with an ENTSO-E key exists. When one has run for 60 days plus
+the scored period, the comparison is `--outages none` against
+`--outages-db` with and without `--outages-plants-only`, on the same pinned
+origins, and `ENTSOE_OUTAGE_REGIONS` follows the rule of #123 (day 1
+better, no later day worse). Restricting the grid count to interconnectors
+(DC links, market borders) needs no schema change: a stored period's `unit`
+is the asset's mRID, so the filter is a list of interconnector assets
+applied when the export is read.
+
+```bash
+python -m scripts.backtest --region DK1 --window-days 60 --start 2026-09-10 --end 2026-10-05 --models current --outages-db .cache/live/dk1_live_2026-10-12.db
+python -m scripts.backtest --region DK1 --window-days 60 --start 2026-09-10 --end 2026-10-05 --models current --outages umm
 ```
 
 ### Lagged prices (#119)

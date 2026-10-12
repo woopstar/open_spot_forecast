@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from email.message import Message
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -23,6 +24,7 @@ from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
 from custom_components.open_spot_forecast.ml.outages import OutageIndex
+from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from scripts import backtest
 from scripts.backtest import (
     SLOT_SECONDS,
@@ -49,7 +51,7 @@ from scripts.backtest import (
 )
 from scripts.backtest_lags import LAG_NAMES, LagConfig
 from scripts.backtest_nordpool import load_nordpool_db
-from scripts.backtest_umm import load_umm_outages
+from scripts.backtest_umm import PlantOutageIndex, load_outages_db, load_umm_outages
 
 EIC = "10YDK-1--------W"
 
@@ -1327,6 +1329,167 @@ def test_the_outages_flag_is_parsed() -> None:
     assert backtest.parse_args(["--outages", "umm", "--region", "DK2"]).outages == "umm"
     with pytest.raises(SystemExit):
         backtest.parse_args(["--outages", "umm", "--region", "DE"])
+
+
+# --- Outages from a live export (#168) ------------------------------------------------
+
+
+def _transmission_message(message_id: str, published: str) -> dict[str, Any]:
+    """A UMM limiting an interconnector of the area from 2026-06-01 to 06-30."""
+    return {
+        "messageId": message_id,
+        "version": 1,
+        "publicationDate": f"{published}T08:00:00.0000000Z",
+        "eventStatus": 1,
+        "messageType": 3,
+        "unavailabilityType": 2,
+        "transmissionUnits": [
+            {
+                "eic": "10T-1",
+                "inAreaEic": EIC,
+                "outAreaEic": "10Y1001A1001A82H",
+                "installedCapacity": 700,
+                "timePeriods": [
+                    {
+                        "eventStart": "2026-06-01T00:00:00.0000000Z",
+                        "eventStop": "2026-06-30T00:00:00.0000000Z",
+                        "unavailableCapacity": 250,
+                        "availableCapacity": 450,
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _outage_db(tmp_path: Path, items: list[dict[str, Any]]) -> Path:
+    """Store UMM items as the integration does and return the database file."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    storage = LearningStorage(hass, "DK1")
+    storage.upsert_umm_rows(parse_umm_messages({"items": items}, EIC))
+    storage.checkpoint()
+    path = Path(storage.db_path)
+    storage.close()
+    return path
+
+
+_STORED_OUTAGES = [
+    _umm_message("a", "2026-05-01", "2026-05-25", "2026-06-20", 300),
+    _umm_message("b", "2026-06-10", "2026-06-15", "2026-06-17", 100),
+    # A revision and a new message, both stored after the cutoff of the 15th
+    _umm_message("a", "2026-06-15", "2026-05-25", "2026-06-20", 10_000, version=2),
+    _umm_message("c", "2026-06-16", "2026-06-15", "2026-06-18", 10_000),
+    _transmission_message("t", "2026-05-02"),
+]
+
+
+def test_outages_db_gives_every_origin_the_versions_stored_by_then(
+    tmp_path: Path,
+) -> None:
+    """The export replays like the rows it was stored from, version by version."""
+    db = _outage_db(tmp_path, _STORED_OUTAGES)
+    direct = OutageIndex(parse_umm_messages({"items": _STORED_OUTAGES}, EIC))
+
+    index = load_outages_db(db)
+
+    slot = datetime(2026, 6, 15, 12, tzinfo=TZ)
+    for origin in (
+        datetime(2026, 4, 30, tzinfo=TZ),  # before anything was published
+        datetime(2026, 5, 10, tzinfo=TZ),
+        datetime(2026, 6, 15, tzinfo=TZ),  # the cutoff: a v1 and b
+        datetime(2026, 6, 15, 12, tzinfo=TZ),  # a v2 replaced v1
+        datetime(2026, 6, 17, tzinfo=TZ),
+    ):
+        assert index.for_slot(slot, origin) == direct.for_slot(slot, origin)
+    at_cutoff = index.for_slot(slot, datetime(2026, 6, 15, tzinfo=TZ))
+    assert at_cutoff["unavailable_production"] == pytest.approx(400.0)
+    assert at_cutoff["unavailable_transmission"] == pytest.approx(250.0)
+    later = index.for_slot(slot, datetime(2026, 6, 17, tzinfo=TZ))
+    assert later["unavailable_production"] == pytest.approx(20_100.0)
+
+
+def test_versions_stored_after_the_cutoff_cannot_change_a_replayed_forecast(
+    tmp_path: Path,
+) -> None:
+    """A later revision in the export never reaches an earlier origin's rows."""
+    origin = date(2026, 6, 15)
+    series = _noisy_series(date(2026, 5, 20), 30)
+    config = _config(origin, window_days=21)
+    targets, _ = target_slots(origin, config)
+    history = history_for(series, origin, config)
+    known = load_outages_db(_outage_db(tmp_path / "known", _STORED_OUTAGES[:2]))
+    poisoned = load_outages_db(_outage_db(tmp_path / "poisoned", _STORED_OUTAGES[:4]))
+
+    rows = [
+        backtest._feature_rows(history, targets, TZ, outages=index)
+        for index in (known, poisoned)
+    ]
+
+    np.testing.assert_array_equal(rows[0][0], rows[1][0])
+    np.testing.assert_array_equal(rows[0][1], rows[1][1])
+    column = list(backtest.FEATURE_NAMES).index("unavailable_production")
+    assert rows[1][1][8:96, column] == pytest.approx(400.0)
+
+
+def test_a_version_without_periods_still_supersedes_in_the_export(
+    tmp_path: Path,
+) -> None:
+    """A revision that drops the area's units ends the earlier version's outage."""
+    withdrawn = _umm_message("a", "2026-06-01", "2026-05-25", "2026-06-20", 300, 2)
+    withdrawn["productionUnits"] = []
+    db = _outage_db(tmp_path, [_STORED_OUTAGES[0], withdrawn])
+
+    index = load_outages_db(db)
+
+    slot = datetime(2026, 6, 10, 12, tzinfo=TZ)
+    before = index.for_slot(slot, datetime(2026, 5, 20, tzinfo=TZ))
+    after = index.for_slot(slot, datetime(2026, 6, 2, tzinfo=TZ))
+    assert before["unavailable_production"] == pytest.approx(300.0)
+    assert after["unavailable_production"] == pytest.approx(0.0)
+
+
+def test_plants_only_leaves_the_grid_feature_unknown(tmp_path: Path) -> None:
+    db = _outage_db(tmp_path, _STORED_OUTAGES)
+    index = load_outages_db(db, PlantOutageIndex)
+    starts = np.array(
+        [int(datetime(2026, 6, 15, 12, tzinfo=TZ).timestamp())], dtype=np.int64
+    )
+
+    values = index.for_slot(
+        datetime(2026, 6, 15, 12, tzinfo=TZ), datetime(2026, 6, 15, tzinfo=TZ)
+    )
+    rows = backtest.feature_matrix(starts, TZ, outages=index)
+
+    assert values == {"unavailable_production": pytest.approx(400.0)}
+    names = list(backtest.FEATURE_NAMES)
+    assert np.isfinite(rows[0, names.index("unavailable_production")])
+    assert np.isnan(rows[0, names.index("unavailable_transmission")])
+
+
+def test_outages_db_needs_an_existing_export(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        load_outages_db(tmp_path / "missing.db")
+
+
+def test_the_outages_db_flags_are_parsed(tmp_path: Path) -> None:
+    db = _outage_db(tmp_path, _STORED_OUTAGES[:1])
+
+    args = backtest.parse_args(
+        ["--region", "DE", "--outages-db", str(db), "--outages-plants-only"]
+    )
+
+    assert args.outages_db == db and args.outages == "none"
+    assert args.outages_plants_only is True
+    assert backtest.parse_args(["--outages", "umm", "--outages-plants-only"])
+    for argv in (
+        ["--outages-db", str(tmp_path / "missing.db")],
+        ["--outages-db", str(db), "--outages", "umm"],
+        ["--outages-plants-only"],
+    ):
+        with pytest.raises(SystemExit):
+            backtest.parse_args(argv)
 
 
 # --- Nordpool prognoses from a live export (#91) ------------------------------------

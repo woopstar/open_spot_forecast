@@ -316,7 +316,8 @@ migration the JSON is renamed to `.json.bak` and never used again.
 ## Live Exports for Analysis
 
 A learning database copied from a running installation (for
-`scripts/live_report.py` or `scripts/backtest.py --nordpool-db`) goes in the
+`scripts/live_report.py` or `scripts/backtest.py --nordpool-db` /
+`--outages-db`) goes in the
 git-ignored `.cache/live/`, **never in the repository root**: its
 `weather_history` holds the local weather entity's snapshots and the inverter
 output, which roughly locate the home. `.gitignore` also keeps

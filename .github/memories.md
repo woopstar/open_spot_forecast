@@ -242,6 +242,9 @@ prediction row has them (#91): training fits every row plus its Nordpool-masked 
 (`with_masked_nordpool()` in `ml/features.py`), added **after** the chronological 80/20 split,
 per side (`_train_models`). Prediction rows are never copied.
 `scripts/backtest.py --nordpool-db .cache/live/<export>.db` measures it on a live DB export.
+`--outages-db <export>` (#168, `load_outages_db()` in `scripts/backtest_umm.py`) replays the
+outage versions an instance stored, as known at each origin; the only real version history for
+ENTSO-E zones (the API serves the latest revision only). Only origins inside the archive count.
 Wind speed is m/s in both phases (`wind_speed_to_ms()` in `sensor_reader.py`).
 
 | #   | Feature                    | Source        |
