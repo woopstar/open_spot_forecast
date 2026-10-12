@@ -17,15 +17,26 @@ day-ahead gate (``day_ahead_gate``: 12:00 CET the day before the slot's
 local day, when the auction that set the price closed) and prediction
 rows the forecast's own time, so neither phase sees a message the market
 did not have.
+
+A version is its message's latest from its publication until the next
+version's, so every period is known over one span of origins. The index
+keeps the periods as arrays and answers a slot from a step function of the
+slot's UTC day as known at the origin, built once per day and origin from
+the periods in force then (#167): a slot costs a bisection, however many
+periods the archive holds.
 """
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from itertools import zip_longest
 from typing import Any
 from zoneinfo import ZoneInfo
+
+import numpy as np
 
 from ..time_slots import parse_utc
 from .features import floor_epoch, optional_float
@@ -45,6 +56,12 @@ OUTAGE_FEATURES: dict[str, str] = {
     KIND_PRODUCTION: "unavailable_production",
     KIND_TRANSMISSION: "unavailable_transmission",
 }
+_COLUMNS = {kind: column for column, kind in enumerate(OUTAGE_FEATURES)}
+# The step functions cover one UTC day each: few breakpoints, however long
+# the archive
+_DAY_SECONDS = 86400
+# ``known_until`` of a version no later one replaces
+_FOREVER = int(np.iinfo(np.int64).max)
 
 # The single day-ahead coupling closes at 12:00 CET for every delivery area
 _MARKET_TZ = ZoneInfo("CET")
@@ -79,6 +96,19 @@ class _Version:
     dismissed: bool
 
 
+@dataclass(frozen=True, slots=True)
+class _Profile:
+    """The unavailable capacity over one UTC day, as known at an origin.
+
+    ``levels[i]`` (one value per ``OUTAGE_FEATURES`` entry) holds from
+    ``breakpoints[i]`` until the next breakpoint, the last until the end of
+    the day; the first breakpoint is the day's start.
+    """
+
+    breakpoints: list[int]
+    levels: list[tuple[float, ...]]
+
+
 def _epoch(value: Any) -> int | None:
     moment = parse_utc(value)
     return int(moment.timestamp()) if moment is not None else None
@@ -97,9 +127,8 @@ class OutageIndex:
                 ``unit``, ``event_start``, ``event_stop`` and
                 ``unavailable_mw``. A period given twice counts once.
         """
-        self._versions: dict[str, dict[int, _Version]] = {}
-        self._periods: dict[tuple[str, int], list[OutagePeriod]] = {}
-        self._known: dict[int, list[OutagePeriod]] = {}
+        versions: dict[str, dict[int, _Version]] = {}
+        periods: dict[tuple[str, int], list[OutagePeriod]] = {}
         seen: set[tuple[Any, ...]] = set()
         for row in rows:
             message_id = row.get("message_id")
@@ -111,7 +140,7 @@ class OutageIndex:
                 continue
             if not isinstance(message_id, str) or published is None:
                 continue
-            self._versions.setdefault(message_id, {})[version] = _Version(
+            versions.setdefault(message_id, {})[version] = _Version(
                 published, version, status == UMM_DISMISSED
             )
             kind = row.get("kind")
@@ -131,32 +160,74 @@ class OutageIndex:
             if key in seen:
                 continue
             seen.add(key)
-            self._periods.setdefault((message_id, version), []).append(
+            periods.setdefault((message_id, version), []).append(
                 OutagePeriod(str(kind), start, stop, unavailable)
             )
+        # One row per period of a version that is not dismissed: the origins
+        # it is known at (from its version's publication until the next
+        # version's), its span and its feature column
+        spans: list[tuple[int, int, int, int, int]] = []
+        unavailable_mw: list[float] = []
+        for message_id, numbered in versions.items():
+            ordered = sorted(numbered.values(), key=lambda v: (v.published, v.version))
+            for latest, following in zip_longest(ordered, ordered[1:]):
+                if latest.dismissed:
+                    continue
+                known_until = following.published if following else _FOREVER
+                for period in periods.get((message_id, latest.version), ()):
+                    spans.append(
+                        (
+                            latest.published,
+                            known_until,
+                            period.start,
+                            period.stop,
+                            _COLUMNS[period.kind],
+                        )
+                    )
+                    unavailable_mw.append(period.unavailable)
+        table = np.array(spans, dtype=np.int64).reshape(-1, 5)
+        (
+            self._known_from,
+            self._known_until,
+            self._start,
+            self._stop,
+            self._column,
+        ) = np.ascontiguousarray(table.T)
+        self._unavailable = np.array(unavailable_mw, dtype=np.float64)
+        self._profiles: dict[tuple[int, int], _Profile] = {}
 
-    def known_at(self, origin: datetime) -> list[OutagePeriod]:
-        """Return the periods in force as published at or before ``origin``.
+    def _profile(self, day: int, known: int) -> _Profile:
+        """Return the step function of UTC day ``day`` as known at ``known``.
 
-        Per message the latest version published by then; none if that
-        version is dismissed.
+        Per message the periods of the latest version published by then;
+        none if that version is dismissed.
         """
-        at = int(origin.timestamp())
-        cached = self._known.get(at)
-        if cached is not None:
-            return cached
-        periods: list[OutagePeriod] = []
-        for message_id, versions in self._versions.items():
-            latest = max(
-                (v for v in versions.values() if v.published <= at),
-                key=lambda v: (v.published, v.version),
-                default=None,
-            )
-            if latest is None or latest.dismissed:
-                continue
-            periods.extend(self._periods.get((message_id, latest.version), ()))
-        self._known[at] = periods
-        return periods
+        begin = day * _DAY_SECONDS
+        end = begin + _DAY_SECONDS
+        in_force = np.flatnonzero(
+            (self._known_from <= known)
+            & (known < self._known_until)
+            & (self._start < end)
+            & (begin < self._stop)
+        )
+        start = self._start[in_force]
+        stop = self._stop[in_force]
+        edges = np.concatenate(([begin], start, stop))
+        breakpoints = np.unique(edges[(begin <= edges) & (edges < end)])
+        levels = np.zeros((len(breakpoints), len(_COLUMNS)))
+        if in_force.size:
+            moments = breakpoints[:, None]
+            active = (start <= moments) & (moments < stop)
+            for column in _COLUMNS.values():
+                counted = active & (self._column[in_force] == column)
+                # Added period by period in the stored order, as a loop over
+                # them would (``np.sum`` adds pairwise): a level is the exact
+                # sum of the periods in force, not a running total that
+                # drifts
+                levels[:, column] = np.cumsum(
+                    np.where(counted, self._unavailable[in_force], 0.0), axis=1
+                )[:, -1]
+        return _Profile(breakpoints.tolist(), [tuple(row) for row in levels.tolist()])
 
     def for_slot(self, start: datetime, origin: datetime) -> dict[str, float]:
         """Return the slot's unavailable MW per kind, as known at ``origin``.
@@ -171,8 +242,9 @@ class OutageIndex:
             nothing is unavailable.
         """
         at = floor_epoch(start, UTC)
-        sums = dict.fromkeys(OUTAGE_FEATURES.values(), 0.0)
-        for period in self.known_at(origin):
-            if period.start <= at < period.stop:
-                sums[OUTAGE_FEATURES[period.kind]] += period.unavailable
-        return sums
+        key = (at // _DAY_SECONDS, int(origin.timestamp()))
+        profile = self._profiles.get(key)
+        if profile is None:
+            profile = self._profiles[key] = self._profile(*key)
+        level = profile.levels[bisect_right(profile.breakpoints, at) - 1]
+        return dict(zip(OUTAGE_FEATURES.values(), level, strict=True))

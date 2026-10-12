@@ -291,7 +291,9 @@ use `day_ahead_gate(day)` (12:00 CET the day before), prediction rows now; every
 stored (`umm_messages`/`umm_periods`); only `UMM_REGIONS` (DK1: the backtest found day 1 better and
 days 2-7 unchanged; DK2 got worse at days 2-7) fetch them, `UMM_AREAS` is where the backtest can run
 them; NaN before the first fetch and elsewhere, 0 when nothing is announced. Never aggregate the
-latest versions only.
+latest versions only. `for_slot()` bisects a step function built once per UTC day and origin from
+the periods in force (#167): never loop over the stored periods per slot (ENTSO-E archives hold
+tens of thousands a month).
 The cross-border model (#29, option `cross_border`, regions in `NEIGHBOURS`) lives in
 `ml/cross_border.py`: stage-1 models per neighbour (`Stage1Model`, out-of-sample per
 `local_day_fold`) whose columns follow the 26 features via `ModelMixin._model_inputs()`;
