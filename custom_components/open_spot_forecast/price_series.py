@@ -91,6 +91,36 @@ def align_to_grid(
     return values
 
 
+def split_local_days(
+    prices: Sequence[float | None], first_day: date, tz: tzinfo | None = None
+) -> list[tuple[date, list[float | None]]]:
+    """Split a series that starts at local midnight into its local days.
+
+    Today's prices followed by tomorrow's are one list on the 15-minute
+    grid; each day takes its own number of slots (92/96/100 on a DST-change
+    day), so the next day starts at its own midnight.
+
+    Args:
+        prices: One value per 15-minute slot from local midnight of
+            ``first_day`` on, None for a missing slot.
+        first_day: Local calendar date of the first slot.
+        tz: Time zone of the days; Home Assistant's time zone by default.
+
+    Returns:
+        ``(day, prices)`` per local day, in order; the last day is shorter
+        when the series ends inside it. ``[]`` for an empty series.
+    """
+    days: list[tuple[date, list[float | None]]] = []
+    day = first_day
+    start = 0
+    while start < len(prices):
+        count = slots_in_local_day(day, tz=tz)
+        days.append((day, list(prices[start : start + count])))
+        start += count
+        day += timedelta(days=1)
+    return days
+
+
 def known_prices(prices: Sequence[float | None]) -> list[float]:
     """Return the prices of the slots that have one, in order."""
     return [price for price in prices if price is not None]

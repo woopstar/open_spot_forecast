@@ -164,7 +164,11 @@ The model retrains when its inputs change, not on a timer: `predict()` stores to
 via `record_training_prices()` and retrains only if `needs_retraining()` (untrained, or
 `last_data_update > last_trained_at`). New training-data writes must move
 `LearningStorage.last_data_write` (or `_prices_updated_at` for prices), or they will never
-reach the model. There is no hyperparameter optimization (removed in #92: it tuned on a
+reach the model. `price_history` holds **one entry per local day** (92/96/100 prices):
+`store_daily_prices()` splits today's-then-tomorrow's list at local midnight
+(`split_local_days()` in `price_series.py`, #173), as `rows_to_days()` returns it from the
+database. Never store a list that runs past midnight under one date: its second day would be
+trained on twice and without its stored inputs. There is no hyperparameter optimization (removed in #92: it tuned on a
 month-long extrapolation and forecast worse than the defaults); old `hpo_*` meta keys
 (`OBSOLETE_HPO_META_KEYS`) are deleted at startup. Change the defaults only with a backtest.
 

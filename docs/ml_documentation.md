@@ -75,8 +75,11 @@ first stores today's known prices, then
 compares two UTC timestamps:
 
 - `last_data_update` — the newest of:
-  - today's price-history entry being added or changed (a new day, a price
-    correction, or tomorrow's prices extending the day)
+  - a price-history day being added or changed (tomorrow's prices arriving
+    as their own day, a backfilled day, a price correction). Today's and
+    tomorrow's prices are compared day by day with what is stored, so
+    re-sending them, or the new day's first run after midnight, does not
+    count
   - a Nordpool prognosis row whose values changed (re-sending identical
     prognoses does not count)
   - an Open-Meteo zone weather row whose values changed (a revised or
@@ -610,7 +613,14 @@ The bias-correction and error-metric slots stay keyed by local time of day
 
 `_train_models` builds one row per 15-minute slot of `price_history` (the
 training window, see [Training Window](#training-window)), oldest first, and
-uses the rows twice:
+uses the rows twice. Every slot is one row: `price_history` holds one entry
+per local day, and a forecast run's list of today's prices followed by
+tomorrow's is split at local midnight before it is stored
+(`split_local_days`, #173). Until #173 tomorrow's prices were kept inside
+today's entry, so after a midnight every slot of the new day was a training
+row twice (and, the day before, a row without its zone weather, load
+forecast and outages, which were loaded up to the end of "today" only),
+until the next restart rebuilt the days from the database:
 
 1. **Holdout validation.** A copy of the price model with the same
    hyperparameters is fitted on the oldest 80 % of the rows and scored on the
@@ -645,7 +655,8 @@ executor.
 
 The model trains on the last `training_days` of prices (option
 **Training days**, 30-180, default **180**, #24, #121): `max_history_days`
-on the predictor. The window also sets what is backfilled and how much
+on the predictor, counted in local days with prices, tomorrow included
+once it is published (#173). The window also sets what is backfilled and how much
 history is kept (window + 2 days, see
 [persistence](persistence.md#retention)).
 

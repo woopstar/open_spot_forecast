@@ -10,7 +10,7 @@ import numpy as np
 from homeassistant.util import dt as dt_util
 
 from ..const import BIAS_FALLBACK_BUCKET, LEAD_TIME_BUCKETS
-from ..price_series import is_invalid_price_series
+from ..price_series import is_invalid_price_series, split_local_days
 from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
 from .features import build_feature_row
@@ -122,14 +122,22 @@ class LearningMixin(PredictorBase):
     def store_daily_prices(
         self, prices: Sequence[float | None], date: str | None = None
     ) -> bool:
-        """Store today's prices for historical training data.
+        """Store known prices for historical training data, one entry per local day.
 
-        An invalid day (all zero, or with missing values) is not stored, so
-        good prices already stored for that date are kept.
+        ``prices`` starts at local midnight of ``date`` and may run into the
+        following day: a forecast run passes today's prices followed by
+        tomorrow's once they are published. Each local day gets its own
+        entry (``split_local_days``), the shape the database returns
+        (``rows_to_days``), so no slot is ever in two entries and training
+        sees it once (#173).
+
+        An invalid series (all zero, or with a non-finite value) is not
+        stored, so good prices already stored for its days are kept.
 
         Args:
-            prices: List of prices for the day (96 intervals for 15-min data)
-            date: Date string (YYYY-MM-DD), defaults to today
+            prices: One price per 15-minute slot from local midnight of
+                ``date`` on (92/96/100 per day), None for a missing slot
+            date: Date string (YYYY-MM-DD) of the first slot, defaults to today
 
         Returns:
             True if the prices were stored, False if they were rejected.
@@ -142,23 +150,29 @@ class LearningMixin(PredictorBase):
                 "Not storing prices for %s: all zero or with missing values", date
             )
             return False
+        try:
+            first_day = datetime.strptime(date, "%Y-%m-%d").date()
+        except ValueError:
+            _LOGGER.warning("Not storing prices for %s: not a date", date)
+            return False
+        days = split_local_days(prices, first_day, self.tz)
+        if not days:
+            return False
 
-        # Check if we already have this date
-        for entry in self.price_history:
-            if entry.get("date") == date:
-                entry["prices"] = list(prices)
-                _LOGGER.debug(
-                    "Updated price history for %s (%d prices)", date, len(prices)
+        entries = {entry.get("date"): entry for entry in self.price_history}
+        added = 0
+        for day, day_prices in days:
+            entry = entries.get(day.isoformat())
+            if entry is not None:
+                entry["prices"] = day_prices
+            else:
+                self.price_history.append(
+                    {"date": day.isoformat(), "prices": day_prices}
                 )
-                return True
-
-        # Add new entry
-        self.price_history.append(
-            {
-                "date": date,
-                "prices": list(prices),
-            }
-        )
+                added += 1
+        if not added:
+            _LOGGER.debug("Updated price history for %s (%d prices)", date, len(prices))
+            return True
 
         # Keep the newest max_history_days. Days can arrive out of order (a
         # backfill of older days, #27), so sort by date before trimming
