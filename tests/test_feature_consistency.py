@@ -4,7 +4,7 @@ import math
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -20,7 +20,11 @@ from custom_components.open_spot_forecast.ml.features import (
     wind_power_curve,
 )
 from custom_components.open_spot_forecast.ml.gas_price import GasPriceIndex
-from custom_components.open_spot_forecast.ml.outages import OutageIndex
+from custom_components.open_spot_forecast.ml.outages import (
+    OUTAGE_SOURCE_ENTSOE,
+    OutageIndex,
+    outage_source_kind,
+)
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import (
     ENTSOE_LOAD,
@@ -497,6 +501,39 @@ def test_without_a_region_in_umm_regions_stored_messages_reach_no_row(
     for features in (row, live):
         assert features["unavailable_production"] is None
         assert features["unavailable_transmission"] is None
+
+
+def test_a_region_with_an_entsoe_outage_source_gets_the_features_in_its_rows(
+    tmp_path: Path,
+) -> None:
+    """What decides the source decides the model's use of its rows (#187)."""
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    with patch(
+        "custom_components.open_spot_forecast.ml.outages.ENTSOE_OUTAGE_REGIONS",
+        frozenset({"DE"}),
+    ):
+        assert outage_source_kind("DE") == OUTAGE_SOURCE_ENTSOE
+        predictor = SpotPricePredictor(hass, "DE")
+        try:
+            predictor.storage.upsert_umm_rows(_umm_rows(SLOT))
+            _store_history(predictor, SLOT)
+            row = _training_row(predictor, SLOT)
+            live = predictor._combine_features(
+                [slot_time_features(SLOT)],
+                {},
+                outages=predictor._outage_index(_umm_rows(SLOT)),
+            )[0]
+            options = predictor.model_options()
+        finally:
+            predictor.storage.close()
+
+    assert row["unavailable_production"] == pytest.approx(OUTAGE)
+    assert live["unavailable_production"] == pytest.approx(OUTAGE)
+    assert row["unavailable_transmission"] is not None
+    assert live["unavailable_transmission"] is not None
+    assert options["outages"] is True
+    assert outage_source_kind("DE") is None
 
 
 @pytest.mark.usefixtures("umm_in_dk1")

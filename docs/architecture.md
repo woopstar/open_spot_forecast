@@ -27,7 +27,7 @@ bias correction.
 | energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)                     |
 | Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)                  |
 | Nord Pool UMM API (no key)                  | Outage messages, every version   | `unavailable_*`, both phases, `UMM_REGIONS` (none, #175)      |
-| ENTSO-E outage documents (API key)          | Outage documents, DE/NL/BE/FR    | `unavailable_*`, both phases, `ENTSOE_OUTAGE_REGIONS` (#138)  |
+| ENTSO-E outage documents (API key)          | Outage documents, DE/NL/BE/FR    | `unavailable_*`, both phases, `ENTSOE_OUTAGE_REGIONS` (none)  |
 | External forecast sensors (optional)        | Other integrations' forecasts    | Recorded and scored per lead time, never a model input (#120) |
 
 ## Component Architecture

@@ -26,9 +26,10 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
-from ..const import NEAR_TERM_REGIONS, UMM_REGIONS
+from ..const import NEAR_TERM_REGIONS
 from .base import PredictorBase
 from .features import optional_float
+from .outages import outage_source_kind
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ class TrainingInfoMixin(PredictorBase):
             "cross_border": self.cross_border is not None,
             "training_days": self.max_history_days,
             "near_term": self.region in NEAR_TERM_REGIONS,
-            "outages": self.region in UMM_REGIONS,
+            "outages": outage_source_kind(self.region) is not None,
         }
 
     def _store_training_info(self, seconds: float | None) -> None:

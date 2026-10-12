@@ -38,6 +38,7 @@ from zoneinfo import ZoneInfo
 
 import numpy as np
 
+from ..const import ENTSOE_OUTAGE_REGIONS, UMM_REGIONS
 from ..time_slots import parse_utc
 from .features import floor_epoch, optional_float
 
@@ -62,6 +63,32 @@ _COLUMNS = {kind: column for column, kind in enumerate(OUTAGE_FEATURES)}
 _DAY_SECONDS = 86400
 # ``known_until`` of a version no later one replaces
 _FOREVER = int(np.iinfo(np.int64).max)
+
+# Which archive a region's outage features come from
+OUTAGE_SOURCE_UMM = "umm"
+OUTAGE_SOURCE_ENTSOE = "entsoe"
+
+
+def outage_source_kind(region: str) -> str | None:
+    """Return the outage source a region's model uses, None if it uses none.
+
+    The one place that decides it (#187): the update cycle creates the
+    source from this (``outage_source`` in ``history_updater.py``) and the
+    predictor reads the stored rows by it, so a region can never fetch the
+    messages without its model reading them, or the other way round.
+
+    Returns:
+        ``OUTAGE_SOURCE_UMM`` for a region in ``UMM_REGIONS`` (Nord Pool's
+        UMMs, #123), ``OUTAGE_SOURCE_ENTSOE`` for one in
+        ``ENTSOE_OUTAGE_REGIONS`` (the platform's outage documents, #138;
+        the source also needs an ENTSO-E key), else None.
+    """
+    if region in UMM_REGIONS:
+        return OUTAGE_SOURCE_UMM
+    if region in ENTSOE_OUTAGE_REGIONS:
+        return OUTAGE_SOURCE_ENTSOE
+    return None
+
 
 # The single day-ahead coupling closes at 12:00 CET for every delivery area
 _MARKET_TZ = ZoneInfo("CET")

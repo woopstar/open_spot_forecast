@@ -29,8 +29,9 @@ from .api.dayahead_prices import NeighbourPriceSource
 from .api.entsoe_outages import EntsoeOutageSource
 from .api.nordpool_umm import NordpoolUmmSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
-from .const import ENTSOE_OUTAGE_REGIONS, UMM_REGIONS, WEATHER_POINTS
+from .const import WEATHER_POINTS
 from .ml.gas_price import GAS_LOOKBACK_DAYS
+from .ml.outages import OUTAGE_SOURCE_ENTSOE, OUTAGE_SOURCE_UMM, outage_source_kind
 from .time_slots import local_midnight
 
 if TYPE_CHECKING:
@@ -82,13 +83,15 @@ def outage_source(
 
     Nord Pool's UMMs in ``UMM_REGIONS`` (#123); with an ENTSO-E key the
     platform's outage documents in ``ENTSOE_OUTAGE_REGIONS`` (#138). The
-    zones never overlap.
+    zones never overlap; ``outage_source_kind`` decides, as it does for the
+    predictor's use of the stored rows.
     """
     if ml_predictor is None:
         return None
-    if region in UMM_REGIONS:
+    kind = outage_source_kind(region)
+    if kind == OUTAGE_SOURCE_UMM:
         return NordpoolUmmSource(hass, ml_predictor.storage, region)
-    if entsoe_api_key and region in ENTSOE_OUTAGE_REGIONS:
+    if kind == OUTAGE_SOURCE_ENTSOE and entsoe_api_key:
         return EntsoeOutageSource(hass, ml_predictor.storage, region, entsoe_api_key)
     return None
 
