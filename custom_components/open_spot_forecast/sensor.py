@@ -413,6 +413,18 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         if not self.compact:
             hours = min(hours, DETAILED_MAX_PREDICTION_HOURS)
         self._max_predictions = hours * HOUR_MINUTES // output.interval_minutes
+        # The forecast per exposed interval, built once per predictions list
+        # and tariff schedule (see _forecast_series, #179)
+        self._series_cache: (
+            tuple[
+                list[dict[str, Any]],
+                int,
+                TariffSchedule | None,
+                list[dict[str, Any]],
+                list[dict[str, Any]],
+            ]
+            | None
+        ) = None
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
@@ -433,12 +445,46 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     async def _handle_update(self) -> None:
         self.async_write_ha_state()
 
-    def _forecast(self) -> list[dict[str, Any]]:
-        """Return the whole forecast as exposed (see ``PriceOutput.forecast``)."""
+    def _cached_forecast(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Return the forecast per exposed interval: tariffs added, and converted.
+
+        One state write reads the forecast for the state, the attributes and
+        their statistics; walking a week of slots each time blocked the
+        event loop for half a second on a Raspberry Pi (#179). Both lists
+        are built once per predictions list and tariff schedule: a forecast
+        run replaces ``ml_predictor.predictions`` with a new list and a
+        price update replaces the schedule, so either gives new values. The
+        cache keeps the list it was built from, so a new list is never
+        mistaken for it, and its length, in case a run is still filling it.
+
+        Returns:
+            ``PriceOutput.forecast_series()`` (not converted) and
+            ``PriceOutput.forecast()`` (converted) of the predictions; two
+            empty lists without any.
+        """
         ml_predictor = self.api_data.get("ml_predictor")
         if not ml_predictor or not ml_predictor.predictions:
-            return []
-        return self.output.forecast(ml_predictor.predictions, self._tariffs)
+            return [], []
+        predictions = ml_predictor.predictions
+        tariffs = self._tariffs
+        cached = self._series_cache
+        if (
+            cached is not None
+            and cached[0] is predictions
+            and cached[1] == len(predictions)
+            and cached[2] is tariffs
+        ):
+            return cached[3], cached[4]
+        series = self.output.forecast_series(predictions, tariffs)
+        forecast = [
+            {**entry, "price": self.output.convert(entry["price"])} for entry in series
+        ]
+        self._series_cache = (predictions, len(predictions), tariffs, series, forecast)
+        return series, forecast
+
+    def _forecast(self) -> list[dict[str, Any]]:
+        """Return the whole forecast as exposed (see ``PriceOutput.forecast``)."""
+        return self._cached_forecast()[1]
 
     @property
     def _tariffs(self) -> TariffSchedule | None:
@@ -496,12 +542,7 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             stats = ml_predictor.get_prediction_stats()
             if stats:
                 # Over the whole forecast, per slot (or hour), converted once
-                prices = [
-                    entry["price"]
-                    for entry in self.output.forecast_series(
-                        ml_predictor.predictions, self._tariffs
-                    )
-                ]
+                prices = [entry["price"] for entry in self._cached_forecast()[0]]
                 if prices:
                     attrs["forecast_min"] = self.output.convert(min(prices))
                     attrs["forecast_max"] = self.output.convert(max(prices))
