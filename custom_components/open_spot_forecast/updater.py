@@ -190,7 +190,8 @@ class ForecastUpdater(HistoryUpdaterMixin):
         Returns:
             Whether today's prices are known. A sensor that is missing or
             reports invalid (all-zero) prices, e.g. after a restart, leaves
-            the prices already read for today in place.
+            the prices already read for today in place. ``last_update`` is
+            the time of the last read that knew them (#207).
         """
         if not self.sensors.stromligning:
             return False
@@ -213,7 +214,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
         api_data["prices_today"] = data["today"]
         api_data["prices_tomorrow"] = data["tomorrow"]
         api_data["price_source"] = "stromligning"
-        return bool(data["today"])
+        if not data["today"]:
+            return False
+        api_data["last_update"] = dt_util.now()
+        return True
 
     def read_prices(self) -> bool:
         """Read today's and tomorrow's prices into api_data.
@@ -256,6 +260,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         self.api_data["prices_tomorrow"] = spot_data["tomorrow"]
         self.api_data["price_source"] = PRICE_SOURCE_DAYAHEAD
         self.api_data["price_license"] = self.dayahead.license_info
+        self.api_data["last_update"] = dt_util.now()
         return True
 
     def update_tomorrow_available(self) -> bool:
@@ -473,7 +478,6 @@ class ForecastUpdater(HistoryUpdaterMixin):
             weather_data.get("solar_power"),
         )
 
-        api_data["last_update"] = datetime.now()
         self.start_history_backfill()
         _LOGGER.info("Initial data fetch completed successfully")
 
@@ -485,7 +489,6 @@ class ForecastUpdater(HistoryUpdaterMixin):
         """Re-read the prices and re-run the forecast (the model retrains on new data)."""
         await self.async_read_prices()
         self.update_tomorrow_available()
-        self.api_data["last_update"] = datetime.now()
         if self.ml_predictor:
             await self.run_forecast()
         self._notify(UPDATE_SIGNAL)
@@ -503,7 +506,6 @@ class ForecastUpdater(HistoryUpdaterMixin):
         prices are complete. Returns whether they are.
         """
         await self.async_read_prices()
-        self.api_data["last_update"] = datetime.now()
         if self.update_tomorrow_available() and self.ml_predictor:
             self.start_forecast_refresh()
         self._notify(UPDATE_SIGNAL)
