@@ -8,27 +8,28 @@ All learning data is stored in a single SQLite database:
 
 ## Schema
 
-| Table                  | Key                                                    | Content                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `predictions`          | `id` (autoincrement)                                   | Pending predictions awaiting comparison with actual prices                                                                                   |
-| `error_metrics`        | `hour` (0-95 = 15-min slot)                            | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals; `bucket_errors` per lead-time bucket)                           |
-| `bias_correction`      | `(hour, bucket)`                                       | Additive bias offsets per slot (0-95) and lead-time bucket (currency/kWh; column `correction`, #118)                                         |
-| `spot_prices`          | `timestamp` (UTC slot key)                             | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                                                     |
-| `price_history`        | `date` (YYYY-MM-DD)                                    | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                                                |
-| `dayahead_prices`      | `timestamp` (UTC slot key)                             | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                                                         |
-| `openmeteo_weather`    | `(timestamp, point)`                                   | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22)                              |
-| `entsoe_load`          | `timestamp` (UTC slot key)                             | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                                             |
-| `gas_prices`           | `timestamp` (UTC day)                                  | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                                                     |
-| `neighbour_prices`     | `(timestamp, zone)`                                    | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)                                   |
-| `umm_messages`         | `(message_id, version)`                                | Every stored version of the outage messages for the area (Nord Pool UMM #123, ENTSO-E documents #138): `published`, `message_type`, `status` |
-| `umm_periods`          | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable capacity per unit and period: `kind`, `unavailable_mw`, `installed_mw` (#123, #138)                                  |
-| `weather_history`      | `timestamp` (UTC slot key)                             | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23)                              |
-| `meta`                 | `key`                                                  | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)                               |
-| `lead_time_accuracy`   | `(date, bucket)`                                       | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error                                         |
-| `evaluation`           | `(timestamp, target_hours)`                            | Per scored slot (UTC slot key) and lead time (12, 24, 48 h): the prediction made closest to it, the actual price and its lead time (#36)     |
-| `external_forecasts`   | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring: raw spot price per UTC slot, source (entity id) and reading (#120)                           |
-| `external_accuracy`    | `(source, date, bucket)`                               | Per source, slot date and lead-time bucket: sample count and sums of error, absolute and squared error (#120)                                |
-| `external_slot_errors` | `(start, bucket, source)`                              | Per scored slot and lead-time bucket: the forecast count and mean signed error of every external source and of the model (`model`) (#157)    |
+| Table                  | Key                                                    | Content                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `predictions`          | `id` (autoincrement)                                   | Pending predictions awaiting comparison with actual prices; `bias_offset` is the offset subtracted from each (#203)                                          |
+| `error_metrics`        | `hour` (0-95 = 15-min slot)                            | Per-slot error arrays (errors, abs_errors, pct_errors, predictions, actuals; `raw_errors`: the bias windows per lead-time bucket and day)                    |
+| `bias_correction`      | `(hour, bucket)`                                       | Additive bias offsets per slot (0-95) and lead-time bucket (currency/kWh; column `correction`, #118)                                                         |
+| `spot_prices`          | `timestamp` (UTC slot key)                             | The model's price history: raw spot price excl. VAT (currency/kWh) per 15-min slot (#24)                                                                     |
+| `price_history`        | `date` (YYYY-MM-DD)                                    | Legacy JSON days, emptied by the v8 migration (only older migrations read it)                                                                                |
+| `dayahead_prices`      | `timestamp` (UTC slot key)                             | Raw day-ahead auction prices, EUR/MWh per 15-min slot (`dayahead` price source, #27)                                                                         |
+| `openmeteo_weather`    | `(timestamp, point)`                                   | Open-Meteo 15-min weather per sampling point (`lat,lon`): wind 80 m, temp, irradiance, pressure, humidity (#22)                                              |
+| `entsoe_load`          | `timestamp` (UTC slot key)                             | ENTSO-E's week-ahead load forecast as a 15-min curve, MW (`load`, #30; only with an ENTSO-E key)                                                             |
+| `gas_prices`           | `timestamp` (UTC day)                                  | The daily natural-gas price (`price`, Instrat PLN/MWh, #28; only in `GAS_PRICE_REGIONS`)                                                                     |
+| `neighbour_prices`     | `(timestamp, zone)`                                    | Neighbours' raw day-ahead prices, EUR/MWh per 15-min slot (`price`, #29; only with the cross-border model)                                                   |
+| `umm_messages`         | `(message_id, version)`                                | Every stored version of the outage messages for the area (Nord Pool UMM #123, ENTSO-E documents #138): `published`, `message_type`, `status`                 |
+| `umm_periods`          | `(message_id, version, unit, event_start, event_stop)` | A version's unavailable capacity per unit and period: `kind`, `unavailable_mw`, `installed_mw` (#123, #138)                                                  |
+| `weather_history`      | `timestamp` (UTC slot key)                             | 15-min local weather snapshots, keyed `YYYY-MM-DDTHH:MM:SSZ`; score the local forecast, not training data (#23)                                              |
+| `meta`                 | `key`                                                  | Training state, schema version, the latest holdout metrics, source state (old `hpo_*` keys deleted at startup)                                               |
+| `lead_time_accuracy`   | `(date, bucket)`                                       | Per slot date and lead-time bucket: sample count and sums of error, absolute error and squared error                                                         |
+| `bias_accuracy`        | `(date, bucket)`                                       | The same sums over the predictions with a stored `bias_offset`, as stored and for the raw model (`sum_raw_*`), so the bias correction can be measured (#203) |
+| `evaluation`           | `(timestamp, target_hours)`                            | Per scored slot (UTC slot key) and lead time (12, 24, 48 h): the prediction made closest to it, the actual price and its lead time (#36)                     |
+| `external_forecasts`   | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring: raw spot price per UTC slot, source (entity id) and reading (#120)                                           |
+| `external_accuracy`    | `(source, date, bucket)`                               | Per source, slot date and lead-time bucket: sample count and sums of error, absolute and squared error (#120)                                                |
+| `external_slot_errors` | `(start, bucket, source)`                              | Per scored slot and lead-time bucket: the forecast count and mean signed error of every external source and of the model (`model`) (#157)                    |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -90,14 +91,14 @@ tables:
 | `ml/history_storage.py`    | `HistoryStorageMixin`          | `weather_history`, `nordpool_prognoses`, `price_history`                 |
 | `ml/series_storage.py`     | `SeriesStorageMixin`           | Time-series source tables (`nordpool_prognoses`), source state in `meta` |
 | `ml/state_storage.py`      | `LearningStateStorageMixin`    | `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk save/load |
-| `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`                                                     |
+| `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`, `bias_accuracy`                                    |
 | `ml/evaluation_storage.py` | `EvaluationStorageMixin`       | `evaluation`                                                             |
 | `ml/external_storage.py`   | `ExternalForecastStorageMixin` | `external_forecasts`, `external_accuracy`, `external_slot_errors`        |
 
 The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
 the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking
 only. The versioned data migrations live next to them in `ml/bias_storage.py`
-(v5 and v9) and `ml/spot_migration.py` (v6).
+(v5, v9 and v10) and `ml/spot_migration.py` (v6).
 
 `LearningStateStorageMixin` exposes only the bulk `save_all()` / `load_all()`
 pair (plus their async wrappers) and the `meta` key writers `save_meta_dict()`
@@ -117,16 +118,17 @@ go through the same pair (#130).
 
 Auto-migration runs at startup (no user intervention):
 
-| Version | Change                                                                                  |
-| ------- | --------------------------------------------------------------------------------------- |
-| v1 → v2 | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                       |
-| v2 → v3 | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95)      |
-| v3 → v4 | Added forecast weather columns to predictions                                           |
-| v4 → v5 | Reset `bias_correction`: multiplicative factors became additive offsets (#15)           |
-| v5 → v6 | Discard consumer-price learning data: the model learns the raw spot price (#16)         |
-| v6 → v7 | Rewrite `weather_history` timestamps as UTC slot keys (#59)                             |
-| v7 → v8 | Move the price history's JSON days into `spot_prices` rows per UTC slot (#24)           |
-| v8 → v9 | Key `bias_correction` by (slot, lead-time bucket); pooled offsets become `day_1` (#118) |
+| Version  | Change                                                                                                            |
+| -------- | ----------------------------------------------------------------------------------------------------------------- |
+| v1 → v2  | Added `id` autoincrement to predictions (was `start PRIMARY KEY`)                                                 |
+| v2 → v3  | Switched error_metrics/bias_correction from hour-based (0-23) to slot-based (0-95)                                |
+| v3 → v4  | Added forecast weather columns to predictions                                                                     |
+| v4 → v5  | Reset `bias_correction`: multiplicative factors became additive offsets (#15)                                     |
+| v5 → v6  | Discard consumer-price learning data: the model learns the raw spot price (#16)                                   |
+| v6 → v7  | Rewrite `weather_history` timestamps as UTC slot keys (#59)                                                       |
+| v7 → v8  | Move the price history's JSON days into `spot_prices` rows per UTC slot (#24)                                     |
+| v8 → v9  | Key `bias_correction` by (slot, lead-time bucket); pooled offsets become `day_1` (#118)                           |
+| v9 → v10 | Add `predictions.bias_offset`; reset `bias_correction`: offsets are the mean of the raw errors in a window (#203) |
 
 The `meta` table tracks `schema_version` so migrations only run once.
 
@@ -141,6 +143,20 @@ every existing offset as the `day_1` offset of its slot (see
 [Bias Correction](self_learning.md#bias-correction)); it logs how many it
 kept. A database created after #118 already has the column, so only the
 version is written.
+
+The v10 migration adds the nullable `bias_offset` column to `predictions`
+and deletes the rows of `bias_correction` once, logging how many. Those
+offsets were an exponential moving average that followed the bias with a lag
+of about ten days (#203); the new ones are learned from the predictions stored
+from then on, each with the offset that was subtracted from it
+(`price + bias_offset` is the raw model output; `0.0` without an offset). A
+prediction stored before the migration keeps `bias_offset` `NULL`: the offset
+it was made with is unknown, so it is scored as before (`lead_time_accuracy`,
+the slot's error lists) and left out of the bias windows and of
+`bias_accuracy`. The `bucket_errors` lists in `error_metrics` are dropped
+when their slot is next matched; `raw_errors` takes their place, per
+lead-time bucket `{day: [samples, sum of raw errors]}` for the days of the
+bucket's window.
 
 ## Stored Timestamps
 

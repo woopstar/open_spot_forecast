@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS
 from ..price_series import is_invalid_price_series, known_prices
+from .bias import BiasMixin
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
 from .external_forecasts import ExternalForecastMixin
@@ -34,6 +35,7 @@ _LOGGER = logging.getLogger(__name__)
 class SpotPricePredictor(
     FeatureMixin,
     ModelMixin,
+    BiasMixin,
     LearningMixin,
     CatchUpMixin,
     LeadTimeMixin,
@@ -115,10 +117,9 @@ class SpotPricePredictor(
 
         # Self-learning: error tracking (predictions stored in SQLite)
         self.error_metrics = {}  # Track prediction errors by hour
-        # Additive bias offsets per slot and lead-time bucket (#118)
+        # Additive bias offsets per slot and lead-time bucket (#118, bias.py)
         self.bias_correction = {}
         self.volatility_mae: dict[int, float] = {}  # Per-slot volatility (EMA of MAE)
-        self.learning_rate = 0.1  # Adaptive learning rate
         self.price_history = []  # Store historical prices for multi-day training
         # Days of price history kept and trained on (the training window)
         self.max_history_days = training_days

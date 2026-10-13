@@ -10,7 +10,7 @@ It contains:
 - Canonical patterns you must use (never re-invent)
 - Feature vector layout (26 features) and 96-slot granularity
 - File size limits and oversized files
-- Bias-correction EMA and solar-scaling factor formulas
+- Bias-correction window and solar-scaling factor formulas
 - File organization patterns (by responsibility, not by theme)
 - Sensor wiring protocol
 - Logging and testing rules
@@ -103,7 +103,7 @@ When asked to solve a GitHub issue, always follow these steps in order:
 - **Always read `docs/ml_documentation.md` before touching any ML code** — model,
   feature vector, self-learning, bias correction, confidence scoring, or storage schema.
 - **Every ML change must satisfy all documented invariants**: 26-feature vector, 96-slot
-  granularity, bias-correction EMA, solar-scaling factor, and confidence floor.
+  granularity, bias-correction window, solar-scaling factor, and confidence floor.
 - **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
   where relevant) when a change intentionally alters ML semantics. Spec and implementation
   must never diverge silently.

@@ -5,7 +5,7 @@ import logging
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -15,11 +15,16 @@ import pytest
 from homeassistant.util import dt as dt_util
 
 from custom_components.open_spot_forecast.const import BIAS_FALLBACK_BUCKET
+from custom_components.open_spot_forecast.ml.bias import RAW_ERRORS_KEY
 from custom_components.open_spot_forecast.ml.bias_storage import (
     ADDITIVE_BIAS_SCHEMA_VERSION,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
-from custom_components.open_spot_forecast.ml.learning import percent_error
+from custom_components.open_spot_forecast.ml.learning import (
+    add_matched_errors,
+    new_slot_metrics,
+    percent_error,
+)
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from custom_components.open_spot_forecast.price_output import PriceOutput
@@ -28,6 +33,7 @@ from custom_components.open_spot_forecast.sensor import MLPredictionSensor
 SLOTS_PER_DAY = 96
 VAT = 0.25
 SLOT = 40
+TODAY = date(2026, 10, 13)
 
 
 def _hass(tmp_path: Path) -> Mock:
@@ -43,10 +49,12 @@ def predictor(tmp_path: Path) -> Iterator[SpotPricePredictor]:
     predictor.storage.close()
 
 
-def _metrics(errors: list[float], actuals: list[float]) -> dict:
-    """A slot's metrics with every error in the fallback (day 1) bucket."""
+def _metrics(errors: list[float], actuals: list[float], day: date = TODAY) -> dict:
+    """A slot's metrics with every raw error in the day 1 window, measured on ``day``."""
     return {
-        "bucket_errors": {BIAS_FALLBACK_BUCKET: errors},
+        RAW_ERRORS_KEY: {
+            BIAS_FALLBACK_BUCKET: {day.isoformat(): [len(errors), sum(errors)]}
+        },
         "errors": errors,
         "abs_errors": [abs(e) for e in errors],
         "pct_errors": [0.0] * len(errors),
@@ -74,32 +82,30 @@ def test_zero_offset_never_changes_a_prediction(predictor: SpotPricePredictor) -
     A multiplicative factor below zero would flip the sign of every prediction.
     """
     predictor.error_metrics = {SLOT: _metrics([0.0] * 5, [-0.4] * 5)}
-    predictor._update_bias_correction(SLOT)
+    predictor._update_bias_correction(SLOT, TODAY)
 
     assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(0.0)
     assert predictor.apply_bias_correction(-0.4, SLOT) == pytest.approx(-0.4)
     assert predictor.apply_bias_correction(0.4, SLOT) == pytest.approx(0.4)
 
 
-def test_first_update_sets_the_offset_then_follows_the_ema(
+def test_the_offset_is_the_mean_raw_error_at_negative_prices(
     predictor: SpotPricePredictor,
 ) -> None:
-    """offset = 0.9 * old + 0.1 * (old + mean_error), starting at mean_error."""
+    """The mean of the window's raw errors, whatever the offset was before (#203)."""
     predictor.error_metrics = {SLOT: _metrics([0.3, 0.2, 0.4], [-1.0, -1.0, -1.0])}
-    predictor._update_bias_correction(SLOT)
+    predictor._update_bias_correction(SLOT, TODAY)
     assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(0.3)
 
     predictor.error_metrics = {SLOT: _metrics([0.1, 0.1, 0.1], [-1.0, -1.0, -1.0])}
-    predictor._update_bias_correction(SLOT)
-    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(
-        0.9 * 0.3 + 0.1 * (0.3 + 0.1)
-    )
+    predictor._update_bias_correction(SLOT, TODAY)
+    assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(0.1)
 
 
 def test_update_needs_three_samples(predictor: SpotPricePredictor) -> None:
     predictor.error_metrics = {SLOT: _metrics([1.0, 1.0], [-1.0, -1.0])}
 
-    predictor._update_bias_correction(SLOT)
+    predictor._update_bias_correction(SLOT, TODAY)
 
     assert SLOT not in predictor.bias_correction
 
@@ -110,18 +116,33 @@ def test_offset_converges_to_the_model_bias_whatever_the_price_sign(
 ) -> None:
     """With a constant model bias the corrected forecast converges to the actual.
 
-    Errors are measured on corrected predictions, as in the learning loop. The
-    offset stays bounded for all-negative and all-zero actuals (no division).
+    Each day's forecasts carry the offset of the day before, as in the
+    learning loop, and the offset is learned from the raw errors. It stays
+    bounded for all-negative and all-zero actuals (no division).
     """
     model_bias = 0.25
     rng = np.random.default_rng(0)
-    errors: list[float] = []
-    for _ in range(200):
-        raw = actual + model_bias + float(rng.normal(0, 0.02))
-        corrected = predictor.apply_bias_correction(raw, SLOT)
-        errors = (errors + [corrected - actual])[-100:]
-        predictor.error_metrics = {SLOT: _metrics(errors, [actual] * len(errors))}
-        predictor._update_bias_correction(SLOT)
+    metrics = new_slot_metrics()
+    predictor.error_metrics = {SLOT: metrics}
+    for age in range(30, 0, -1):
+        day = TODAY - timedelta(days=age)
+        start = datetime(
+            day.year, day.month, day.day, 10, tzinfo=dt_util.DEFAULT_TIME_ZONE
+        )
+        offset = predictor._bias_offset(SLOT, BIAS_FALLBACK_BUCKET) or 0.0
+        predictions = []
+        for lead_hours in (6, 12, 18):
+            raw = actual + model_bias + float(rng.normal(0, 0.02))
+            predictions.append(
+                {
+                    "start": start.isoformat(),
+                    "stored_at": (start - timedelta(hours=lead_hours)).isoformat(),
+                    "price": predictor.apply_bias_correction(raw, SLOT),
+                    "bias_offset": offset,
+                }
+            )
+        add_matched_errors(metrics, predictions, actual, day)
+        predictor._update_bias_correction(SLOT, day)
         assert abs(predictor._bias_offset(SLOT, BIAS_FALLBACK_BUCKET) or 0.0) < 1.0
 
     assert predictor.bias_correction[SLOT][BIAS_FALLBACK_BUCKET] == pytest.approx(
@@ -130,6 +151,8 @@ def test_offset_converges_to_the_model_bias_whatever_the_price_sign(
     assert predictor.apply_bias_correction(actual + model_bias, SLOT) == (
         pytest.approx(actual, abs=0.03)
     )
+    # The errors left after the correction are noise around zero
+    assert float(np.mean(metrics["errors"][-30:])) == pytest.approx(0.0, abs=0.03)
 
 
 # --- Confidence -------------------------------------------------------------------
@@ -203,7 +226,10 @@ def test_negative_prices_survive_model_bias_correction_and_sensor(
     predictor.price_model = NumpyGradientBoosting(n_estimators=50, min_samples_leaf=20)
     with patch.object(predictor, "store_daily_prices"):
         predictor._train_models()
-    predictor.bias_correction = {SLOT: {BIAS_FALLBACK_BUCKET: 0.05}}
+    # A past slot counts as day 1: its window has raw errors of 0.05 today
+    predictor.error_metrics = {
+        SLOT: _metrics([0.05] * 3, [-0.3] * 3, dt_util.now().date())
+    }
     # The day after the training week: its sun and calendar features lie
     # inside the history, so the tree does not extrapolate (#117)
     day = datetime(2026, 9, 21, tzinfo=dt_util.DEFAULT_TIME_ZONE)
@@ -224,6 +250,7 @@ def test_negative_prices_survive_model_bias_correction_and_sensor(
         day.strftime("%Y-%m-%d"), SLOT // 4, 0
     )
     assert stored[0]["price"] == pytest.approx(negative)
+    assert stored[0]["bias_offset"] == pytest.approx(0.05)
 
     sensor = MLPredictionSensor(
         MagicMock(),

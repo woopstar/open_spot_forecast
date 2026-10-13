@@ -305,7 +305,7 @@ def test_error_metrics_bias_and_volatility_round_trip(
             "predictions": [1.1],
             "actuals": [1.0],
             "count": 1,
-            "bucket_errors": {"day_2": [0.1]},
+            "raw_errors": {"day_2": {"2026-10-13": [3, 0.3]}},
         }
     }
     storage.save_all(
@@ -326,7 +326,8 @@ def test_error_metrics_bias_and_volatility_round_trip(
             "predictions": [pytest.approx(1.1)],
             "actuals": [pytest.approx(1.0)],
             "count": 1,
-            "bucket_errors": {"day_2": [pytest.approx(0.1)]},
+            # The bias windows: per bucket and day, [samples, sum of raw errors]
+            "raw_errors": {"day_2": {"2026-10-13": [3, pytest.approx(0.3)]}},
         }
     }
     assert data["bias_correction"] == {

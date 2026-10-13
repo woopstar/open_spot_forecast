@@ -1054,16 +1054,17 @@ Every 15 minutes:
 1. Read the current raw spot price (excl. VAT)
 2. Look up every stored prediction for the current slot (all forecast runs)
 3. Calculate error, update per-slot metrics
-4. Update the slot's additive bias offsets, one per lead-time bucket, via EMA
-   (see [self-learning](self_learning.md#bias-correction))
+4. Update the slot's additive bias offsets, one per lead-time bucket, from
+   the raw errors of its last days (see
+   [self-learning](self_learning.md#bias-correction))
 5. Compare stored forecast weather vs actual → forecast accuracy tracking
 6. Remove matched predictions from pending queue
 7. Add each error to its lead-time bucket (day 1/2/3/4+) → rolling 30-day
    MAE/RMSE per lead time (see [self-learning](self_learning.md))
 
 **96 slots** (15-min intervals), not 24 hours. Each slot has independent
-bias offsets, one per lead-time bucket (#118), and a prediction gets the
-offset of its own lead time.
+bias offsets, one per lead-time bucket (#118; `day_1` and `day_2`, #203), and
+a prediction gets the offset of its own lead time.
 
 ## Backtesting
 
@@ -1342,6 +1343,16 @@ about #128 yet: its offsets started as copies of the pooled ones (mean −1.3
 ct/kWh in all four buckets) and each bucket had 4-35 errors per slot. The
 per-bucket correction is measured after 14 days on #128 (follow-up issue
 #169).
+
+Those offsets moved a tenth of the remaining error a day and were still
+negative on 2026-10-13, eight days into the over-prediction: on the export's
+24-hour-ahead predictions of 2026-10-07 to 10-12 the correction raised the
+MAE from an estimated 3.48 to 4.28 ct/kWh. Since #203 the offsets are the
+mean of the raw errors of a slot's last four measured days, for `day_1` and
+`day_2` only (2.96 on the same predictions), and every stored prediction keeps
+the offset it was made with, so the report prints each bucket's error with
+and without the correction (see
+[Bias Correction](self_learning.md#bias-correction)).
 
 ### Benchmark against external forecasts (#115)
 

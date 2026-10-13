@@ -13,9 +13,9 @@ from ..const import BIAS_FALLBACK_BUCKET, LEAD_TIME_BUCKETS
 from ..price_series import is_invalid_price_series, split_local_days
 from ..time_slots import local_midnight, slot_start_in_day
 from .base import PredictorBase
+from .bias import RAW_ERRORS_KEY, add_raw_errors
 from .features import build_feature_row
 from .gas_price import GAS_LOOKBACK_DAYS, GasPriceIndex
-from .lead_time import bucket_errors
 from .models import OBSOLETE_HPO_META_KEYS
 from .series_storage import ENTSOE_LOAD, GAS_PRICES, OPENMETEO_WEATHER
 from .training_inputs import TrainingInputs
@@ -23,35 +23,35 @@ from .zone_weather import ZoneWeatherIndex, zone_points
 
 _LOGGER = logging.getLogger(__name__)
 
-# Errors kept per slot: the pooled lists feed the MAE and the learning metrics;
-# each lead-time bucket's shorter list feeds its bias offset (#129)
+# Errors kept per slot, for the MAE and the learning metrics. The bias offsets
+# are learned from the raw errors per lead-time bucket (bias.py, #203)
 MAX_ERROR_SAMPLES = 100
-MAX_BUCKET_ERROR_SAMPLES = 25
 _POOLED_KEYS = ("errors", "abs_errors", "pct_errors", "predictions", "actuals")
 
 
 def new_slot_metrics() -> dict[str, Any]:
     """Return the empty error metrics of a 15-minute slot."""
-    return {key: [] for key in _POOLED_KEYS} | {"count": 0, "bucket_errors": {}}
+    return {key: [] for key in _POOLED_KEYS} | {"count": 0, RAW_ERRORS_KEY: {}}
 
 
 def add_matched_errors(
-    metrics: dict[str, Any], predictions: list[dict[str, Any]], actual_price: float
+    metrics: dict[str, Any],
+    predictions: list[dict[str, Any]],
+    actual_price: float,
+    day: date,
 ) -> None:
     """Add the matched predictions' errors to a slot's error metrics.
 
-    Each error (predicted - actual) goes into the slot's pooled lists and,
-    by the prediction's lead time, into ``bucket_errors`` (#118), which the
-    bias offsets are learned from. The pooled lists keep their last
-    ``MAX_ERROR_SAMPLES`` errors, each bucket its last
-    ``MAX_BUCKET_ERROR_SAMPLES``: with the 6-9 forecast runs a day seen live
-    that is about 3.5 days of errors for day 1-3 and a day for day 4+, as fast
-    as the lead-time bias was seen to drift (#129).
+    Each error (predicted - actual) goes into the slot's pooled lists, which
+    keep their last ``MAX_ERROR_SAMPLES`` errors, and the raw model's error
+    into the window of its lead-time bucket, which the bias offsets are the
+    mean of (``add_raw_errors``, #203).
 
     Args:
         metrics: The slot's error metrics (see ``new_slot_metrics``).
         predictions: Stored prediction rows matched for the slot.
         actual_price: The slot's actual price.
+        day: The slot's local date.
     """
     for prediction in predictions:
         predicted_price = float(prediction.get("price", 0))
@@ -63,12 +63,9 @@ def add_matched_errors(
         metrics["actuals"].append(actual_price)
         metrics["count"] += 1
 
-    per_bucket = metrics.setdefault("bucket_errors", {})
-    for bucket, errors in bucket_errors(predictions, actual_price).items():
-        per_bucket[bucket] = per_bucket.get(bucket, []) + errors
-    for bucket, errors in per_bucket.items():
-        if len(errors) > MAX_BUCKET_ERROR_SAMPLES:
-            per_bucket[bucket] = errors[-MAX_BUCKET_ERROR_SAMPLES:]
+    add_raw_errors(metrics, predictions, actual_price, day)
+    # The per-bucket lists of corrected errors of before #203
+    metrics.pop("bucket_errors", None)
     for key in _POOLED_KEYS:
         if len(metrics[key]) > MAX_ERROR_SAMPLES:
             metrics[key] = metrics[key][-MAX_ERROR_SAMPLES:]
@@ -276,6 +273,7 @@ class LearningMixin(PredictorBase):
         forecast_temp: float | None = None,
         forecast_wind: float | None = None,
         forecast_cloud: float | None = None,
+        bias_offset: float = 0.0,
     ) -> None:
         """Store a prediction for later comparison with actual price.
 
@@ -284,11 +282,13 @@ class LearningMixin(PredictorBase):
 
         Args:
             timestamp: ISO format timestamp of the prediction
-            predicted_price: The predicted price
+            predicted_price: The predicted price, bias offset subtracted
             confidence: Confidence score of the prediction
             forecast_temp: Temperature forecast used for this slot
             forecast_wind: Wind speed forecast used for this slot
             forecast_cloud: Cloud coverage forecast used for this slot
+            bias_offset: The bias offset that was subtracted (0.0 without
+                one), so the raw model's error can be measured (#203)
         """
         try:
             dt = datetime.fromisoformat(timestamp)
@@ -304,6 +304,7 @@ class LearningMixin(PredictorBase):
                 forecast_temp=forecast_temp,
                 forecast_wind=forecast_wind,
                 forecast_cloud=forecast_cloud,
+                bias_offset=bias_offset,
             )
 
             # Prune old entries periodically (every 100 inserts to avoid
@@ -375,10 +376,10 @@ class LearningMixin(PredictorBase):
             # for the same timestamp = more training data), pooled and per
             # lead-time bucket
             metrics = self.error_metrics.setdefault(target_slot, new_slot_metrics())
-            add_matched_errors(metrics, matching_predictions, actual_price)
+            add_matched_errors(metrics, matching_predictions, actual_price, dt.date())
 
             # Update the slot's bias offsets, one per lead-time bucket (#118)
-            self._update_bias_correction(target_slot)
+            self._update_bias_correction(target_slot, dt.date())
 
             # --- Forecast accuracy: compare stored forecast vs actual weather ---
             actual_weather = self.storage.find_weather_for_timestamp(timestamp)

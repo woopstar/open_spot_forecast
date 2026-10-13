@@ -101,6 +101,14 @@ def prediction_bucket(slot_start: str, now: datetime) -> str:
     return bucket or BIAS_FALLBACK_BUCKET
 
 
+def _prediction_bucket(prediction: dict[str, Any]) -> str | None:
+    """Return the lead-time bucket of a stored prediction; None without a valid one."""
+    lead = lead_time_hours(
+        str(prediction.get("start", "")), str(prediction.get("stored_at", ""))
+    )
+    return lead_time_bucket(lead) if lead is not None else None
+
+
 def bucket_errors(
     predictions: list[dict[str, Any]], actual_price: float
 ) -> dict[str, list[float]]:
@@ -117,13 +125,38 @@ def bucket_errors(
     """
     errors: dict[str, list[float]] = {}
     for prediction in predictions:
-        lead = lead_time_hours(
-            str(prediction.get("start", "")), str(prediction.get("stored_at", ""))
-        )
-        bucket = lead_time_bucket(lead) if lead is not None else None
+        bucket = _prediction_bucket(prediction)
         if bucket is not None:
             error = float(prediction.get("price", 0)) - actual_price
             errors.setdefault(bucket, []).append(error)
+    return errors
+
+
+def raw_bucket_errors(
+    predictions: list[dict[str, Any]], actual_price: float
+) -> dict[str, list[tuple[float, float]]]:
+    """Group the raw model's errors by lead-time bucket (#203).
+
+    A stored price had its ``bias_offset`` subtracted, so the raw model's
+    error is ``price + bias_offset - actual``.
+
+    Args:
+        predictions: Matched prediction rows with ``start``, ``stored_at``,
+            ``price`` and ``bias_offset``.
+        actual_price: Actual price of the slot.
+
+    Returns:
+        ``(raw error, corrected error)`` pairs per bucket key. A prediction
+        without a valid lead time is skipped, and so is one without a stored
+        offset (a row from before #203: the offset in use is unknown).
+    """
+    errors: dict[str, list[tuple[float, float]]] = {}
+    for prediction in predictions:
+        bucket = _prediction_bucket(prediction)
+        offset = prediction.get("bias_offset")
+        if bucket is not None and offset is not None:
+            error = float(prediction.get("price", 0)) - actual_price
+            errors.setdefault(bucket, []).append((error + float(offset), error))
     return errors
 
 
@@ -244,6 +277,10 @@ class LeadTimeMixin(PredictorBase):
                 # All matched predictions target the same slot, hence one date.
                 slot_date = str(predictions[0]["start"])[:10]
                 self.storage.add_lead_time_errors(slot_date, errors)
+                # The same errors with and without the bias correction (#203)
+                self.storage.add_bias_accuracy(
+                    slot_date, raw_bucket_errors(predictions, actual_price)
+                )
             self.refresh_lead_time_accuracy()
         except sqlite3.Error as err:
             _LOGGER.error("Failed to record lead-time accuracy: %s", err)

@@ -5,6 +5,12 @@ connection and write lock. The ``lead_time_accuracy`` table holds one row per
 (slot date, lead-time bucket) with running error sums, which keeps it tiny
 (buckets x window days) while still letting MAE, RMSE and bias be computed
 over any rolling window of whole days.
+
+``bias_accuracy`` (#203) has the same keys and holds the sums of the same
+errors twice, as stored (after the bias correction) and for the raw model
+(the stored ``bias_offset`` added back), over the predictions that have a
+stored offset. ``scripts/live_report.py`` reads it to show what the
+correction did per lead time.
 """
 
 import sqlite3
@@ -26,6 +32,20 @@ class LeadTimeAccuracyStorageMixin(StorageMixinBase):
                    sum_error       REAL    NOT NULL,
                    sum_abs_error   REAL    NOT NULL,
                    sum_sq_error    REAL    NOT NULL,
+                   PRIMARY KEY (date, bucket)
+               )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS bias_accuracy (
+                   date                TEXT    NOT NULL,
+                   bucket              TEXT    NOT NULL,
+                   samples             INTEGER NOT NULL,
+                   sum_error           REAL    NOT NULL,
+                   sum_abs_error       REAL    NOT NULL,
+                   sum_sq_error        REAL    NOT NULL,
+                   sum_raw_error       REAL    NOT NULL,
+                   sum_raw_abs_error   REAL    NOT NULL,
+                   sum_raw_sq_error    REAL    NOT NULL,
                    PRIMARY KEY (date, bucket)
                )"""
         )
@@ -68,6 +88,54 @@ class LeadTimeAccuracyStorageMixin(StorageMixinBase):
             )
             conn.commit()
 
+    def add_bias_accuracy(
+        self, date_str: str, errors_by_bucket: dict[str, list[tuple[float, float]]]
+    ) -> None:
+        """Add errors with and without the bias correction for a slot date (blocking).
+
+        Args:
+            date_str: Local date of the matched slot (``YYYY-MM-DD``).
+            errors_by_bucket: ``(raw error, corrected error)`` pairs per bucket
+                key (``raw_bucket_errors``).
+        """
+        rows = [
+            (
+                date_str,
+                bucket,
+                len(pairs),
+                sum(corrected for _, corrected in pairs),
+                sum(abs(corrected) for _, corrected in pairs),
+                sum(corrected * corrected for _, corrected in pairs),
+                sum(raw for raw, _ in pairs),
+                sum(abs(raw) for raw, _ in pairs),
+                sum(raw * raw for raw, _ in pairs),
+            )
+            for bucket, pairs in errors_by_bucket.items()
+            if pairs
+        ]
+        if not rows:
+            return
+        with self._lock:
+            conn = self._ensure_conn()
+            conn.executemany(
+                """INSERT INTO bias_accuracy
+                   (date, bucket, samples, sum_error, sum_abs_error, sum_sq_error,
+                    sum_raw_error, sum_raw_abs_error, sum_raw_sq_error)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(date, bucket) DO UPDATE SET
+                       samples = samples + excluded.samples,
+                       sum_error = sum_error + excluded.sum_error,
+                       sum_abs_error = sum_abs_error + excluded.sum_abs_error,
+                       sum_sq_error = sum_sq_error + excluded.sum_sq_error,
+                       sum_raw_error = sum_raw_error + excluded.sum_raw_error,
+                       sum_raw_abs_error =
+                           sum_raw_abs_error + excluded.sum_raw_abs_error,
+                       sum_raw_sq_error =
+                           sum_raw_sq_error + excluded.sum_raw_sq_error""",
+                rows,
+            )
+            conn.commit()
+
     def get_lead_time_error_sums(
         self, since_date: str
     ) -> dict[str, tuple[int, float, float, float]]:
@@ -102,5 +170,6 @@ class LeadTimeAccuracyStorageMixin(StorageMixinBase):
             cursor = conn.execute(
                 "DELETE FROM lead_time_accuracy WHERE date < ?", (cutoff_date,)
             )
+            conn.execute("DELETE FROM bias_accuracy WHERE date < ?", (cutoff_date,))
             conn.commit()
             return cursor.rowcount

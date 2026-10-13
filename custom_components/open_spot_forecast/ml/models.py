@@ -10,7 +10,7 @@ import numpy as np
 
 from homeassistant.util import dt as dt_util
 
-from ..const import BIAS_FALLBACK_BUCKET, NEAR_TERM_REGIONS
+from ..const import NEAR_TERM_REGIONS
 from ..price_series import known_prices
 from ..time_slots import first_prediction_slot, slot_start_in_day
 from .base import PredictorBase
@@ -30,21 +30,6 @@ from .price_lags import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-
-def bias_offset(offsets: dict[str, float], bucket: str) -> float | None:
-    """Return a slot's offset for a lead-time bucket, or the fallback bucket's.
-
-    Args:
-        offsets: The slot's offsets per bucket.
-        bucket: ``LEAD_TIME_BUCKETS`` key.
-
-    Returns:
-        The bucket's offset; the ``BIAS_FALLBACK_BUCKET`` offset while the
-        bucket has none; None when neither has one.
-    """
-    offset = offsets.get(bucket)
-    return offsets.get(BIAS_FALLBACK_BUCKET) if offset is None else offset
 
 
 # meta keys of the latest training's holdout metrics (see _train_models)
@@ -90,7 +75,7 @@ def create_price_model(
 
 
 class ModelMixin(PredictorBase):
-    """Training, prediction, and bias-correction methods.
+    """Training and prediction methods.
 
     Designed to be mixed into SpotPricePredictor — all attributes
     referenced via self are provided by the owning class.
@@ -315,6 +300,8 @@ class ModelMixin(PredictorBase):
                 raw_prices[near_term] = self.near_model.predict(near_rows[near_term])
         # The lead time of every prediction of this run is measured from now
         now = dt_util.now()
+        # The offsets as of today: a window without recent errors has none
+        self.refresh_bias_offsets(now.date())
 
         for idx, feature in enumerate(features):
             feature_vector = feature_vectors[idx].tolist()
@@ -340,14 +327,15 @@ class ModelMixin(PredictorBase):
                     price,
                 )
 
-            # Apply the bias offset of the 15-min slot (0-95) and of this
-            # prediction's lead time (#118)
+            # Subtract the bias offset of the 15-min slot (0-95) and of this
+            # prediction's lead time (#118). Additive and never clamped:
+            # prices can be zero or negative
             hour = feature.get("hour", 0)
             minute = feature.get("minute", 0)
             slot = hour * 4 + minute // 15
-            price = self.apply_bias_correction(
-                price, slot, prediction_bucket(str(start), now)
-            )
+            bucket = prediction_bucket(str(start), now)
+            offset = self._bias_offset(slot, bucket) or 0.0
+            price = self.apply_bias_correction(price, slot, bucket)
             confidence = round(self._estimate_confidence(feature), 2)
 
             self.predictions.append(
@@ -368,6 +356,7 @@ class ModelMixin(PredictorBase):
                     start,
                     price,
                     confidence,
+                    bias_offset=offset,
                     forecast_temp=feature.get("temperature"),
                     forecast_wind=feature.get("wind_speed_mean"),
                     forecast_cloud=feature.get("cloud_coverage"),
@@ -593,99 +582,3 @@ class ModelMixin(PredictorBase):
                 pass
 
         return max(0.3, min(1.0, confidence))
-
-    def _bias_offset(self, slot: int, bucket: str) -> float | None:
-        """Return the offset of a slot and lead-time bucket, or the fallback's.
-
-        A bucket that has not learned its own offset yet uses the
-        ``BIAS_FALLBACK_BUCKET`` offset (day 1, where the offsets learned
-        before #118 were migrated to).
-
-        Args:
-            slot: 15-minute slot index (0-95)
-            bucket: ``LEAD_TIME_BUCKETS`` key
-
-        Returns:
-            The offset, or None when neither the bucket nor the fallback has one
-        """
-        return bias_offset(self.bias_correction.get(slot) or {}, bucket)
-
-    def apply_bias_correction(
-        self, predicted_price: float, slot: int, bucket: str = BIAS_FALLBACK_BUCKET
-    ) -> float:
-        """Subtract the learned bias offset of a slot and lead time from a prediction.
-
-        The correction is additive, so it works the same for positive,
-        zero and negative prices and never flips a prediction's sign by
-        scaling it. The result is not clamped: prices can be negative.
-
-        Args:
-            predicted_price: Raw model prediction
-            slot: 15-minute slot index (0-95)
-            bucket: Lead-time bucket of the prediction (see ``_bias_offset``
-                for the fallback)
-
-        Returns:
-            ``predicted_price - offset[slot][bucket]`` (unchanged without an
-            offset)
-        """
-        offset = self._bias_offset(slot, bucket)
-        if offset is None:
-            return predicted_price
-
-        corrected_price = predicted_price - offset
-        _LOGGER.debug(
-            "Applied bias correction for slot %d (%s): %.4f -> %.4f (offset=%.4f)",
-            slot,
-            bucket,
-            predicted_price,
-            corrected_price,
-            offset,
-        )
-        return corrected_price
-
-    def _update_bias_correction(self, slot: int) -> None:
-        """Update the additive bias offsets of one 15-minute slot.
-
-        One offset per lead-time bucket (#118), each learned from the
-        bucket's own errors (``bucket_errors`` in the slot's metrics) once
-        it has 3 samples. ``mean_error`` (predicted - actual) is measured on
-        stored predictions, which already had the offset in use subtracted
-        (the bucket's own, or the fallback's while it had none; the offsets
-        as they were before this update), so the raw model's bias is
-        ``offset + mean_error``. The offset is an EMA of that bias:
-
-            offset = 0.9 * offset + 0.1 * (offset + mean_error)
-
-        Feeding the EMA ``mean_error`` alone would settle at half the bias.
-        Without any offset in use, the first update sets it to
-        ``mean_error``. No division by a price, so the offset stays bounded
-        when prices are zero or negative.
-        """
-        try:
-            metrics = self.error_metrics.get(slot) or {}
-            previous = dict(self.bias_correction.get(slot) or {})
-            for bucket, errors in metrics.get("bucket_errors", {}).items():
-                if len(errors) < 3:
-                    continue
-                mean_error = float(np.mean(errors))
-                old_offset = bias_offset(previous, bucket)
-                if old_offset is None:
-                    offset = mean_error
-                else:
-                    raw_bias = old_offset + mean_error
-                    offset = (
-                        1 - self.learning_rate
-                    ) * old_offset + self.learning_rate * raw_bias
-                self.bias_correction.setdefault(slot, {})[bucket] = offset
-
-                _LOGGER.debug(
-                    "Updated bias offset for slot %d (%s): %.4f (mean_error=%.4f)",
-                    slot,
-                    bucket,
-                    offset,
-                    mean_error,
-                )
-
-        except Exception as err:
-            _LOGGER.error("Error updating bias correction for slot %d: %s", slot, err)

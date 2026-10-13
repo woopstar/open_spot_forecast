@@ -68,11 +68,12 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `history_storage.py`    | `HistoryStorageMixin` — `weather_history`, `nordpool_prognoses` and `price_history` tables                                                                                                                     |
 | `series_storage.py`     | `SeriesStorageMixin` + `SeriesSpec` — generic time-series tables: stored grid points, change-detecting upsert, load, prune, state                                                                              |
 | `state_storage.py`      | `LearningStateStorageMixin` — `error_metrics`, `bias_correction`, `volatility`, `meta`, bulk `save_all` / `load_all`                                                                                           |
-| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` table, mixed into `LearningStorage`                                                                                                                      |
+| `accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` — `lead_time_accuracy` and `bias_accuracy` (#203) tables, mixed into `LearningStorage`                                                                                          |
 | `evaluation_storage.py` | `EvaluationStorageMixin` — `evaluation` table (the prediction per lead time 12/24/48 h next to the actual price, #36, #113)                                                                                    |
 | `external_storage.py`   | `ExternalForecastStorageMixin` — `external_forecasts` (awaiting scoring), `external_accuracy` (daily sums per source and bucket, #120) and `external_slot_errors` (per-slot errors of model and sources, #157) |
 | `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                                                                                            |
 | `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                                                                                            |
+| `bias.py`               | `BiasMixin` — bias offsets per slot and lead-time bucket: windows of raw errors (`add_raw_errors`, `window_offset`, `BIAS_WINDOW_DAYS`), #203                                                                  |
 | `external_forecasts.py` | `ExternalForecastMixin` — store external forecasts, score them per lead-time bucket with the slot (#120)                                                                                                       |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
@@ -364,21 +365,26 @@ never round with `dt.replace(minute=...)` or add minutes to a local datetime inl
 
 ## Bias Correction Formula
 
-Each 15-minute slot has an additive offset (currency/kWh) per lead-time bucket (`day_1` …
-`day_4_plus`, `LEAD_TIME_BUCKETS`), learned via EMA (#15, #118):
+Each 15-minute slot has an additive offset (currency/kWh) per lead-time bucket
+(`LEAD_TIME_BUCKETS`), the mean of the raw model's recent errors (#15, #118, #203;
+`ml/bias.py`):
 
 ```
-raw_bias = offset[slot][bucket] + mean_error      # mean_error = mean(predicted - actual) in the bucket
-offset[slot][bucket] = 0.9 * offset[slot][bucket] + 0.1 * raw_bias
-corrected_price = raw_price - offset[slot][bucket]  # bucket = the prediction's own lead time
+raw_error = stored_price + stored_bias_offset - actual    # predictions.bias_offset
+offset[slot][bucket] = mean(raw_error)                    # the bucket's last 4 measured days
+corrected_price = raw_price - offset[slot][bucket]        # bucket = the prediction's own lead time
 ```
 
 `offset > 0` → model overpredicts → subtract. `offset < 0` → model underpredicts → add.
-`mean_error` comes from stored (already corrected) predictions, so `offset + mean_error` is
-the raw model's bias; an EMA of `mean_error` alone would settle at half the bias. The first
-update sets the offset to `mean_error`. A bucket without an offset uses the `day_1` offset
-(`BIAS_FALLBACK_BUCKET`) and starts its EMA from it. Prices can be negative: never clamp
-predictions at 0 and never divide by a price. Never invent a different correction scheme.
+Every stored prediction keeps the offset subtracted from it, so the raw error is known and
+nothing is smoothed on top (the EMA of before #203 lagged the bias by ~10 days and added to
+the error after a change of sign). Only `day_1` and `day_2` have an offset
+(`BIAS_WINDOW_DAYS`): a later bucket's errors are older than its bias lasts. A window without
+3 errors from its last 4 days gives no offset, and no bucket uses another's. Offsets are set
+at each match and refreshed before every forecast run (`refresh_bias_offsets`).
+`bias_accuracy` holds the error sums with and without the correction, for
+`scripts/live_report.py`. Prices can be negative: never clamp predictions at 0 and never
+divide by a price. Never invent a different correction scheme.
 
 ## Solar Scaling Factor
 

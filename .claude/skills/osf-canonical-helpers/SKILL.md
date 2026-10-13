@@ -139,16 +139,17 @@ inline a feature list. Adding/removing a feature is a model change — see the
 ### Bias Correction Formula
 
 ```python
-raw_bias = offset[slot][bucket] + mean_error      # mean_error = mean(predicted - actual) in the bucket
-offset[slot][bucket] = 0.9 * offset[slot][bucket] + 0.1 * raw_bias   # bucket: the prediction's lead time (#118)
-corrected_price = raw_price - offset[slot]
+raw_error = stored_price + stored_bias_offset - actual   # the raw model's error (#203)
+offset[slot][bucket] = mean(raw_error)   # the bucket's last 4 measured days; day_1 and day_2 only
+corrected_price = raw_price - offset[slot][bucket]       # bucket: the prediction's lead time (#118)
 ```
 
-This additive EMA (#15) is the canonical self-learning update. `mean_error` is
-measured on stored predictions, which already had the offset subtracted, so
-`offset + mean_error` is the raw model's bias. It works for negative prices and
-never divides by a price. Never invent a different correction scheme, and never
-clamp predictions at 0.
+This additive offset (#15) is the canonical self-learning update (`ml/bias.py`:
+`add_raw_errors()`, `window_offset()`, `BiasMixin`). Every stored prediction
+keeps the offset subtracted from it, so the raw error is known and nothing is
+smoothed on top. A bucket without recent errors has no offset and no bucket
+uses another's. It works for negative prices and never divides by a price.
+Never invent a different correction scheme, and never clamp predictions at 0.
 
 ### Solar Scaling Factor
 

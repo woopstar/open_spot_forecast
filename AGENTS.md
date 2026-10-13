@@ -99,7 +99,7 @@ The agent MUST:
 1. **Read `docs/ml_documentation.md` before touching any ML code** — model, feature vector,
    self-learning, bias correction, confidence scoring, or storage schema.
 2. **Verify that every ML change is consistent with the docs** — 26-feature vector, 96-slot
-   granularity, bias-correction EMA, solar-scaling factor, and confidence floor must all match.
+   granularity, bias-correction window, solar-scaling factor, and confidence floor must all match.
 3. **Update `docs/ml_documentation.md`** (and `docs/self_learning.md` / `docs/persistence.md`
    where relevant) whenever a change intentionally alters ML semantics. Docs and implementation
    must never be allowed to diverge silently.
@@ -111,9 +111,10 @@ Key invariants to verify for every ML PR:
 
 - Feature vector stays at 26 canonical features (any add/remove is a model change).
 - Slot granularity is 96 (15-min), never hourly (0-23).
-- Bias correction is an additive offset per (slot, lead-time bucket):
-  `offset = 0.9 * old + 0.1 * (old + mean_error)`, applied as `price - offset` of the
-  prediction's own lead time (`day_1` when a bucket has no offset yet).
+- Bias correction is an additive offset per (slot, lead-time bucket): the mean of the raw
+  errors (`price + stored bias_offset - actual`) of the bucket's last 4 measured days, applied
+  as `price - offset` of the prediction's own lead time; only `day_1` and `day_2` have one, a
+  bucket without recent errors has none, and no bucket uses another's.
 - Predictions are never clamped at 0 (prices can be negative).
 - Solar scaling uses the EMA of `actual_power / solcast_estimate` (learned, not a price-model input).
 - Training and prediction rows both come from `build_feature_row()`; unknown inputs are NaN.

@@ -28,11 +28,15 @@ class PredictionStorageMixin(StorageMixinBase):
         forecast_temp: float | None = None,
         forecast_wind: float | None = None,
         forecast_cloud: float | None = None,
+        bias_offset: float | None = None,
     ) -> int | None:
         """Insert a single prediction entry (blocking).
 
         Optionally stores the weather forecast values that were used,
         so they can later be compared against actual measurements.
+        ``bias_offset`` is the bias offset that was subtracted from the raw
+        model output to give ``price`` (0.0 without one, #203): the raw
+        model's error is ``price + bias_offset - actual``.
 
         Returns the auto-incremented id of the new row.
         """
@@ -41,8 +45,8 @@ class PredictionStorageMixin(StorageMixinBase):
             cursor = conn.execute(
                 """INSERT INTO predictions
                    (start, price, confidence, hour, minute, stored_at,
-                    forecast_temp, forecast_wind, forecast_cloud)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    forecast_temp, forecast_wind, forecast_cloud, bias_offset)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     start,
                     price,
@@ -53,6 +57,7 @@ class PredictionStorageMixin(StorageMixinBase):
                     forecast_temp,
                     forecast_wind,
                     forecast_cloud,
+                    bias_offset,
                 ),
             )
             conn.commit()
@@ -79,14 +84,14 @@ class PredictionStorageMixin(StorageMixinBase):
         """Find all predictions matching a specific date, hour, and minute.
 
         Matches on the date portion of the 'start' field plus hour/minute.
-        (blocking)
+        ``bias_offset`` is None for a row stored before #203. (blocking)
         """
         prefix = date_str  # "YYYY-MM-DD"
         with self._lock:
             conn = self._ensure_conn()
             rows = conn.execute(
                 """SELECT id, start, price, confidence, hour, minute, stored_at,
-                          forecast_temp, forecast_wind, forecast_cloud
+                          forecast_temp, forecast_wind, forecast_cloud, bias_offset
                    FROM predictions
                    WHERE start LIKE ? AND hour = ? AND minute = ?
                    ORDER BY stored_at ASC""",
@@ -108,6 +113,7 @@ class PredictionStorageMixin(StorageMixinBase):
                 "forecast_temp": r[7],
                 "forecast_wind": r[8],
                 "forecast_cloud": r[9],
+                "bias_offset": r[10],
             }
             for r in rows
         ]

@@ -27,7 +27,9 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    c. If found:
       - Calculate error: predicted_price - actual_price
       - Update per-slot error metrics (MAE, bias, sample count)
-      - Update the slot's additive bias offsets, one per lead-time bucket
+      - Add each prediction's raw error (its stored bias offset added back)
+        to the window of its lead-time bucket, and set the slot's additive
+        bias offsets from those windows
       - Add each error to its lead-time bucket (see below)
       - Remove the matched predictions from the queue
    d. If not found: skip (no forecast run covered this slot)
@@ -36,74 +38,108 @@ actual confirmed prices. This self-learning loop runs every 15 minutes.
    - Bias corrections are applied to raw model outputs
    - corrected_price = raw_price - offset[slot][bucket], the bucket being the
      prediction's own lead time (no clamp: prices can be negative)
+   - The offset is stored with the prediction, so its raw error can be
+     measured when the slot arrives
 ```
 
 ## Bias Correction
 
-Each 15-minute slot (0-95) has an additive offset per lead-time bucket
-(`day_1`, `day_2`, `day_3`, `day_4_plus`, see
-[Lead-Time Accuracy](#lead-time-accuracy)), in the price unit (currency/kWh),
-learned via exponential moving average (#15, #118):
+Each 15-minute slot (0-95) has an additive offset per lead-time bucket (see
+[Lead-Time Accuracy](#lead-time-accuracy)), in the price unit (currency/kWh):
+the mean of the raw model's recent errors in that bucket (#15, #118, #203).
 
 ```
-mean_error           = mean(predicted - actual)   # the slot's last 25 errors in the bucket
-raw_bias             = offset[slot][bucket] + mean_error
-offset[slot][bucket] = 0.9 × offset[slot][bucket] + 0.1 × raw_bias
+raw_error            = stored_price + stored_bias_offset - actual
+offset[slot][bucket] = mean(raw_error of the slot's last 4 measured days in the bucket)
 corrected            = raw_prediction - offset[slot][bucket]
 ```
 
 - `offset > 0` → model overpredicts → subtract
 - `offset < 0` → model underpredicts → add
-- `offset = 0` → no bias; the prediction is unchanged
+- no offset → the prediction is unchanged
 
-The update runs once a bucket of the slot has 3 samples; the first update
-sets the offset to `mean_error`. Stored predictions already had the offset in
-use subtracted, so their `mean_error` is what is _left_ of the bias;
-`offset + mean_error` is the raw model's bias. An EMA of `mean_error` alone
-would settle at half the bias (a simulation with a week of forecast lag: 0.48
-for a true bias of 1.0, versus 0.98 with this formula).
+(`ml/bias.py`: `BIAS_WINDOW_DAYS`, `add_raw_errors()`, `window_offset()`,
+`BiasMixin`.)
+
+**Raw errors.** Every stored prediction keeps the offset that was subtracted
+from it (`predictions.bias_offset`, `0.0` without one), so the raw model's
+error is known whatever correction was in use, and the offset is simply its
+mean. Nothing is smoothed on top: the previous offset has no say in the next.
+With a constant bias the offset is that bias from the first update, and the
+errors left after the correction are noise around zero.
+
+**Window.** A slot's actual price arrives once a day, with one error per
+forecast run that predicted it in the bucket. They are kept per bucket and
+measured day as a count and a sum (`raw_errors` in the slot's
+`error_metrics`), for the last `BIAS_WINDOW_DAYS` = 4 measured days, none of
+them more than 4 days old. The offset needs at least 3 errors in the window
+(`MIN_BIAS_SAMPLES`). The offsets are set when their slot is matched and
+again, for every slot, before each forecast run, so an offset never outlives
+its window: after days without a match (the instance was off, the price
+source was down) it is dropped, not kept.
+
+**Which buckets.** An error can only be measured when its slot arrives, a
+lead time after the forecast that it corrects next: a `day_1` offset is used a
+day after its last error was measured, a `day_2` offset two days after, a
+`day_3` offset three, `day_4_plus` four to eight. The lead-time bias does not
+last that long: in the first DK1 export with 15 days of lead-time accuracy
+(2026-09-28 to 2026-10-12, see
+[Live accuracy](ml_documentation.md#live-accuracy-94)) it under-predicted for
+four days, was about right for three and over-predicted for the next eight. Only `day_1`
+and `day_2` have an offset (`BIAS_WINDOW_DAYS`). `day_3` and `day_4_plus`
+predictions are the raw model output; their raw errors are still recorded
+(see [Measuring it](#measuring-it)). No bucket uses another bucket's offset.
+
+What the export showed (EUR ct/kWh, mean absolute residual of the daily
+bias, 2026-10-06 to 10-12; the stored errors, which still held the slow
+offsets of the time; n = the scored days, few):
+
+| Daily bias per bucket predicted by its trailing mean, measured a lead time earlier | Lag    | No correction | 1 day | 2 days | 4 days | 7 days |
+| ---------------------------------------------------------------------------------- | ------ | ------------: | ----: | -----: | -----: | -----: |
+| `day_1` (n = 7)                                                                    | 1 day  |          2.72 |  1.14 |   0.77 |   1.04 |   1.67 |
+| `day_2` (n = 7)                                                                    | 2 days |          3.48 |  2.25 |   2.36 |   2.30 |   2.79 |
+| `day_3` (n = 7)                                                                    | 3 days |          3.49 |  2.98 |   3.02 |   3.78 |   3.74 |
+| `day_4_plus` (n = 7)                                                               | 4 days |          4.03 |  6.00 |   5.91 |   5.99 |   5.82 |
+
+A `day_4_plus` offset is on the wrong side of every change of sign for as long
+as its lead time; with any window it made those days worse than no correction,
+and `day_3` gains nothing beyond a two-day window. Per slot, on the export's
+24-hour-ahead predictions (`evaluation`, 2026-10-07 to 10-12, 513 slots, the
+raw error estimated by adding the export's offsets back):
+
+| Per-slot offset from the last … measured days | MAE, lag 1 day | MAE, lag 2 days |
+| --------------------------------------------- | -------------: | --------------: |
+| the correction that was live (EMA, see below) |           4.28 |            4.28 |
+| no correction                                 |           3.48 |            3.48 |
+| 1 day                                         |           3.71 |            3.87 |
+| 2 days                                        |           3.29 |            3.25 |
+| 3 days                                        |           3.07 |            3.10 |
+| 4 days                                        |           2.96 |            2.96 |
+
+One slot's error of one day is too noisy to correct the next (worse than no
+correction); four days are the shortest window that beat the others here, and
+a longer one reacts later to a change of sign. These are 6 days of one
+instance: the first export with stored offsets re-checks them (#169).
+
+**Why not a moving average.** Until #203 the offset was an exponential moving
+average: once per slot and day, `offset += 0.1 × mean_error`, with
+`mean_error` over the bucket's last 25 errors _left after the correction_
+(#129). It moved a tenth of the remaining error a day, so it followed the bias
+with a lag of about ten days, while the bias changes sign within a few. On
+2026-10-13 the DK1 instance still had negative offsets from the
+under-prediction of late September (08:00: −0.32 DKK/kWh against a measured
+bias of +0.36) and added them to forecasts that were already too high: the
+table's first row. A bucket without errors (e.g. `day_1` from 13:00 on, whose
+prices are published before a forecast under 24 hours ahead is stored) kept an
+offset from weeks before and lent it to the other buckets. The v10 migration
+resets those offsets once (see [persistence](persistence.md)).
 
 A slot is predicted by many forecast runs, from under an hour to 8.5 days
 ahead, and the bias differs by lead time: the first DK1 export had a day-1
-bias of −1.75 and a day-2 bias of −3.78 ct/kWh (see
-[Live accuracy](ml_documentation.md#live-accuracy-94)). One offset pooled over
-every lead time under-corrected the long leads and over-corrected the short
-ones, so since #118 each bucket learns its own, from its own errors: a matched
-slot's errors are kept pooled (`errors`, for the MAE and the metrics) and per
-bucket (`bucket_errors`, the last `MAX_BUCKET_ERROR_SAMPLES` = 25 per bucket, see
-below) in `error_metrics`.
-
-When a prediction is made, its lead time (`slot start − now`,
-`prediction_bucket()` in `ml/lead_time.py`) picks the bucket whose offset is
-subtracted; the slot already under way counts as `day_1`. A bucket that has
-not learned its own offset yet uses the `day_1` offset (`BIAS_FALLBACK_BUCKET`
-in `const.py`), and its first update starts the EMA from that offset, since
-the predictions it learns from had it subtracted. Without any offset the
-prediction is unchanged.
-
-**Error window (#129).** A slot's actual price arrives once, so each bucket's
-EMA runs once per slot per day, on the mean of the bucket's last 25 errors
-(`MAX_BUCKET_ERROR_SAMPLES` in `ml/learning.py`; the pooled lists keep 100,
-`MAX_ERROR_SAMPLES`, for the MAE and the learning metrics). The bound was set
-from the first DK1 export with 15 days of lead-time accuracy (2026-09-28 to
-2026-10-12, 6-9 forecast runs a day, a 7-day horizon, see
-[Live accuracy](ml_documentation.md#live-accuracy-94)), in which the lead-time
-bias drifted fast: the daily bias per bucket moved 1.8 (day 1) to 3.2 (day 4+)
-ct/kWh from one day to the next, and its autocorrelation fell below 0.3 after
-two to three days (day 1-3) or after one day (day 4+). As a predictor of the
-next day's bias, a trailing mean over the last 3-4 days was best for day 1 and
-day 2 (residual MAE 1.4 and 1.7 ct/kWh, against 2.2 and 2.5 uncorrected), the
-latest day alone for day 3 and day 4+ (2.2 and 3.2, against 2.4 and 3.5), and
-windows of 7 days or more were worse than no correction for day 3 and day 4+.
-A matched slot adds about one error per forecast run to each of `day_1`,
-`day_2` and `day_3` (~7 a day) and about four times as many to `day_4_plus`
-(days 4-7 of the horizon), so 25 errors per bucket span ~3.5 days for day 1-3
-and ~1 day for day 4+, the memory that data asks for, while the EMA (one update
-a day at 0.1) adds its own ~10-day smoothing on top. The 100-error bound used
-until #129 spanned ~14 days for day 1-3 and would have lagged the drift by a
-week. Lists stored under the old bound are trimmed by the next match. The
-numbers come from one export; the follow-up measurement after 14 days on #128
-re-checks them (#169).
+bias of −1.75 and a day-2 bias of −3.78 ct/kWh. So each bucket learns its own
+offset, from its own errors (#118). When a prediction is made, its lead time
+(`slot start − now`, `prediction_bucket()` in `ml/lead_time.py`) picks the
+bucket; the slot already under way counts as `day_1`.
 
 In DK1 and DK2 a prediction comes from one of two price models, by the age of the
 lagged price it can use (the near-term model for the first two forecast
@@ -112,11 +148,11 @@ Offsets stay per slot and lead-time bucket whichever model predicted: a
 bucket's errors are those of the predictions stored in it, so its offset
 follows the mix of models that fills it.
 
-Example: If the model consistently predicts 1.00 but the actual price is 1.30
-for slot 47 (11:45), the offset converges to about -0.30, and future
-predictions for that slot get 0.30 added. The same works for a slot that clears
-at -0.20 while the model predicts 0.10: the offset converges to 0.30 and the
-corrected prediction to -0.20.
+Example: If the model predicts 1.00 for slot 47 (11:45) a day ahead on four
+days running and the actual price is 1.30, the `day_1` offset is −0.30 and the
+next day-ahead prediction for that slot gets 0.30 added. The same works for a
+slot that clears at −0.20 while the model predicts 0.10: the offset is 0.30
+and the corrected prediction −0.20.
 
 Being additive, the correction never divides by a price (it stays bounded when
 prices are zero or negative) and never flips a prediction's sign by scaling.
@@ -124,11 +160,19 @@ Predictions are never clamped at 0 anywhere (model, heuristic fallback, bias
 correction, sensor attributes): negative prices are the hours worth shifting
 load into.
 
+### Measuring it
+
+`bias_accuracy` holds, per slot date and lead-time bucket, the error sums of
+the predictions that have a stored offset, twice: as stored (after the
+correction) and for the raw model. `scripts/live_report.py` prints them side
+by side ("Bias correction: with and without"): MAE and bias per bucket with
+and without the correction, over the same predictions. For `day_3` and
+`day_4_plus`, which are not corrected, both are the raw model's. A prediction
+stored before #203 has no offset and is in neither.
+
 The multiplicative factors of older versions cannot be converted into offsets;
 they are reset once on upgrade (schema v5, see [persistence](persistence.md)).
-The offsets learned before #118, pooled over every lead time, are kept as the
-`day_1` offsets (schema v9), so an upgraded installation corrects every lead
-time as before until the other buckets have learned their own.
+The moving-average offsets of before #203 are reset once too (schema v10).
 
 ## Slot Granularity
 
