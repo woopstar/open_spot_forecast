@@ -1752,7 +1752,9 @@ without the gas price, `after` with it (`--gas`). Recorded 2026-09-27.
 | FR     |      2.58 / 2.78 / 2.89 |     2.43 / 2.67 / 2.77 | on             |
 
 A region gets the gas price (`GAS_PRICE_REGIONS`) where it lowers the MAE
-at every horizon. Which price, on DK1 / DE / BE (1d / 2d / 3d MAE, same
+at every horizon. Since #202 the model sees the price as a band and FI is
+off too (see [Gas price bands](#gas-price-bands-202)); the numbers of this
+section are those of the price itself, with a 60-day window. Which price, on DK1 / DE / BE (1d / 2d / 3d MAE, same
 period):
 
 | Gas price                                 | DK1                | DE                 | BE                 |
@@ -1777,6 +1779,131 @@ period):
   without (stage 1 does not use it).
 - The gas price is known before the day, so unlike the zone weather it is
   not optimistic at 2-3 days ahead.
+
+### Gas price bands (#202)
+
+On 2026-10-12 and 13 the gas price lifted DK1's live forecast by several
+ct/kWh. The feature was the latest price itself. It had gone from 324 to
+373 PLN/MWh, a level only one week of the instance's 90-day window had had,
+and that week held the price spike of 2026-09-14: a tree's split on the
+price sets those few days apart, and a new price beyond the split gets
+their level, whatever the weather. The backtest above (#28) only looked at
+the mean, where such days do not show.
+
+Four ways to feed the price were compared, DK1, 365 daily origins to
+2026-10-13, `current (NumPy GBM)` with the near-term model, 7 forecast days,
+`--daily` for the per-day errors, EUR ct/kWh, recorded 2026-10-13:
+
+- **as it was**: the latest price dated before the slot's day;
+- **without** the gas price;
+- **mean of 7**: the mean of the last 7 published prices, so a jump moves
+  the feature by a seventh a day;
+- **bands**: the latest price as its quantile band among the training rows'
+  prices, so every level the model can split on covers a fixed share of the
+  window's days, and a price the window never had is in the top band.
+
+"P95" is the 95th percentile of the daily MAE; "worse days" counts the
+target days whose MAE is more than 3 ct/kWh above the run without the gas
+price, at 1d / 2d / 3d / 4-7d; "worst day" is the largest such difference
+one day ahead.
+
+**180-day window (the default), cross-border model:**
+
+| Gas price         |   MAE 1d / 2d / 3d / 4-7d |                       P95 |    Worse days |          Worst day |
+| ----------------- | ------------------------: | ------------------------: | ------------: | -----------------: |
+| without           | 1.90 / 2.00 / 2.12 / 2.16 | 3.76 / 3.97 / 4.13 / 4.25 |             – |                  – |
+| as it was         | 1.80 / 1.88 / 1.98 / 2.03 | 3.38 / 3.63 / 3.86 / 4.03 | 0 / 0 / 0 / 3 | +1.48 (2026-10-07) |
+| mean of 7         | 1.81 / 1.90 / 2.00 / 2.07 | 3.53 / 3.66 / 4.00 / 4.10 | 0 / 0 / 0 / 1 | +1.99 (2026-09-23) |
+| 5 bands (shipped) | 1.83 / 1.91 / 2.00 / 2.06 | 3.48 / 3.59 / 3.93 / 4.06 | 0 / 0 / 0 / 0 | +0.44 (2026-01-02) |
+
+**180-day window, single-stage:**
+
+| Gas price         |   MAE 1d / 2d / 3d / 4-7d |                       P95 |     Worse days |          Worst day |
+| ----------------- | ------------------------: | ------------------------: | -------------: | -----------------: |
+| without           | 2.21 / 2.42 / 2.54 / 2.58 | 4.29 / 4.90 / 5.40 / 5.39 |              – |                  – |
+| as it was         | 2.16 / 2.39 / 2.44 / 2.53 | 4.05 / 5.06 / 5.09 / 5.24 | 0 / 1 / 2 / 12 | +1.92 (2026-09-17) |
+| mean of 7         | 2.14 / 2.39 / 2.47 / 2.53 | 4.10 / 4.91 / 5.63 / 5.37 | 0 / 0 / 3 / 15 | +2.45 (2026-09-23) |
+| 5 bands (shipped) | 2.16 / 2.37 / 2.44 / 2.48 | 4.16 / 4.69 / 5.10 / 5.11 |  0 / 0 / 0 / 0 | +1.46 (2026-09-23) |
+
+**90-day window (the affected instance's), cross-border model:**
+
+| Gas price            |   MAE 1d / 2d / 3d / 4-7d |                       P95 |    Worse days |          Worst day |
+| -------------------- | ------------------------: | ------------------------: | ------------: | -----------------: |
+| without              | 1.85 / 1.97 / 2.07 / 2.15 | 3.81 / 3.97 / 3.94 / 4.30 |             – |                  – |
+| as it was            | 1.78 / 1.91 / 2.00 / 2.09 | 3.58 / 4.08 / 4.00 / 4.23 | 1 / 0 / 0 / 0 | +4.60 (2026-10-12) |
+| mean of 7            | 1.80 / 1.95 / 2.05 / 2.14 | 3.62 / 4.22 / 4.41 / 4.52 | 0 / 0 / 1 / 4 | +1.58 (2026-09-17) |
+| 5 bands              | 1.81 / 1.93 / 2.03 / 2.11 | 3.73 / 3.92 / 3.90 / 4.14 | 0 / 0 / 0 / 0 | +2.12 (2026-10-12) |
+| mean of 7 in 5 bands | 1.84 / 1.96 / 2.06 / 2.14 | 3.84 / 3.97 / 3.93 / 4.23 | 0 / 0 / 0 / 1 | +1.99 (2026-10-12) |
+| 3 bands (shipped)    | 1.82 / 1.95 / 2.03 / 2.11 | 3.62 / 3.88 / 3.88 / 4.11 | 0 / 0 / 0 / 0 | +0.79 (2026-10-12) |
+
+- **The mean hid it.** As it was, the feature has the lowest mean with the
+  cross-border model, and with a 90-day window its whole tail is one day of
+  the year:
+  2026-10-12, 7.20 against 2.60 ct/kWh without the gas price.
+- **The mean of 7 only delays it.** It takes that day away (the level had not
+  followed the jump yet) and is the worst variant a week into a high: its
+  worst days are 2026-09-17 to 09-23, and from day 2 on its 95th percentile
+  is above the run without the gas price at 90 days (4.22 / 4.41 / 4.52
+  against 3.97 / 3.94 / 4.30).
+- **Bands keep most of the gain and have no bad days**: no day more than 3
+  ct/kWh worse than without the gas price in any setup, and a 95th percentile
+  below the run without it at every horizon. With five bands a band of a 90-day window is 18
+  days, and one expensive week still weighs on it (2026-10-12: 4.73). With
+  bands of at least 30 days (`GAS_BAND_DAYS`: three bands for 90 days, five
+  from 150 days on, `GAS_MAX_BANDS`) that day is 3.40 against 2.60, the
+  largest difference of the year, and the 95th percentile is the lowest of
+  all from day 2 on. That is the rule that shipped (`gas_band_edges()`,
+  `ml/gas_price.py`): the 180-day rows are its five bands, the 90-day
+  "3 bands" row its three. Windows of 60 and 120 days (two and four bands)
+  were not run; a 30-day window has no bands and so no gas price.
+
+**The days of the issue**, origins 2026-09-28 to 2026-10-13 replayed as the
+instance ran them (90-day window, `--cross-border --load entsoe`, 16 origins):
+
+| Gas price            |   MAE 1d / 2d / 3d / 4-7d |                       P95 |    Worse days |          Worst day |
+| -------------------- | ------------------------: | ------------------------: | ------------: | -----------------: |
+| without              | 2.56 / 2.56 / 2.58 / 2.68 | 4.02 / 4.22 / 4.06 / 4.57 |             – |                  – |
+| as it was            | 2.76 / 2.80 / 2.69 / 2.58 | 5.11 / 4.77 / 4.36 / 4.43 | 1 / 0 / 0 / 0 | +4.65 (2026-10-12) |
+| mean of 7            | 2.46 / 2.55 / 2.43 / 2.56 | 4.14 / 4.51 / 4.11 / 4.35 | 0 / 0 / 0 / 0 | +0.76 (2026-10-13) |
+| 5 bands              | 2.83 / 2.82 / 2.87 / 2.76 | 4.35 / 4.14 / 4.22 / 4.53 | 0 / 0 / 0 / 0 | +1.77 (2026-10-12) |
+| mean of 7 in 5 bands | 2.63 / 2.62 / 2.68 / 2.70 | 4.52 / 4.19 / 4.39 / 4.59 | 0 / 0 / 0 / 1 | +1.74 (2026-10-12) |
+| 2 bands              | 2.59 / 2.56 / 2.61 / 2.69 | 4.04 / 4.25 / 4.14 / 4.67 | 0 / 0 / 0 / 0 | +0.43 (2026-10-12) |
+| 3 bands (shipped)    | 2.63 / 2.57 / 2.67 / 2.78 | 4.03 / 4.11 / 4.02 / 4.61 | 0 / 0 / 0 / 0 | +0.42 (2026-10-12) |
+
+| Target day (MAE / bias) |      without |    as it was |    mean of 7 |      5 bands | 3 bands (shipped) |
+| ----------------------- | -----------: | -----------: | -----------: | -----------: | ----------------: |
+| 2026-10-12, 1d          | 2.71 / +2.47 | 7.36 / +7.36 | 2.87 / +2.69 | 4.48 / +4.43 |      3.13 / +3.02 |
+| 2026-10-12, 2d          | 1.45 / +0.62 | 4.39 / +4.39 | 1.88 / +1.34 | 3.03 / +2.93 |      2.12 / +1.77 |
+| 2026-10-13, 1d          | 2.91 / +1.89 | 3.07 / +2.21 | 3.67 / +2.97 | 3.40 / +2.36 |      2.93 / +1.97 |
+| 2026-10-13, 2d          | 2.59 / +1.48 | 4.60 / +4.24 | 2.53 / +1.49 | 3.30 / +2.02 |      2.32 / +1.27 |
+| 2026-10-13, 3d          | 2.53 / +1.64 | 4.26 / +3.83 | 2.65 / +1.80 | 3.17 / +2.24 |      2.84 / +1.97 |
+| 2026-10-14, 2d          | 2.28 / -0.94 | 2.39 / +0.17 | 3.28 / +1.97 | 2.49 / +0.41 |      2.17 / -0.96 |
+| 2026-10-14, 3d          | 2.36 / -1.47 | 3.69 / +2.21 | 2.11 / -1.05 | 2.54 / -0.67 |      2.34 / -1.36 |
+
+The day-ahead error of 2026-10-12 is 0.4 ct/kWh above the forecast without
+the gas price instead of 4.7. Over these two weeks alone the bands score
+slightly worse than no gas price (2.63 against 2.56 one day ahead); over the
+year at the same window they score better (1.82 against 1.85).
+
+**Every region with the gas price**, 180-day window, one model (the
+near-term model in DK2), same origins:
+
+| Region | without: MAE 1d / 2d / 3d / 4-7d |                 as it was |                   5 bands |               P95 without |                 P95 bands | Worse days, bands |
+| ------ | -------------------------------: | ------------------------: | ------------------------: | ------------------------: | ------------------------: | ----------------: |
+| DK2    |        2.48 / 2.72 / 2.72 / 2.78 | 2.47 / 2.72 / 2.62 / 2.71 | 2.45 / 2.69 / 2.62 / 2.68 | 4.64 / 5.42 / 5.44 / 5.56 | 4.60 / 5.12 / 5.09 / 5.32 |     0 / 0 / 0 / 0 |
+| DE     |        2.22 / 2.30 / 2.32 / 2.36 | 2.08 / 2.15 / 2.16 / 2.24 | 2.11 / 2.18 / 2.20 / 2.25 | 4.07 / 4.26 / 4.25 / 4.57 | 3.90 / 4.19 / 4.15 / 4.33 |     0 / 0 / 0 / 0 |
+| BE     |        2.48 / 2.60 / 2.63 / 2.69 |                         – | 2.35 / 2.46 / 2.50 / 2.56 | 4.78 / 5.15 / 5.21 / 5.29 | 4.82 / 4.97 / 4.81 / 5.16 |     0 / 0 / 0 / 0 |
+| NL     |        2.32 / 2.42 / 2.44 / 2.48 |                         – | 2.20 / 2.29 / 2.33 / 2.37 | 4.60 / 5.14 / 5.06 / 5.05 | 4.50 / 4.71 / 4.72 / 4.90 |     0 / 0 / 0 / 0 |
+| NO2    |        1.91 / 2.03 / 2.08 / 2.13 |                         – | 1.70 / 1.83 / 1.89 / 1.96 | 4.21 / 4.50 / 4.76 / 4.91 | 3.90 / 4.39 / 4.68 / 4.84 |     0 / 0 / 0 / 0 |
+| SE4    |        2.95 / 3.10 / 3.14 / 3.20 |                         – | 2.90 / 3.05 / 3.10 / 3.19 | 5.92 / 6.52 / 6.72 / 6.72 | 5.91 / 6.38 / 6.44 / 6.59 |     0 / 0 / 0 / 1 |
+| FI     |        2.65 / 2.80 / 2.80 / 2.88 | 2.61 / 2.79 / 2.80 / 2.86 | 2.64 / 2.80 / 2.83 / 2.88 | 5.58 / 5.96 / 5.87 / 6.20 | 5.79 / 5.88 / 6.15 / 6.53 |     0 / 0 / 0 / 2 |
+| FR     |        3.00 / 3.13 / 3.19 / 3.28 |                         – | 2.72 / 2.87 / 2.95 / 3.05 | 5.98 / 6.35 / 6.47 / 6.58 | 5.33 / 5.62 / 5.82 / 5.94 |     0 / 1 / 2 / 3 |
+
+"Worse days" as above, for the bands. The bands lower the MAE at every
+horizon in seven regions, in DK2 more than the price itself did. In Finland
+neither form helps at this window (the price itself: 2.61 / 2.79 / 2.80 /
+2.86, with a higher 95th percentile than without), so FI is out of
+`GAS_PRICE_REGIONS`. SE3 and the Baltics, off since #28, were not re-run.
 
 ### Nordpool prognoses at prediction (#91)
 

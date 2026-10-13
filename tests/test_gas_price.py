@@ -413,8 +413,9 @@ def gas() -> Iterator[Mock]:
 
 
 def test_only_regions_where_it_helps_fetch_the_gas_price(gas: Mock) -> None:
-    assert "DK1" in GAS_PRICE_REGIONS
-    assert "SE3" not in GAS_PRICE_REGIONS
+    assert {"DK1", "DK2", "DE", "BE", "NL", "NO2", "SE4", "FR"} == GAS_PRICE_REGIONS
+    # No lower error with the gas price there (FI since #202)
+    assert not {"SE3", "FI", "EE", "LT", "LV"} & GAS_PRICE_REGIONS
 
     assert _updater("DK1", _predictor()).gas is gas
     assert _updater("DK1", _predictor()).api_data["gas_price"] is True
