@@ -298,7 +298,7 @@ History is kept for the training window (**Training days**, default 180,
 `entsoe_load` rows, `dayahead_prices` rows, the cross-border model's
 `neighbour_prices` rows (#29) and remembered holes are deleted. `gas_prices`
 keeps 14 more days (`GAS_LOOKBACK_DAYS`, #28): the training window's first
-day uses the latest price published before it. `umm_periods` ending before
+day uses the prices published before it. `umm_periods` ending before
 the cutoff are deleted, and with them the message versions published before
 it that have no period left (#123). Without the ML model only `dayahead_prices` is
 stored, and only the margin is kept. Before #32 only `weather_history` was pruned, to a fixed 30 days,

@@ -23,6 +23,7 @@ from custom_components.open_spot_forecast.const import (
     INSTRAT_USER_AGENT,
 )
 from custom_components.open_spot_forecast.ml.gas_price import (
+    GAS_LEVEL_PRICES,
     GAS_LOOKBACK_DAYS,
     GasPriceIndex,
 )
@@ -47,7 +48,7 @@ def _row(day: str, price: float) -> dict[str, Any]:
 # --- The lookup -------------------------------------------------------------------
 
 
-def test_a_day_gets_the_latest_price_dated_before_it() -> None:
+def test_a_day_gets_the_mean_of_the_prices_dated_before_it() -> None:
     index = GasPriceIndex(
         [
             _row("2026-09-20", 300.0),
@@ -56,12 +57,62 @@ def test_a_day_gets_the_latest_price_dated_before_it() -> None:
         ]
     )
 
-    assert index.before(date(2026, 9, 23)) == pytest.approx(320.0)
+    # A day never sees its own price
+    assert index.before(date(2026, 9, 23)) == pytest.approx(310.0)
     assert index.before(date(2026, 9, 22)) == pytest.approx(300.0)
     assert index.before(date(2026, 9, 21)) == pytest.approx(300.0)
-    # A forecast days ahead gets the latest published price
-    assert index.before(date(2026, 9, 30)) == pytest.approx(330.0)
+    # A forecast days ahead gets the latest known level
+    assert index.before(date(2026, 9, 30)) == pytest.approx(950.0 / 3)
     assert index.before(date(2026, 9, 20)) is None
+
+
+def test_the_level_is_the_mean_of_the_last_seven_prices() -> None:
+    assert GAS_LEVEL_PRICES == 7
+    first = date(2026, 9, 1)
+    index = GasPriceIndex(
+        [_row(str(first + timedelta(days=day)), 300.0 + day) for day in range(12)]
+    )
+
+    # 2026-09-06 .. 09-12: prices 305 .. 311
+    assert index.before(date(2026, 9, 13)) == pytest.approx(308.0)
+    # Fewer than seven prices are known at the start of the history
+    assert index.before(date(2026, 9, 3)) == pytest.approx(300.5)
+
+
+def test_a_price_above_the_training_window_moves_the_level_by_a_seventh() -> None:
+    """The value a prediction row gets after a jump of the gas price (#202).
+
+    On 2026-10-12 the price went from 324 to 373 PLN/MWh, above all but one
+    week of the 90-day window; with the latest price as the feature, every
+    forecast slot got that week's price level.
+    """
+    first = date(2026, 7, 14)
+    window = [300.0 + (day % 5) * 6 for day in range(90)]  # 300 .. 324
+    rows = [
+        _row(str(first + timedelta(days=day)), price)
+        for day, price in enumerate(window)
+    ]
+    jump_day = first + timedelta(days=90)
+    index = GasPriceIndex([*rows, _row(str(jump_day), 373.0)])
+
+    training = [index.before(first + timedelta(days=day)) for day in range(1, 91)]
+    known = [level for level in training if level is not None]
+    prediction = index.before(jump_day + timedelta(days=1))
+
+    assert max(window) < 373.0
+    assert prediction is not None
+    # A seventh of the jump: (373 - the price that left the mean) / 7
+    assert prediction - known[-1] == pytest.approx((373.0 - window[-7]) / 7)
+    # ... so the prediction rows are 8 above the levels the model saw, where
+    # the latest price was 49 above every price of the window
+    assert prediction - max(known) < 10 < 373.0 - max(window)
+    # Every day of the forecast horizon gets that level, as in production
+    assert index.before(jump_day + timedelta(days=7)) == pytest.approx(prediction)
+    # A price that stays up is the level after seven days
+    later = GasPriceIndex(
+        [*rows, *(_row(str(jump_day + timedelta(days=day)), 373.0) for day in range(7))]
+    )
+    assert later.before(jump_day + timedelta(days=7)) == pytest.approx(373.0)
 
 
 def test_a_stale_price_is_not_used() -> None:
@@ -70,6 +121,24 @@ def test_a_stale_price_is_not_used() -> None:
     last_day = date(2026, 9, 1) + timedelta(days=GAS_LOOKBACK_DAYS)
     assert index.before(last_day) == pytest.approx(300.0)
     assert index.before(last_day + timedelta(days=1)) is None
+
+
+def test_the_level_only_uses_prices_inside_the_lookback() -> None:
+    """A source that stopped updating: old prices leave the mean, then it is NaN."""
+    index = GasPriceIndex(
+        [
+            _row("2026-08-30", 100.0),
+            _row("2026-08-31", 200.0),
+            _row("2026-09-10", 300.0),
+        ]
+    )
+
+    assert index.before(date(2026, 9, 11)) == pytest.approx(200.0)
+    # 2026-08-30 is more than GAS_LOOKBACK_DAYS before the 14th
+    assert index.before(date(2026, 9, 14)) == pytest.approx(250.0)
+    assert index.before(date(2026, 9, 15)) == pytest.approx(300.0)
+    assert index.before(date(2026, 9, 24)) == pytest.approx(300.0)
+    assert index.before(date(2026, 9, 25)) is None
 
 
 def test_unusable_rows_are_skipped() -> None:

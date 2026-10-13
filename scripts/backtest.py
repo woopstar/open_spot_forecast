@@ -679,8 +679,8 @@ def _feature_rows(
     visible history) and with ``cross`` the stage-1 price columns (#29)
     follow the features, in that order.
     ``gas`` holds the daily gas price rows (#28); only those dated before
-    the horizon cutoff are used, so a target day gets the latest price
-    published before the forecast, as in production. With ``nordpool``
+    the horizon cutoff are used, so a target day gets the level known
+    before the forecast, as in production. With ``nordpool``
     (#91) training rows get their stored prognoses and target rows none,
     or only the first forecast day with ``nordpool.day1``. With ``outages``
     (#123) training rows get the messages published by their day-ahead gate

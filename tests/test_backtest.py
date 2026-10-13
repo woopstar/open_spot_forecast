@@ -1141,7 +1141,7 @@ def _gas_rows(first: date, days: int, price: float = 300.0) -> list[dict[str, An
 
 
 def test_future_gas_prices_cannot_change_the_forecast() -> None:
-    """Target days get the latest price published before the horizon cutoff."""
+    """Target days get the gas price level known before the horizon cutoff."""
     origin = date(2026, 6, 15)
     series = _noisy_series(date(2026, 5, 20), 30)
     config = _config(origin, window_days=21)
@@ -1162,8 +1162,11 @@ def test_future_gas_prices_cannot_change_the_forecast() -> None:
     np.testing.assert_array_equal(forecasts[0], forecasts[1])
     train, target = backtest._feature_rows(history, targets, TZ, gas=clean)
     column = list(backtest.FEATURE_NAMES).index("gas_price")
-    # Every target slot gets the last price before the origin (2026-06-14)
-    assert np.all(target[:, column] == clean[44]["price"])
+    # Every target slot gets the level known before the origin: the mean of
+    # the last seven prices up to 2026-06-14
+    level = sum(row["price"] for row in clean[38:45]) / 7
+    assert target[:, column] == pytest.approx(level)
+    assert clean[44]["timestamp"].startswith("2026-06-14")
     assert not np.isnan(train[:, column]).any()
 
 
