@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pytest
 
 from custom_components.open_spot_forecast.api.gas_prices import (
@@ -22,10 +23,14 @@ from custom_components.open_spot_forecast.const import (
     GAS_PRICE_REGIONS,
     INSTRAT_USER_AGENT,
 )
+from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
 from custom_components.open_spot_forecast.ml.gas_price import (
-    GAS_LEVEL_PRICES,
+    GAS_BAND_DAYS,
     GAS_LOOKBACK_DAYS,
+    GAS_MAX_BANDS,
     GasPriceIndex,
+    gas_band_edges,
+    gas_bands,
 )
 from custom_components.open_spot_forecast.ml.series_storage import GAS_PRICES
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
@@ -48,7 +53,7 @@ def _row(day: str, price: float) -> dict[str, Any]:
 # --- The lookup -------------------------------------------------------------------
 
 
-def test_a_day_gets_the_mean_of_the_prices_dated_before_it() -> None:
+def test_a_day_gets_the_latest_price_dated_before_it() -> None:
     index = GasPriceIndex(
         [
             _row("2026-09-20", 300.0),
@@ -57,62 +62,12 @@ def test_a_day_gets_the_mean_of_the_prices_dated_before_it() -> None:
         ]
     )
 
-    # A day never sees its own price
-    assert index.before(date(2026, 9, 23)) == pytest.approx(310.0)
+    assert index.before(date(2026, 9, 23)) == pytest.approx(320.0)
     assert index.before(date(2026, 9, 22)) == pytest.approx(300.0)
     assert index.before(date(2026, 9, 21)) == pytest.approx(300.0)
-    # A forecast days ahead gets the latest known level
-    assert index.before(date(2026, 9, 30)) == pytest.approx(950.0 / 3)
+    # A forecast days ahead gets the latest published price
+    assert index.before(date(2026, 9, 30)) == pytest.approx(330.0)
     assert index.before(date(2026, 9, 20)) is None
-
-
-def test_the_level_is_the_mean_of_the_last_seven_prices() -> None:
-    assert GAS_LEVEL_PRICES == 7
-    first = date(2026, 9, 1)
-    index = GasPriceIndex(
-        [_row(str(first + timedelta(days=day)), 300.0 + day) for day in range(12)]
-    )
-
-    # 2026-09-06 .. 09-12: prices 305 .. 311
-    assert index.before(date(2026, 9, 13)) == pytest.approx(308.0)
-    # Fewer than seven prices are known at the start of the history
-    assert index.before(date(2026, 9, 3)) == pytest.approx(300.5)
-
-
-def test_a_price_above_the_training_window_moves_the_level_by_a_seventh() -> None:
-    """The value a prediction row gets after a jump of the gas price (#202).
-
-    On 2026-10-12 the price went from 324 to 373 PLN/MWh, above all but one
-    week of the 90-day window; with the latest price as the feature, every
-    forecast slot got that week's price level.
-    """
-    first = date(2026, 7, 14)
-    window = [300.0 + (day % 5) * 6 for day in range(90)]  # 300 .. 324
-    rows = [
-        _row(str(first + timedelta(days=day)), price)
-        for day, price in enumerate(window)
-    ]
-    jump_day = first + timedelta(days=90)
-    index = GasPriceIndex([*rows, _row(str(jump_day), 373.0)])
-
-    training = [index.before(first + timedelta(days=day)) for day in range(1, 91)]
-    known = [level for level in training if level is not None]
-    prediction = index.before(jump_day + timedelta(days=1))
-
-    assert max(window) < 373.0
-    assert prediction is not None
-    # A seventh of the jump: (373 - the price that left the mean) / 7
-    assert prediction - known[-1] == pytest.approx((373.0 - window[-7]) / 7)
-    # ... so the prediction rows are 8 above the levels the model saw, where
-    # the latest price was 49 above every price of the window
-    assert prediction - max(known) < 10 < 373.0 - max(window)
-    # Every day of the forecast horizon gets that level, as in production
-    assert index.before(jump_day + timedelta(days=7)) == pytest.approx(prediction)
-    # A price that stays up is the level after seven days
-    later = GasPriceIndex(
-        [*rows, *(_row(str(jump_day + timedelta(days=day)), 373.0) for day in range(7))]
-    )
-    assert later.before(jump_day + timedelta(days=7)) == pytest.approx(373.0)
 
 
 def test_a_stale_price_is_not_used() -> None:
@@ -123,30 +78,122 @@ def test_a_stale_price_is_not_used() -> None:
     assert index.before(last_day + timedelta(days=1)) is None
 
 
-def test_the_level_only_uses_prices_inside_the_lookback() -> None:
-    """A source that stopped updating: old prices leave the mean, then it is NaN."""
-    index = GasPriceIndex(
-        [
-            _row("2026-08-30", 100.0),
-            _row("2026-08-31", 200.0),
-            _row("2026-09-10", 300.0),
-        ]
-    )
-
-    assert index.before(date(2026, 9, 11)) == pytest.approx(200.0)
-    # 2026-08-30 is more than GAS_LOOKBACK_DAYS before the 14th
-    assert index.before(date(2026, 9, 14)) == pytest.approx(250.0)
-    assert index.before(date(2026, 9, 15)) == pytest.approx(300.0)
-    assert index.before(date(2026, 9, 24)) == pytest.approx(300.0)
-    assert index.before(date(2026, 9, 25)) is None
-
-
 def test_unusable_rows_are_skipped() -> None:
     index = GasPriceIndex(
         [{"timestamp": "garbage", "price": 1.0}, _row("2026-09-20", float("nan")), {}]
     )
 
     assert index.before(date(2026, 9, 25)) is None
+
+
+# --- Bands (#202) -------------------------------------------------------------------
+
+GAS = FEATURE_NAMES.index("gas_price")
+
+
+def _rows(prices: list[float], slots_per_day: int = 4) -> np.ndarray:
+    """Model input rows of consecutive days with one gas price per day."""
+    rows = np.zeros((len(prices) * slots_per_day, len(FEATURE_NAMES) + 2))
+    rows[:, GAS] = np.repeat(prices, slots_per_day)
+    return rows
+
+
+def test_the_bands_have_equal_size_and_cover_at_least_thirty_days() -> None:
+    """3 bands for a 90-day window, 5 from 150 days on, none below 60 days."""
+    assert (GAS_BAND_DAYS, GAS_MAX_BANDS) == (30, 5)
+    prices = [200.0 + day for day in range(180)]
+
+    assert len(gas_band_edges(_rows(prices), 180)) == 4
+    assert len(gas_band_edges(_rows(prices), 365)) == 4
+    assert len(gas_band_edges(_rows(prices[:120]), 120)) == 3
+    assert len(gas_band_edges(_rows(prices[:60]), 60)) == 1
+    assert len(gas_band_edges(_rows(prices[:59]), 59)) == 0
+
+    window = _rows(prices[:90])
+    edges = gas_band_edges(window, 90)
+    assert len(edges) == 2
+    banded = gas_bands(window, edges)[:, GAS]
+    # Every band holds a third of the window's days
+    assert [int((banded == band).sum()) for band in (0, 1, 2)] == [120, 120, 120]
+    # Only the gas column changes, and the rows passed in are left alone
+    assert window[:, GAS].max() == pytest.approx(289.0)
+    assert np.array_equal(
+        np.delete(gas_bands(window, edges), GAS, axis=1), np.delete(window, GAS, axis=1)
+    )
+
+
+def test_a_price_above_the_training_window_is_in_the_top_band() -> None:
+    """The value a prediction row gets after a jump of the gas price (#202).
+
+    On 2026-10-12 the price went from 324 to 373 PLN/MWh, above all but one
+    week of the 90-day window. As a number it sat beyond the split that set
+    that week apart, and every forecast slot got that week's price level;
+    as a band it is one of the 30 highest days.
+    """
+    # 83 days between 300 and 320.5, then the one week around 373
+    window = [300.0 + day / 4 for day in range(83)] + [370.0 + day for day in range(7)]
+    training = _rows(window)
+    edges = gas_band_edges(training, 90)
+    bands = gas_bands(training, edges)[:, GAS]
+
+    prediction = gas_bands(_rows([373.0, 500.0, 100.0]), edges)[:, GAS]
+
+    assert max(window) < 500.0
+    assert prediction[0] == prediction[4] == bands.max() == 2
+    # ... a band it shares with a third of the training days, not one week
+    assert int((bands == 2).sum()) == 30 * 4
+    assert prediction[8] == 0
+
+
+def test_an_unknown_price_stays_unknown_and_few_days_have_no_bands() -> None:
+    """NaN is not a band; without bands every known price is the same."""
+    rows = _rows([300.0, 310.0, 320.0])
+    rows[:4, GAS] = np.nan
+
+    assert gas_band_edges(rows, 3).size == 0
+    banded = gas_bands(rows, gas_band_edges(rows, 3))[:, GAS]
+    assert np.isnan(banded[:4]).all()
+    assert banded[4:].tolist() == [0.0] * 8
+
+    nothing = _rows([float("nan")] * 90)
+    assert gas_band_edges(nothing, 90).size == 0
+    assert np.isnan(gas_bands(nothing, np.empty(0))[:, GAS]).all()
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_the_model_trains_and_predicts_on_the_same_bands(tmp_path: Path) -> None:
+    """The bands are set by the training rows and reused for every prediction."""
+    from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
+
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    predictor = SpotPricePredictor(hass, "DK1")
+    try:
+        first = datetime(2026, 7, 1, tzinfo=CPH)
+        features = [
+            {
+                "start": (first + timedelta(days=day)).isoformat(),
+                "gas_price": 200.0 + day,
+            }
+            for day in range(90)
+        ]
+        predictor.price_history = [{"date": "x", "prices": []}] * 90
+
+        training = predictor._model_inputs(features, train=True)
+        edges = predictor.gas_edges.copy()
+        target = predictor._model_inputs(
+            [
+                {"start": first.isoformat(), "gas_price": price}
+                for price in (150.0, 245.0, 400.0)
+            ]
+        )
+    finally:
+        predictor.storage.close()
+
+    assert sorted(set(training[:, GAS].tolist())) == [0.0, 1.0, 2.0]
+    assert target[:, GAS].tolist() == [0.0, 1.0, 2.0]
+    # A prediction never moves the bands
+    assert np.array_equal(predictor.gas_edges, edges)
 
 
 # --- Instrat ----------------------------------------------------------------------

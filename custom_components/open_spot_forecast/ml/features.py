@@ -97,8 +97,8 @@ class SlotInputs:
     curve (0-1), temperature (°C), global irradiance (W/m²), sea-level
     pressure (hPa) and relative humidity (%). ``load_forecast`` is ENTSO-E's
     week-ahead load forecast for the slot (MW, ``entsoe_load``, #30).
-    ``gas_price`` is the mean of the last daily gas prices dated before the
-    slot's local day (``gas_prices``, #28, #202). ``unavailable_production`` and
+    ``gas_price`` is the latest daily gas price dated before the slot's local
+    day (``gas_prices``, #28). ``unavailable_production`` and
     ``unavailable_transmission`` are the MW of production units in the area
     and of interconnectors into or out of it announced unavailable for the
     slot by Nord Pool's UMMs as known at the row's origin (``OutageIndex``,

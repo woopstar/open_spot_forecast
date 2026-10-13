@@ -120,6 +120,8 @@ class SpotPricePredictor(
         # Additive bias offsets per slot and lead-time bucket (#118, bias.py)
         self.bias_correction = {}
         self.volatility_mae: dict[int, float] = {}  # Per-slot volatility (EMA of MAE)
+        # The gas price band edges of the last training (#202)
+        self.gas_edges = np.empty(0)
         self.price_history = []  # Store historical prices for multi-day training
         # Days of price history kept and trained on (the training window)
         self.max_history_days = training_days

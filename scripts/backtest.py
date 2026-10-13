@@ -89,6 +89,8 @@ from custom_components.open_spot_forecast.ml.features import (
 from custom_components.open_spot_forecast.ml.gas_price import (
     GAS_LOOKBACK_DAYS,
     GasPriceIndex,
+    gas_band_edges,
+    gas_bands,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
@@ -679,8 +681,9 @@ def _feature_rows(
     visible history) and with ``cross`` the stage-1 price columns (#29)
     follow the features, in that order.
     ``gas`` holds the daily gas price rows (#28); only those dated before
-    the horizon cutoff are used, so a target day gets the level known
-    before the forecast, as in production. With ``nordpool``
+    the horizon cutoff are used, so a target day gets the latest price
+    published before the forecast, as in production; the model sees it as
+    its band among the training rows' prices (``gas_bands``, #202). With ``nordpool``
     (#91) training rows get their stored prognoses and target rows none,
     or only the first forecast day with ``nordpool.day1``. With ``outages``
     (#123) training rows get the messages published by their day-ahead gate
@@ -711,6 +714,11 @@ def _feature_rows(
         outages=outages,
         outage_origin=int(targets.min()),
     )
+    if index is not None:
+        # The gas price as its band among the training rows' prices (#202)
+        days = len(np.unique(history.starts // 86400))
+        edges = gas_band_edges(train, days)
+        train, target = gas_bands(train, edges), gas_bands(target, edges)
     if lags is not None:
         lag_index = PriceLagIndex(
             dict(zip(history.starts.tolist(), history.prices.tolist(), strict=True)),

@@ -161,7 +161,7 @@ backtest.
 | 14  | `net_demand`               | Derived              | consumption - solar - offshore - onshore (MW)               |
 | 15  | `wind_share`               | Derived              | (offshore + onshore) / consumption                          |
 | 16  | `load_forecast`            | ENTSO-E (API key)    | Week-ahead load forecast curve for the slot (MW)            |
-| 17  | `gas_price`                | Instrat (#28)        | Gas price level known before the slot's day (PLN/MWh)       |
+| 17  | `gas_price`                | Instrat (#28)        | Gas price known before the slot's day, as its band (#202)   |
 | 18  | `unavailable_production`   | UMM / ENTSO-E (#123) | Production capacity announced unavailable for the slot (MW) |
 | 19  | `unavailable_transmission` | UMM / ENTSO-E (#123) | Interconnector capacity announced unavailable (MW)          |
 | 20  | `zone_wind`                | Open-Meteo zone      | Mean wind at 80 m over the zone's points (m/s)              |
@@ -255,16 +255,25 @@ zero. ENTSO-E also has whole weeks without data (e.g. DK1's weeks of
 
 **Gas price** (#28). Gas-fired plants often set the marginal price, so
 the gas price level moves the electricity price. `gas_price`
-(`ml/gas_price.py`) is the gas price **level** known before the slot's
-local day: the mean of the last 7 daily prices (`GAS_LEVEL_PRICES`) dated
-before it. A training row never sees its own day's price, and a forecast
-days ahead gets the latest known level, as in training. Prices older than
-14 days (`GAS_LOOKBACK_DAYS`) are not used, so a source that stopped
-updating gives NaN rather than a stale level. It is the level and not the
-latest price since #202: the feature has one value per day, so a split on it
-sets a few days apart, and a price that jumped to the edge of the training
-window's range gave every forecast slot the price level of the few days
-that had been there (see [the backtest](#gas-price-level-202)). The source is Instrat's JSON API
+(`ml/gas_price.py`) is the latest daily gas price dated **before the
+slot's local day**: the price known the day before, so a training row
+never sees its own day's price and a forecast days ahead gets the latest
+published one, as in training. A price older than 14 days
+(`GAS_LOOKBACK_DAYS`) is not used, so a source that stopped updating gives
+NaN rather than a stale level.
+
+The model does not get the price itself but its **band** among the prices of
+its training rows (`gas_band_edges()` / `gas_bands()`, applied to the model's
+input rows in training and prediction alike, #202): bands of equal size,
+each covering at least 30 days of the training window (`GAS_BAND_DAYS`) and
+five at most, so 3 bands for a 90-day window, 4 for 120 days and 5 from 150
+days on; a window under 60 days has none, and the model then learns nothing
+from the gas price. The feature has one value per day, so a split on the
+price itself can set a handful of days apart, and a price at the edge of the
+window's range then gets those days' price level whatever the weather. As a
+band, every level the model can split on covers at least 30 days, and a
+price the window never had is in the top band (see
+[the backtest](#gas-price-bands-202)). The source is Instrat's JSON API
 (`api/gas_prices.py`, CC BY-NC 4.0): the TGE (Polish exchange) gas
 day-ahead index in PLN/MWh, every day including weekends. It is a proxy for
 the European gas price level; the German THE Day Ahead price, which
@@ -645,7 +654,7 @@ error, rather than from measured weather it never sees at prediction.
 
 The gas price (#28) is stored per day in `gas_prices` (backfilled with the
 training window plus 14 days, refreshed at every forecast run); both phases
-take the mean of the last 7 prices dated before the slot's day from it.
+take the latest price dated before the slot's day from it.
 
 The ENTSO-E load forecast (#30) works the same way: `entsoe_load` holds, for
 the training window's days, the week-ahead forecasts ENTSO-E published for
@@ -1162,8 +1171,9 @@ pipeline:
 - **Gas price only with `--gas`.** Feature 17 comes from Instrat's daily
   history (one request per month, cached in `.cache/backtest/`); every
   origin only sees prices dated before its horizon cutoff, so all target
-  days get the level known before the forecast, as in production. Without
-  the flag it is NaN.
+  days get the latest price published before the forecast, as in
+  production, and the model sees it as its band among the training rows'
+  prices (#202). Without the flag it is NaN.
 - **Outages only with `--outages umm` or `--outages entsoe`.** Features
   18-19 come from Nord Pool's UMM API (every message version, one request
   series per calendar month, cached in `.cache/backtest/` once the month

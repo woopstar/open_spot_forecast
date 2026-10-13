@@ -212,7 +212,7 @@ class HistoryUpdaterMixin:
     async def update_gas_price(self, weather_data: dict[str, Any]) -> None:
         """Refresh the recent gas prices and attach them for the prediction (#28).
 
-        Every slot uses the level of the prices published before its day, so the
+        Every slot uses the latest price published before its day, so the
         last ``GAS_LOOKBACK_DAYS`` are attached as ``weather_data["gas_price"]``.
         """
         if self.gas is None:

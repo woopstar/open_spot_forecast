@@ -14,6 +14,8 @@ from collections.abc import Sequence
 from datetime import date, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
+import numpy as np
+
 from homeassistant.core import HomeAssistant
 
 from ..const import BIAS_FALLBACK_BUCKET
@@ -62,6 +64,8 @@ class PredictorBase:
     # Additive bias offsets per slot and lead-time bucket (#118)
     bias_correction: dict[int, dict[str, float]]
     volatility_mae: dict[int, float]
+    # The gas price band edges of the last training (#202, gas_price.py)
+    gas_edges: np.ndarray
     price_history: list[dict[str, Any]]
     max_history_days: int
     storage: LearningStorage

@@ -20,6 +20,7 @@ from .features import (
     optional_float,
     with_masked_nordpool,
 )
+from .gas_price import gas_band_edges, gas_bands
 from .gbm import NumpyGradientBoosting
 from .lead_time import prediction_bucket
 from .price_lags import (
@@ -84,13 +85,19 @@ class ModelMixin(PredictorBase):
     def _model_inputs(self, features: list[dict], train: bool = False) -> np.ndarray:
         """Return the price model's input rows for feature dicts.
 
-        The ``build_feature_vector`` columns and, with the cross-border model
-        (#29), one stage-1 price column per neighbour: out of sample for
-        training rows (``train`` refits stage 1), forecasts otherwise.
+        The ``build_feature_vector`` columns, the gas price as its band
+        among the training rows' prices (``train`` sets the bands, #202),
+        and, with the cross-border model (#29), one stage-1 price column per
+        neighbour: out of sample for training rows (``train`` refits stage
+        1), forecasts otherwise.
         """
         X = np.array(
             [build_feature_vector(feature) for feature in features], dtype=float
         ).reshape(len(features), len(FEATURE_NAMES))
+        # The gas price as its band among the training rows' prices (#202)
+        if train:
+            self.gas_edges = gas_band_edges(X, len(self.price_history))
+        X = gas_bands(X, self.gas_edges)
         cross = self.cross_border
         if cross is None:
             return X
