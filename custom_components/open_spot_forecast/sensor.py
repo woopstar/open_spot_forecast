@@ -219,15 +219,19 @@ class SpotPriceSensor(PriceAttributionMixin, SensorEntity):
 
         Stromligning's consumer price or the day-ahead spot price of the
         current slot, with the surcharge and VAT (#27, #39, #107). With
-        ``hourly_average`` it is the current local hour's mean.
+        ``hourly_average`` it is the current local hour's mean. Both come
+        from today's list, so the state changes on the slot boundary
+        whenever it is written (#201); without the slot in Stromligning's
+        list, its sensor's own state at the last read is shown.
         """
-        stromligning_data = self.api_data.get("stromligning_data") or {}
-        dayahead = self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD
-        if not dayahead and not self.output.hourly_average:
-            current = stromligning_data.get("current_price")
-            return None if current is None else self.output.convert(current)
         prices = source_day_prices(self.api_data, "today")
-        return self.output.price_at(prices, dt_util.now())
+        price = self.output.price_at(prices, dt_util.now())
+        dayahead = self.api_data.get("price_source") == PRICE_SOURCE_DAYAHEAD
+        if price is not None or dayahead or self.output.hourly_average:
+            return price
+        stromligning_data = self.api_data.get("stromligning_data") or {}
+        current = stromligning_data.get("current_price")
+        return None if current is None else self.output.convert(current)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:

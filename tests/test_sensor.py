@@ -217,11 +217,47 @@ async def test_learning_metrics_handle_update_invalidates_cache():
 # --------------------------------------------------------------------------- #
 
 
-def test_spot_price_native_value_stromligning():
-    """Stromligning's consumer price is read excl. VAT; OSF adds VAT once (#107)."""
-    api_data = {"stromligning_data": {"current_price": 100.0}}
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_spot_price_native_value_stromligning() -> None:
+    """The state is the consumer price of the current slot of today's list (#201).
+
+    Stromligning's price is read excl. VAT; OSF adds VAT once (#107). The
+    sensor's own state at the last read (``current_price``) is older than
+    the slot as soon as the next one starts, so it is not the state.
+    """
+    today = [1.0] * 96
+    today[53], today[78] = 1.24, 2.048  # 13:15 and 19:30 local
+    # One read at 13:16, when Stromligning's sensor showed the 13:15 price
+    api_data = {"stromligning_data": {"current_price": 1.24, "today": today}}
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
+
+    at_read = datetime(2026, 10, 13, 13, 16, tzinfo=CPH)
+    with patch("homeassistant.util.dt.now", return_value=at_read):
+        assert sensor.native_value == pytest.approx(1.24 * (1 + VAT))
+    with patch(
+        "homeassistant.util.dt.now", return_value=at_read.replace(hour=19, minute=30)
+    ):
+        assert sensor.native_value == pytest.approx(2.048 * (1 + VAT))
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.parametrize("today", [[], [None] * 96])
+def test_spot_price_falls_back_to_the_stromligning_state(
+    today: list[float | None],
+) -> None:
+    """Without the slot in today's list the sensor's own state is shown (#201)."""
+    api_data = {"stromligning_data": {"current_price": 100.0, "today": today}}
     sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", OUTPUT)
     assert sensor.native_value == pytest.approx(100.0 * (1 + VAT))
+
+    api_data["stromligning_data"]["current_price"] = None
+    assert sensor.native_value is None
+
+    # The hour's mean is never replaced by a slot price
+    hourly = PriceOutput(vat=VAT, precision=PRECISION, hourly_average=True)
+    api_data["stromligning_data"]["current_price"] = 100.0
+    sensor = SpotPriceSensor(_hass(), _entry(), api_data, "DK1", "DKK", hourly)
+    assert sensor.native_value is None
 
 
 @pytest.mark.usefixtures("copenhagen_time_zone")

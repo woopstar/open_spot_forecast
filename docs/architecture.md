@@ -251,6 +251,7 @@ entities refresh at once.
 
 ```
 Every 15 min ──→ Read Stromligning prices (consumer, and raw spot for the model)
+             │   and store them: the current price is the current slot's
              │   Read weather snapshot → store in weather_history
              │   Read tomorrow prices if available
              │   Self-learning: compare all predictions for the current
@@ -270,7 +271,7 @@ From 13:00 ──→ Re-read prices every ~5 min until tomorrow is complete
              │   Once complete: extend known-data window, retrain model
              │   (price history changed), regenerate predictions
              │
-Midnight ────→ Rotate tomorrow → today
+Midnight ────→ Rotate tomorrow → today (the stored list, then the source's own)
 ```
 
 Every path is a method of `ForecastUpdater` (`updater.py`): `new_quarter`,

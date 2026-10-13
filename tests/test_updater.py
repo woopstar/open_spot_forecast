@@ -29,7 +29,9 @@ from custom_components.open_spot_forecast.const import (
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
 )
+from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.price_source import PriceSettings
+from custom_components.open_spot_forecast.sensor import SpotPriceSensor
 from custom_components.open_spot_forecast.updater import (
     FORECAST_DAYS,
     INTERVAL_MINUTES,
@@ -612,22 +614,59 @@ async def test_update_forecasts_signals_the_forecast_update(
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.parametrize("sensor_has_rotated", [True, False])
 async def test_new_day_rotates_tomorrow_to_today(
-    make: Callable[..., Harness],
+    make: Callable[..., Harness], sensor_has_rotated: bool
 ) -> None:
+    """After midnight yesterday's ``tomorrow`` list is today's (#201).
+
+    The stored data is replaced whether or not Stromligning's sensor already
+    has the new day's list: the price entities read today's prices from it.
+    """
     harness = make()
     harness.api_data["tomorrow_available"] = True
-    harness.reader.read_stromligning_sensor.return_value = _stromligning(
-        [1.0] * 96, [2.0] * 96
-    )
+    yesterday = NOW.date() - timedelta(days=1)
+    harness.api_data["stromligning_data"] = {
+        "day": yesterday,
+        **_stromligning([1.0] * 96, [2.0] * 96),
+    }
+    harness.reader.read_stromligning_sensor.return_value = {
+        "day": NOW.date(),
+        "current_price": 2.0 if sensor_has_rotated else None,
+        **_stromligning([2.0] * 96 if sensor_has_rotated else [], []),
+    }
 
-    await harness.updater.new_day(dt_util.utcnow())
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        await harness.updater.new_day(dt_util.utcnow())
 
     assert harness.api_data["prices_today"] == [2.0] * 96
     assert harness.api_data["prices_tomorrow"] == []
+    assert harness.api_data["stromligning_data"]["day"] == NOW.date()
+    assert harness.api_data["stromligning_data"]["today"] == [2.0] * 96
+    assert harness.api_data["stromligning_data"]["tomorrow"] == []
     assert harness.api_data["tomorrow_available"] is False
     harness.reader.read_spot_prices.assert_called_once()
     assert _signals(harness) == [UPDATE_SIGNAL]
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_an_earlier_days_prices_are_not_kept_as_todays(
+    make: Callable[..., Harness],
+) -> None:
+    """A sensor that stays away over two midnights leaves no prices for today."""
+    harness = make()
+    harness.api_data["stromligning_data"] = {
+        "day": NOW.date() - timedelta(days=2),
+        **_stromligning([1.0] * 96, [2.0] * 96),
+    }
+    harness.reader.read_stromligning_sensor.return_value = _stromligning([], [])
+
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        assert harness.updater.read_prices() is False
+
+    assert harness.api_data["stromligning_data"]["today"] == []
+    assert harness.api_data["prices_today"] == []
 
 
 @pytest.mark.asyncio
@@ -736,6 +775,65 @@ async def test_new_quarter_reads_tomorrow_and_refreshes_when_it_arrives(
     assert harness.api_data["tomorrow_available"] is True
     harness.entry.async_create_background_task.assert_called_once()
     harness.entry.async_create_background_task.call_args.args[1].close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+async def test_new_quarter_stores_what_it_reads_for_the_price_entities(
+    make: Callable[..., Harness],
+) -> None:
+    """The current price follows the slots without a full price read (#201).
+
+    Seen live: one full read at 13:16 and the state stayed at that slot's
+    price until the evening, while the 15-minute update read the sensor.
+    """
+    harness = make(_sensors(stromligning_tomorrow="binary_sensor.strom_tomorrow"))
+    tomorrow = {"available": True, "tomorrow": [3.0] * 96, "raw_tomorrow": []}
+    harness.reader.read_stromligning_tomorrow_sensor.return_value = tomorrow
+    today = [1.0] * 96
+    today[53], today[78] = 1.24, 2.05  # 13:15 and 19:30 local
+    read_at = datetime(2026, 9, 24, 13, 16, tzinfo=CPH)
+    harness.reader.read_stromligning_sensor.return_value = {
+        "day": read_at.date(),
+        "current_price": 1.24,
+        **_stromligning(today, []),
+    }
+    output = PriceOutput(vat=0.0, precision=3)
+    sensor = SpotPriceSensor(
+        Mock(), MagicMock(), harness.api_data, "DK1", "DKK", output
+    )
+
+    with patch("homeassistant.util.dt.now", return_value=read_at):
+        assert harness.updater.read_prices() is True
+        assert sensor.native_value == pytest.approx(1.24)
+
+    # The evening's 15-minute update: the sensor's state is that slot's price,
+    # and the tomorrow sensor is unavailable for a moment
+    evening = read_at.replace(hour=19, minute=30)
+    harness.reader.read_stromligning_sensor.return_value = {
+        "day": read_at.date(),
+        "current_price": 2.05,
+        **_stromligning(today, []),
+    }
+    harness.reader.read_stromligning_tomorrow_sensor.return_value = {
+        "available": False,
+        "tomorrow": [],
+        "raw_tomorrow": [],
+    }
+    with patch("homeassistant.util.dt.now", return_value=evening):
+        # The state is the slot's price even before the update runs
+        assert sensor.native_value == pytest.approx(2.05)
+        await harness.updater.new_quarter(evening)
+        assert sensor.native_value == pytest.approx(2.05)
+
+    stored = harness.api_data["stromligning_data"]
+    assert stored["current_price"] == pytest.approx(2.05)
+    # Tomorrow's list of the separate sensor is kept
+    assert stored["tomorrow"] == [3.0] * 96
+    assert harness.api_data["prices_tomorrow"] == [3.0] * 96
+    assert sensor.extra_state_attributes["tomorrow_prices"] == [3.0] * 96
+    harness.reader.read_stromligning_sensor.assert_called_with("sensor.strom")
+    assert harness.reader.read_stromligning_sensor.call_count == 2
 
 
 # --- Stored history (#32) ------------------------------------------------------------

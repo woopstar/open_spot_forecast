@@ -137,6 +137,13 @@ guess the resolution from a list's length. `is_invalid_price_series()` rejects a
 prices are all zero or not finite; the readers drop it and `store_daily_prices` / `predict`
 refuse it. Never add an inline "all prices are 0" check.
 
+Stromligning's consumer prices are stored in one place, `ForecastUpdater.read_consumer_prices()`
+(full read, `new_quarter`, `new_day`): the whole read as `api_data["stromligning_data"]`, merged
+with the previous read by `carry_over_day_prices()` (`price_series.py`; a known price stays
+known, yesterday's `tomorrow` is today's after midnight). The price entities read today's list
+(`source_day_prices()` + `PriceOutput.price_at()`), never the sensor state of an earlier read
+(#201). Do not read the Stromligning sensor into `api_data` anywhere else.
+
 ### Time-series sources
 
 Every upstream time series (Nordpool prognoses now; day-ahead prices and
