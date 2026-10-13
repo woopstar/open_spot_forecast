@@ -250,8 +250,9 @@ ENTSOE_LOAD_REGIONS = frozenset(REGIONS) - {"DE", "NL"}
 
 # Regions whose model uses the natural-gas price (#28): gas plants often set
 # the marginal price. On where the backtest found a lower error at every
-# horizon; off in SE3 and the Baltics, where it did not (docs/ml_documentation.md)
-GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "EE", "LT", "LV"}
+# horizon; off in SE3 and the Baltics, where it did not, and in FI, where it
+# does not with the price as a band (#202; docs/ml_documentation.md)
+GAS_PRICE_REGIONS = frozenset(REGIONS) - {"SE3", "FI", "EE", "LT", "LV"}
 
 # Nord Pool publishes urgent market messages (UMMs, #123: planned and
 # unplanned outages of production units and interconnectors) for its own

@@ -51,7 +51,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `sun.py`                | `sun_features()` / `zone_centre()` — sun elevation, azimuth, time since sunrise/sunset at the zone centre (#25)                                                                                                |
 | `public_holidays.py`    | `public_holiday()` — the `holiday` feature: Sunday or public holiday (share of subdivisions), cached per country/year (#26)                                                                                    |
 | `zone_weather.py`       | `ZoneWeatherIndex` — Open-Meteo point rows aggregated per slot into the zone features (#22)                                                                                                                    |
-| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28)                                                                                                    |
+| `gas_price.py`          | `GasPriceIndex` — the `gas_price` feature: the latest daily gas price dated before a slot's local day (#28); `gas_band_edges()` / `gas_bands()`: the price as its band in the model's rows (#202)              |
 | `outages.py`            | `OutageIndex` / `day_ahead_gate()` — UMM outages per slot as known at an origin: `unavailable_production/_transmission` (#123)                                                                                 |
 | `outage_storage.py`     | `OutageStorageMixin` — `umm_messages` (every message version) and `umm_periods` tables (#123)                                                                                                                  |
 | `cross_border.py`       | `CrossBorderModels` / `Stage1Model` — the cross-border model's stage-1 price models per neighbour, out of sample per day (#29)                                                                                 |
@@ -308,6 +308,11 @@ only with an ENTSO-E key and in `ENTSOE_LOAD_REGIONS`; it is its own feature, ne
 Nordpool's `consumption_forecast`. The ENTSO-E key is optional in the config and options flow.
 `gas_price` (#28) is the latest daily gas price dated **before** the slot's local day
 (`GasPriceIndex.before()`, 14-day lookback), in both phases; only `GAS_PRICE_REGIONS` fetch it.
+The model sees it as its **band** among the training rows' prices (#202): `_model_inputs()`
+sets the edges at training (`gas_band_edges()`, bands of at least 30 days, 5 at most) and
+applies them to training and prediction rows (`gas_bands()`), and the backtest does the same.
+Never feed the raw price to a model: at the edge of the window's range it gets the price level
+of the few days that were there.
 `unavailable_production` / `unavailable_transmission` (#123) are Nord Pool UMM outages per slot
 (`OutageIndex.for_slot(start, origin)`, `ml/outages.py`), **as known at an origin**: training rows
 use `day_ahead_gate(day)` (12:00 CET the day before), prediction rows now; every message version is

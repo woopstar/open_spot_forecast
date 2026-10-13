@@ -25,6 +25,7 @@ The optional LightGBM reference row needs
 """
 
 import argparse
+import csv
 import importlib.util
 import json
 import logging
@@ -88,6 +89,8 @@ from custom_components.open_spot_forecast.ml.features import (
 from custom_components.open_spot_forecast.ml.gas_price import (
     GAS_LOOKBACK_DAYS,
     GasPriceIndex,
+    gas_band_edges,
+    gas_bands,
 )
 from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import create_price_model
@@ -679,7 +682,8 @@ def _feature_rows(
     follow the features, in that order.
     ``gas`` holds the daily gas price rows (#28); only those dated before
     the horizon cutoff are used, so a target day gets the latest price
-    published before the forecast, as in production. With ``nordpool``
+    published before the forecast, as in production; the model sees it as
+    its band among the training rows' prices (``gas_bands``, #202). With ``nordpool``
     (#91) training rows get their stored prognoses and target rows none,
     or only the first forecast day with ``nordpool.day1``. With ``outages``
     (#123) training rows get the messages published by their day-ahead gate
@@ -710,6 +714,11 @@ def _feature_rows(
         outages=outages,
         outage_origin=int(targets.min()),
     )
+    if index is not None:
+        # The gas price as its band among the training rows' prices (#202)
+        days = len(np.unique(history.starts // 86400))
+        edges = gas_band_edges(train, days)
+        train, target = gas_bands(train, edges), gas_bands(target, edges)
     if lags is not None:
         lag_index = PriceLagIndex(
             dict(zip(history.starts.tolist(), history.prices.tolist(), strict=True)),
@@ -963,14 +972,21 @@ class HorizonScore:
 
     daily_mae: list[float] = field(default_factory=list)
     daily_mse: list[float] = field(default_factory=list)
+    # Mean of predicted - actual per scored day, and the day itself (--daily)
+    daily_bias: list[float] = field(default_factory=list)
+    days: list[date | None] = field(default_factory=list)
 
-    def add_day(self, actual: np.ndarray, predicted: np.ndarray) -> None:
+    def add_day(
+        self, actual: np.ndarray, predicted: np.ndarray, day: date | None = None
+    ) -> None:
         """Score one forecast day, ignoring slots without an actual price."""
         known = ~np.isnan(actual)
         if not known.any():
             return
         self.daily_mae.append(mae(actual[known], predicted[known]))
         self.daily_mse.append(mse(actual[known], predicted[known]))
+        self.daily_bias.append(float(np.mean(_errors(actual[known], predicted[known]))))
+        self.days.append(day)
 
     def summary(self) -> tuple[float, float]:
         """Return (MAE, RMSE) over all scored days, NaN if none."""
@@ -1104,7 +1120,9 @@ def run_backtest(
                 ):
                     continue
                 in_day = horizon == day
-                score.add_day(actual[in_day], predicted[in_day])
+                score.add_day(
+                    actual[in_day], predicted[in_day], origin + timedelta(days=day - 1)
+                )
         result.origins += 1
         if progress is not None:
             progress(origin, result.origins)
@@ -1140,6 +1158,63 @@ def format_report(result: BacktestResult, region: str) -> str:
         for name, reason in result.skipped_models.items()
     )
     return "\n".join(lines)
+
+
+def format_tail(result: BacktestResult) -> str:
+    """Render the per-horizon bias and the worst days as markdown (``--daily``).
+
+    The mean hides a few very wrong days (#202): next to the mean bias
+    (predicted - actual), the 95th percentile and the maximum of the daily
+    MAE show them. EUR ct/kWh.
+    """
+    days = range(1, result.config.horizon_days + 1)
+    header = ["Model"] + [f"{d}d {m}" for d in days for m in ("bias", "P95", "max")]
+    lines = [
+        "Mean bias, and the 95th percentile and maximum of the daily MAE:",
+        "",
+        "| " + " | ".join(header) + " |",
+        "| --- |" + " ---: |" * (len(header) - 1),
+    ]
+    for name, horizons in result.scores.items():
+        cells: list[str] = []
+        for score in horizons:
+            if not score.daily_mae:
+                cells.extend(["nan"] * 3)
+                continue
+            cells.append(f"{np.mean(score.daily_bias):+.2f}")
+            cells.append(f"{np.percentile(score.daily_mae, 95):.2f}")
+            cells.append(f"{max(score.daily_mae):.2f}")
+        lines.append(f"| {name} | " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def daily_rows(result: BacktestResult) -> list[list[str]]:
+    """Return every scored day as a CSV row, after a header row (``--daily``).
+
+    One row per model, forecast origin and horizon day: the target day, its
+    MAE and its bias (mean of predicted - actual), EUR ct/kWh. Two runs'
+    files joined on (target day, horizon) show the days a variant changes.
+    """
+    rows = [["model", "origin", "day", "horizon", "mae", "bias"]]
+    for name, horizons in result.scores.items():
+        for horizon, score in enumerate(horizons, start=1):
+            for day, error, bias in zip(
+                score.days, score.daily_mae, score.daily_bias, strict=True
+            ):
+                if day is None:
+                    continue
+                origin = day - timedelta(days=horizon - 1)
+                rows.append(
+                    [
+                        name,
+                        origin.isoformat(),
+                        day.isoformat(),
+                        str(horizon),
+                        f"{error:.4f}",
+                        f"{bias:.4f}",
+                    ]
+                )
+    return rows
 
 
 # --- CLI -------------------------------------------------------------------------
@@ -1271,6 +1346,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
+    parser.add_argument(
+        "--daily",
+        type=Path,
+        help="write every scored day's MAE and bias to this CSV file, and add "
+        "the bias and the worst days per horizon to the report (#202)",
+    )
     args = parser.parse_args(argv)
     if args.window_days < 7 or args.step_days < 1 or args.horizon_days < 1:
         parser.error("--window-days must be >= 7, --step-days and --horizon-days >= 1")
@@ -1434,6 +1515,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = run_backtest(series, models, config, progress)
     result.skipped_models.update(skipped)
     report = format_report(result, args.region)
+    if args.daily is not None:
+        report += "\n\n" + format_tail(result)
+        with args.daily.open("w", encoding="utf-8", newline="") as handle:
+            csv.writer(handle).writerows(daily_rows(result))
     print(report)
     if args.output is not None:
         args.output.write_text(report + "\n", encoding="utf-8")

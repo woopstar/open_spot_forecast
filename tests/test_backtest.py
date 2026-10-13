@@ -1162,9 +1162,25 @@ def test_future_gas_prices_cannot_change_the_forecast() -> None:
     np.testing.assert_array_equal(forecasts[0], forecasts[1])
     train, target = backtest._feature_rows(history, targets, TZ, gas=clean)
     column = list(backtest.FEATURE_NAMES).index("gas_price")
-    # Every target slot gets the last price before the origin (2026-06-14)
-    assert np.all(target[:, column] == clean[44]["price"])
-    assert not np.isnan(train[:, column]).any()
+    # Every target slot gets the last price before the origin (2026-06-14),
+    # as its band among the training rows' prices (#202): with 21 days of
+    # history there are no bands yet, so every known price is band 0
+    assert np.all(target[:, column] == 0)
+    assert np.all(train[:, column] == 0)
+    longer = _config(origin, window_days=90)
+    history = history_for(_noisy_series(date(2026, 3, 1), 110), origin, longer)
+    train, target = backtest._feature_rows(history, targets, TZ, gas=clean)
+    # 91 days of history, of which the gas rows cover the last 44: 3 bands
+    assert sorted(set(train[:, column][~np.isnan(train[:, column])])) == [0, 1, 2]
+    edges = backtest.gas_band_edges(
+        backtest.feature_matrix(
+            history.starts, TZ, gas=backtest.GasPriceIndex(clean[:45])
+        ),
+        91,
+    )
+    assert target[:, column] == pytest.approx(
+        float(np.searchsorted(edges, clean[44]["price"], side="right"))
+    )
 
 
 def test_gas_prices_are_loaded_per_month_and_cached(tmp_path: Path) -> None:
