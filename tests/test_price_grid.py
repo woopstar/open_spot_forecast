@@ -17,6 +17,7 @@ from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.price_series import (
     align_to_grid,
+    carry_over_day_prices,
     known_prices,
     same_prices,
 )
@@ -130,6 +131,63 @@ def test_known_and_same_prices() -> None:
 
 
 # --- Reader -------------------------------------------------------------------------
+
+
+def test_a_read_keeps_the_slots_only_the_previous_read_knows() -> None:
+    """A later read that lacks a price does not lose it; its own prices win (#201)."""
+    previous = {
+        "day": DAY,
+        "today": [1.0, 2.0, 3.0],
+        "tomorrow": [7.0, 8.0],
+        "raw_tomorrow": [{"start": "x"}],
+    }
+    read = {"day": DAY, "today": [1.5, None, 3.0], "tomorrow": [], "raw_tomorrow": []}
+
+    merged = carry_over_day_prices(previous, read, DAY)
+
+    assert merged["today"] == pytest.approx([1.5, 2.0, 3.0])
+    assert merged["tomorrow"] == pytest.approx([7.0, 8.0])
+    assert merged["raw_tomorrow"] == [{"start": "x"}]
+    # The read itself is not changed
+    assert read["tomorrow"] == []
+
+
+def test_after_midnight_the_previous_tomorrow_is_today() -> None:
+    """The stored ``tomorrow`` list is the new day's ``today`` until the source's own."""
+    previous = {"day": DAY, "today": [1.0, 2.0], "tomorrow": [7.0, 8.0]}
+    next_day = DAY + timedelta(days=1)
+
+    # The sensor has only its state yet: the reader's one-slot fallback
+    sparse = carry_over_day_prices(
+        previous, {"day": next_day, "today": [7.5, None], "tomorrow": []}, next_day
+    )
+    assert sparse["day"] == next_day
+    assert sparse["today"] == pytest.approx([7.5, 8.0])
+    assert sparse["tomorrow"] == []
+
+    # An unavailable sensor reads as empty and without a day
+    empty = carry_over_day_prices(previous, {"today": [], "tomorrow": []}, next_day)
+    assert empty["day"] == next_day
+    assert empty["today"] == pytest.approx([7.0, 8.0])
+    assert empty["tomorrow"] == []
+
+
+def test_nothing_is_kept_of_another_day_or_another_grid() -> None:
+    previous = {"day": DAY, "today": [1.0, 2.0], "tomorrow": [7.0, 8.0]}
+    later = DAY + timedelta(days=2)
+
+    stale = carry_over_day_prices(previous, {"today": [], "tomorrow": []}, later)
+    assert stale["today"] == []
+    assert stale["tomorrow"] == []
+
+    # A list of another length (another grid) replaces the stored one whole
+    other = carry_over_day_prices(
+        previous, {"day": DAY, "today": [None, 5.0, 6.0], "tomorrow": []}, DAY
+    )
+    assert other["today"] == [None, 5.0, 6.0]
+
+    first = carry_over_day_prices(None, {"today": [4.0], "tomorrow": []}, DAY)
+    assert first == {"day": DAY, "today": [4.0], "tomorrow": []}
 
 
 def test_reader_places_items_by_timestamp_not_position() -> None:

@@ -42,6 +42,7 @@ from .external_forecasts import async_record_external_forecasts
 from .history_updater import HistoryUpdaterMixin, neighbour_sources, outage_source
 from .ml.predictor import SpotPricePredictor
 from .ml.storage import LearningStorage
+from .price_series import carry_over_day_prices
 from .price_source import DayAheadPrices, PriceSettings
 from .sensor_entities import SensorEntities
 from .sensor_reader import SensorReader, async_read_weather_forecast
@@ -176,6 +177,44 @@ class ForecastUpdater(HistoryUpdaterMixin):
                 self.api_data.get("stromligning_data"), self.api_data["spot_data"]
             )
 
+    def read_consumer_prices(self) -> bool:
+        """Read Stromligning's consumer prices (displayed) into api_data.
+
+        The one place they are stored: the full read, the 15-minute update
+        and midnight all go through it, so the entities never show an older
+        read than the model learned from (#201). The tomorrow sensor's list
+        is merged in, and a price that was read stays known when a later
+        read lacks it (``carry_over_day_prices``): at midnight yesterday's
+        ``tomorrow`` becomes ``today``.
+
+        Returns:
+            Whether today's prices are known. A sensor that is missing or
+            reports invalid (all-zero) prices, e.g. after a restart, leaves
+            the prices already read for today in place.
+        """
+        if not self.sensors.stromligning:
+            return False
+        api_data = self.api_data
+        data = self.sensor_reader.read_stromligning_sensor(self.sensors.stromligning)
+        _LOGGER.debug("Stromligning data: %s", data)
+        if self.sensors.stromligning_tomorrow:
+            tomorrow_data = self.sensor_reader.read_stromligning_tomorrow_sensor(
+                self.sensors.stromligning_tomorrow
+            )
+            if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
+                data["tomorrow"] = tomorrow_data["tomorrow"]
+                data["raw_tomorrow"] = tomorrow_data["raw_tomorrow"]
+        previous = api_data.get("stromligning_data")
+        data = carry_over_day_prices(previous, data, dt_util.now().date())
+        if not data["today"] and not previous:
+            return False
+        # Stored without prices for today too: an earlier day's are not today's
+        api_data["stromligning_data"] = data
+        api_data["prices_today"] = data["today"]
+        api_data["prices_tomorrow"] = data["tomorrow"]
+        api_data["price_source"] = "stromligning"
+        return bool(data["today"])
+
     def read_prices(self) -> bool:
         """Read today's and tomorrow's prices into api_data.
 
@@ -183,39 +222,11 @@ class ForecastUpdater(HistoryUpdaterMixin):
         prices (the model's).
 
         Returns:
-            Whether Stromligning had valid prices for today. Without them the
-            previous prices are kept: after a restart the sensor can be
-            missing or report invalid (all-zero) prices until its source
-            recovers.
+            Whether today's Stromligning prices are known (see
+            ``read_consumer_prices``).
         """
         _LOGGER.debug("Reading today's and tomorrow's prices")
-        loaded = False
-        if self.sensors.stromligning:
-            stromligning_data = self.sensor_reader.read_stromligning_sensor(
-                self.sensors.stromligning
-            )
-            _LOGGER.debug("Stromligning data: %s", stromligning_data)
-
-            # Read tomorrow sensor if configured
-            if self.sensors.stromligning_tomorrow:
-                tomorrow_data = self.sensor_reader.read_stromligning_tomorrow_sensor(
-                    self.sensors.stromligning_tomorrow
-                )
-                if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    stromligning_data["tomorrow"] = tomorrow_data["tomorrow"]
-                    stromligning_data["raw_tomorrow"] = tomorrow_data["raw_tomorrow"]
-                    _LOGGER.info(
-                        "Loaded %d tomorrow prices from Stromligning tomorrow sensor",
-                        len(tomorrow_data["tomorrow"]),
-                    )
-
-            if stromligning_data["today"]:
-                self.api_data["prices_today"] = stromligning_data["today"]
-                self.api_data["prices_tomorrow"] = stromligning_data["tomorrow"]
-                self.api_data["stromligning_data"] = stromligning_data
-                self.api_data["price_source"] = "stromligning"
-                loaded = True
-
+        loaded = self.read_consumer_prices()
         self.read_spot_prices()
         return loaded
 
@@ -515,23 +526,14 @@ class ForecastUpdater(HistoryUpdaterMixin):
         _LOGGER.debug("New day - rotating prices")
         api_data = self.api_data
 
+        # Today's prices are known since yesterday (the day-ahead source
+        # stored them, Stromligning's were its "tomorrow" list, which
+        # read_consumer_prices carries over); tomorrow's come later
+        api_data["prices_tomorrow"] = []
         if self.dayahead is not None:
-            # Today's prices are stored since yesterday; tomorrow's come later
-            api_data["prices_tomorrow"] = []
             await self.async_read_prices()
-        elif self.sensors.stromligning:
-            stromligning_data = self.sensor_reader.read_stromligning_sensor(
-                self.sensors.stromligning
-            )
-            if stromligning_data["tomorrow"]:
-                api_data["prices_today"] = stromligning_data["tomorrow"]
-                api_data["prices_tomorrow"] = []
-                api_data["stromligning_data"] = stromligning_data
-            else:
-                # No tomorrow data yet — clear it until the tomorrow-price check finds it
-                api_data["prices_tomorrow"] = []
         else:
-            api_data["prices_tomorrow"] = []
+            self.read_consumer_prices()
         api_data["tomorrow_available"] = False
 
         self.read_spot_prices()
@@ -550,26 +552,9 @@ class ForecastUpdater(HistoryUpdaterMixin):
         # source only requests missing prices, when they are due
         if self.dayahead is not None:
             await self.async_read_prices()
-        elif self.sensors.stromligning:
-            stromligning_data = self.sensor_reader.read_stromligning_sensor(
-                self.sensors.stromligning
-            )
-            current_prices = stromligning_data["today"]
-            if current_prices:
-                api_data["prices_today"] = current_prices
-                api_data["price_source"] = "stromligning"
-
-            # Also check if tomorrow's prices are newly available
-            if self.sensors.stromligning_tomorrow:
-                tomorrow_data = self.sensor_reader.read_stromligning_tomorrow_sensor(
-                    self.sensors.stromligning_tomorrow
-                )
-                if tomorrow_data["available"] and tomorrow_data["tomorrow"]:
-                    api_data["prices_tomorrow"] = tomorrow_data["tomorrow"]
-
-            _LOGGER.debug(
-                "Read %d consumer prices from Stromligning", len(current_prices)
-            )
+        else:
+            # Stored whole: the current price follows the slots (#201)
+            self.read_consumer_prices()
 
         tomorrow_arrived = self.update_tomorrow_available()
 

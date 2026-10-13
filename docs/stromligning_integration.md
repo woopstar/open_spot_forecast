@@ -133,6 +133,25 @@ source's own timestamps, never by their position in the list:
 - If the sensor only reports its current price (e.g. around midnight), that
   price fills the current slot.
 
+### Displayed Prices
+
+The consumer prices are read every 15 minutes, at midnight and with every
+forecast refresh, always through `ForecastUpdater.read_consumer_prices()`
+(`updater.py`), which stores the whole read (the main sensor's lists with the
+tomorrow sensor's list merged in) as `api_data["stromligning_data"]`:
+
+- **Current Spot Price** is the price of the current 15-minute slot of
+  today's list (the hour's mean with `hourly_average`), not the state the
+  Stromligning sensor had when it was last read. So it changes on the slot
+  boundary. Only when today's list lacks the slot is the sensor's own state
+  from the last read shown (#201).
+- A price that was read stays known when a later read lacks it
+  (`carry_over_day_prices()`, `price_series.py`): a tomorrow sensor that is
+  unavailable for a moment does not empty `tomorrow_prices`, and at midnight
+  yesterday's `tomorrow` list becomes today's, whether or not Stromligning's
+  sensor already holds the new day. A price in the new read always wins, and
+  nothing is kept of a day the read does not cover.
+
 ### Invalid Price Data
 
 A price source that is failing (for example right after a Home Assistant

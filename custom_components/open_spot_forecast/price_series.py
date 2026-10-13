@@ -7,8 +7,9 @@ and is skipped by training and self-learning.
 """
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta, tzinfo
+from typing import Any
 
 from .time_slots import (
     SLOT_MINUTES,
@@ -133,6 +134,50 @@ def same_prices(first: Sequence[float | None], second: Sequence[float | None]) -
         or (a is not None and b is not None and abs(a - b) <= _ZERO_PRICE_EPSILON)
         for a, b in zip(first, second)
     )
+
+
+def carry_over_day_prices(
+    previous: Mapping[str, Any] | None, read: Mapping[str, Any], today: date
+) -> dict[str, Any]:
+    """Return a today/tomorrow price read with the slots only ``previous`` knows.
+
+    Both hold one price list per local day (``today``, ``tomorrow``) and
+    ``day``, the local date of the ``today`` list (``today`` if missing). A
+    price that was read stays known when a later read lacks it: an
+    unavailable or rejected sensor (``is_invalid_price_series``) reads as
+    empty, and after midnight the previous read's ``tomorrow`` is the new
+    day's ``today`` until the source has rotated its own lists. A price in
+    ``read`` always wins, and nothing is kept of a day ``read`` does not cover.
+
+    Args:
+        previous: The data stored by the last read, or None.
+        read: The new read (``read_stromligning_sensor()``-shaped).
+        today: The local date of the read.
+
+    Returns:
+        A copy of ``read`` with ``day`` set and the missing slots filled in.
+    """
+    result = dict(read)
+    result["day"] = day = read.get("day") or today
+    if not previous:
+        return result
+    previous_day: date = previous.get("day") or today
+    stored = {
+        previous_day + timedelta(days=offset): key
+        for offset, key in enumerate(("today", "tomorrow"))
+    }
+    for offset, key in enumerate(("today", "tomorrow")):
+        source = stored.get(day + timedelta(days=offset))
+        old = list(previous.get(source) or []) if source else []
+        new = list(read.get(key) or [])
+        if old and not new:
+            result[key] = old
+            result[f"raw_{key}"] = list(previous.get(f"raw_{source}") or [])
+        elif len(new) == len(old):
+            result[key] = [
+                kept if price is None else price for price, kept in zip(new, old)
+            ]
+    return result
 
 
 def is_invalid_price_series(prices: Sequence[float | None]) -> bool:
