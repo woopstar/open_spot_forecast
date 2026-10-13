@@ -145,6 +145,9 @@ tomorrow sensor's list merged in) as `api_data["stromligning_data"]`:
   Stromligning sensor had when it was last read. So it changes on the slot
   boundary. Only when today's list lacks the slot is the sensor's own state
   from the last read shown (#201).
+- The entity's `last_update` attribute is the time of the last read that
+  knew today's prices, with Home Assistant's UTC offset: it moves every 15
+  minutes, and stays where it is while the source has no prices (#207).
 - A price that was read stays known when a later read lacks it
   (`carry_over_day_prices()`, `price_series.py`): a tomorrow sensor that is
   unavailable for a moment does not empty `tomorrow_prices`, and at midnight

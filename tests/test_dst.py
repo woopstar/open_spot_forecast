@@ -249,12 +249,12 @@ async def test_quarter_update_learns_from_the_price_of_the_current_slot(
 # --- Clock -----------------------------------------------------------------------------
 
 
-def test_no_naive_now_in_ml() -> None:
-    """ml/ reads the clock through Home Assistant's time zone, never naively."""
+def test_no_naive_now_in_the_integration() -> None:
+    """The clock is read through Home Assistant's time zone, never naively (#207)."""
     naive = re.compile(r"datetime\.now\(\)|date\.today\(\)")
     offenders = [
-        f"{path.name}:{number}"
-        for path in sorted(ML_DIR.glob("*.py"))
+        f"{path.relative_to(ML_DIR.parent)}:{number}"
+        for path in sorted(ML_DIR.parent.rglob("*.py"))
         for number, line in enumerate(path.read_text().splitlines(), 1)
         if naive.search(line)
         and not line.lstrip().startswith(("#", '"', "``"))

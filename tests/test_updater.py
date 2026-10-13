@@ -503,7 +503,7 @@ async def test_initial_fetch_loads_prices_and_the_first_forecast(
     assert harness.api_data["price_source"] == "stromligning"
     assert harness.api_data["spot_data"]["today"] == SPOT_TODAY
     assert harness.api_data["tomorrow_available"] is False
-    assert isinstance(harness.api_data["last_update"], datetime)
+    assert harness.api_data["last_update"].tzinfo is not None
     harness.predictor.predict.assert_called_once()
     harness.dispatch.assert_not_called()
 
@@ -834,6 +834,55 @@ async def test_new_quarter_stores_what_it_reads_for_the_price_entities(
     assert sensor.extra_state_attributes["tomorrow_prices"] == [3.0] * 96
     harness.reader.read_stromligning_sensor.assert_called_with("sensor.strom")
     assert harness.reader.read_stromligning_sensor.call_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.parametrize("price_source", ["stromligning", "dayahead"])
+async def test_last_update_is_the_time_of_the_last_read_with_prices(
+    make: Callable[..., Harness], price_source: str
+) -> None:
+    """Every read that knows today's prices sets it, with its UTC offset (#207).
+
+    It was set by the full reads only and stayed at 13:16 while the prices
+    were read every 15 minutes.
+    """
+    harness = make(price_source=price_source)
+    read_at = datetime(2026, 9, 24, 13, 16, tzinfo=CPH)
+    with patch("homeassistant.util.dt.now", return_value=read_at):
+        await harness.updater.check_tomorrow_prices()
+    assert harness.api_data["last_update"] == read_at
+
+    evening = read_at.replace(hour=19, minute=30)
+    with patch("homeassistant.util.dt.now", return_value=evening):
+        await harness.updater.new_quarter(evening)
+    assert harness.api_data["last_update"] == evening
+    assert harness.api_data["last_update"].utcoffset() == timedelta(hours=2)
+
+    midnight = datetime(2026, 9, 25, 0, 0, 1, tzinfo=CPH)
+    with patch("homeassistant.util.dt.now", return_value=midnight):
+        await harness.updater.new_day(midnight)
+    assert harness.api_data["last_update"] == midnight
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("copenhagen_time_zone")
+@pytest.mark.parametrize("price_source", ["stromligning", "dayahead"])
+async def test_a_read_without_prices_keeps_last_update(
+    make: Callable[..., Harness], price_source: str
+) -> None:
+    harness = make(price_source=price_source)
+    harness.reader.read_stromligning_sensor.return_value = _stromligning([], [])
+    harness.dayahead.async_read.return_value = {"today": [], "tomorrow": []}
+
+    await harness.updater.new_quarter(NOW)
+    await harness.updater.refresh_forecast()
+    assert harness.api_data["last_update"] is None
+
+    # A failed day-ahead request is no read either
+    harness.dayahead.async_read.side_effect = RuntimeError("down")
+    assert await harness.updater.check_tomorrow_prices() is False
+    assert harness.api_data["last_update"] is None
 
 
 # --- Stored history (#32) ------------------------------------------------------------

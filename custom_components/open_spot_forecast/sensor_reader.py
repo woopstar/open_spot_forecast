@@ -469,7 +469,6 @@ class SensorReader:
             "temperature": None,
             "cloud_coverage": None,
             "humidity": None,
-            "timestamp": datetime.now().isoformat(),
         }
 
         # Wind speed - can come from weather entity attribute or sensor
