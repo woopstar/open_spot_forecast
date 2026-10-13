@@ -9,6 +9,13 @@ Schema v9: the offset is learned per (slot, lead-time bucket) (#118). The
 table gains a ``bucket`` column; the offsets learned before, pooled over
 every lead time, are kept as the ``BIAS_FALLBACK_BUCKET`` offsets, which the
 other buckets use until they have learned their own.
+
+Schema v10: the offset is the mean of the raw model's errors in a window of
+days (#203). ``predictions`` gains a nullable ``bias_offset`` column, the
+offset subtracted from each stored price. The offsets learned before were an
+exponential moving average that lagged the bias by about ten days; they are
+reset once and relearned from the predictions stored from then on (a row
+from before has no ``bias_offset``: its raw error is unknown).
 """
 
 import logging
@@ -20,6 +27,7 @@ _LOGGER = logging.getLogger(__name__)
 
 ADDITIVE_BIAS_SCHEMA_VERSION = 5
 LEAD_TIME_BIAS_SCHEMA_VERSION = 9
+RAW_ERROR_BIAS_SCHEMA_VERSION = 10
 
 BIAS_TABLE_SQL = """
     CREATE TABLE IF NOT EXISTS bias_correction (
@@ -93,4 +101,28 @@ def migrate_bias_to_lead_time_buckets(conn: sqlite3.Connection) -> None:
             "their own",
             kept,
             BIAS_FALLBACK_BUCKET,
+        )
+
+
+def migrate_bias_to_raw_errors(conn: sqlite3.Connection) -> None:
+    """Store each prediction's offset and reset the lagging offsets once (version < 10).
+
+    Args:
+        conn: Open learning database connection with every table created;
+            the caller commits.
+    """
+    columns = [c[1] for c in conn.execute("PRAGMA table_info(predictions)")]
+    if "bias_offset" not in columns:
+        conn.execute("ALTER TABLE predictions ADD COLUMN bias_offset REAL")
+    if _schema_version(conn) >= RAW_ERROR_BIAS_SCHEMA_VERSION:
+        return
+
+    cleared = conn.execute("DELETE FROM bias_correction").rowcount
+    _set_schema_version(conn, RAW_ERROR_BIAS_SCHEMA_VERSION)
+    if cleared:
+        _LOGGER.info(
+            "Bias correction is now the mean of the raw model's recent errors "
+            "per slot and lead time: reset %d offsets, which are relearned "
+            "from the predictions stored from now on",
+            cleared,
         )

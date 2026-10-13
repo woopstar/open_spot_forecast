@@ -82,7 +82,7 @@ class CatchUpMixin(PredictorBase):
                 # Pooled and per-lead-time errors of this slot (#118)
                 slot = hour * 4 + minute // 15
                 metrics = self.error_metrics.setdefault(slot, new_slot_metrics())
-                add_matched_errors(metrics, matching, actual_price)
+                add_matched_errors(metrics, matching, actual_price, slot_start.date())
                 total_learned += len(matching)
 
                 self.record_lead_time_accuracy(matching, actual_price)
@@ -90,7 +90,7 @@ class CatchUpMixin(PredictorBase):
                 self.record_external_accuracy(slot_start, matching, actual_price)
 
                 # Update the slot's bias offsets per lead-time bucket
-                self._update_bias_correction(slot)
+                self._update_bias_correction(slot, slot_start.date())
 
                 # Initialize volatility for this slot
                 if matching and slot not in self.volatility_mae:

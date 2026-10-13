@@ -9,6 +9,9 @@ in the learning database of a running instance, which this script reads:
 - ``evaluation``: per slot, the prediction closest to a day ahead next to the
   actual price, kept for ``EVALUATION_KEEP_DAYS``, and the snapshots at the
   other ``EVALUATION_LEAD_TIMES`` (#113);
+- ``bias_accuracy``: the same sums for the predictions with a stored bias
+  offset, as stored (after the bias correction) and for the raw model, so the
+  report shows what the correction did per lead time (#203);
 - ``external_accuracy``: the same daily error sums for every recorded external
   forecast (Stromligning, Energi Data Service; #120), per source and bucket;
 - ``external_slot_errors``: per scored slot, the mean error of the model and of
@@ -111,6 +114,10 @@ class LiveData:
     external: dict[str, dict[tuple[date, str], ErrorSums]] = field(default_factory=dict)
     # The per-slot errors of the model and the sources (#157)
     slot_errors: SlotErrors = field(default_factory=dict)
+    # (date, bucket) -> the sums with and without the bias correction (#203)
+    correction: dict[tuple[date, str], tuple[ErrorSums, ErrorSums]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass(frozen=True)
@@ -218,13 +225,30 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                 slot_errors.setdefault((str(start), str(bucket)), {})[str(source)] = (
                     float(error)
                 )
+        correction: dict[tuple[date, str], tuple[ErrorSums, ErrorSums]] = {}
+        if "bias_accuracy" in tables:
+            for day, bucket, samples, *sums in conn.execute(
+                "SELECT date, bucket, samples, sum_error, sum_abs_error,"
+                " sum_sq_error, sum_raw_error, sum_raw_abs_error, sum_raw_sq_error"
+                " FROM bias_accuracy"
+            ):
+                slot_date = date.fromisoformat(day)
+                if since is not None and slot_date < since:
+                    continue
+                count = int(samples)
+                correction[(slot_date, bucket)] = (
+                    (count, float(sums[0]), float(sums[1]), float(sums[2])),
+                    (count, float(sums[3]), float(sums[4]), float(sums[5])),
+                )
         meta: dict[str, str] = {}
         if "meta" in tables:
             meta = {
                 str(key): str(value)
                 for key, value in conn.execute("SELECT key, value FROM meta")
             }
-    return LiveData(path, lead_time, evaluation, meta, snapshots, external, slot_errors)
+    return LiveData(
+        path, lead_time, evaluation, meta, snapshots, external, slot_errors, correction
+    )
 
 
 def _local_date(utc_key: str, tz: tzinfo) -> date:
@@ -293,6 +317,19 @@ def _stats_per_bucket(
 def bucket_stats(data: LiveData) -> dict[str, ErrorStats]:
     """Return the stats per lead-time bucket over every retained day."""
     return _stats_per_bucket(data.lead_time)
+
+
+def correction_stats(data: LiveData) -> dict[str, tuple[ErrorStats, ErrorStats]]:
+    """Return the stats with and without the bias correction per bucket (#203).
+
+    Both are over the same predictions, those stored with their bias offset:
+    ``(as stored, raw model)``.
+    """
+    corrected = _stats_per_bucket(
+        {key: sums[0] for key, sums in data.correction.items()}
+    )
+    raw = _stats_per_bucket({key: sums[1] for key, sums in data.correction.items()})
+    return {bucket: (corrected[bucket], raw[bucket]) for bucket in corrected}
 
 
 def source_stats(data: LiveData) -> dict[str, dict[str, ErrorStats]]:
@@ -503,6 +540,49 @@ def _accuracy_lines(data: LiveData, units: Units, tz: tzinfo) -> list[str]:
     return lines
 
 
+def _correction_lines(data: LiveData, units: Units) -> list[str]:
+    """Render what the bias correction did per lead-time bucket (#203)."""
+    stats = correction_stats(data)
+    if not stats:
+        return []
+    lines = ["## Bias correction: with and without", ""]
+    lines += _table(
+        [
+            "Bucket",
+            "Samples",
+            "Days",
+            "MAE with",
+            "MAE without",
+            "Bias with",
+            "Bias without",
+            "Daily MAE with",
+            "Daily MAE without",
+        ],
+        [
+            [
+                bucket,
+                str(corrected.samples),
+                str(corrected.days),
+                units.fmt(corrected.mae),
+                units.fmt(raw.mae),
+                units.fmt(corrected.bias),
+                units.fmt(raw.bias),
+                units.fmt(corrected.daily_mae),
+                units.fmt(raw.daily_mae),
+            ]
+            for bucket, (corrected, raw) in stats.items()
+        ],
+    )
+    lines += [
+        "",
+        "Over the predictions stored with their bias offset (from #203 on): "
+        '"with" is the stored prediction, "without" the raw model (the offset '
+        "added back). A bucket that is not corrected has the same error in both.",
+        "",
+    ]
+    return lines
+
+
 def _source_lines(data: LiveData, units: Units) -> list[str]:
     """Render the recorded external forecasts next to the model, per bucket."""
     sources = source_stats(data)
@@ -665,6 +745,7 @@ def format_report(
         "",
         *_accuracy_lines(data, units, tz),
         "",
+        *_correction_lines(data, units),
         *_source_lines(data, units),
         *_blend_lines(data, units, tz),
         *_training_lines(data, units, times),

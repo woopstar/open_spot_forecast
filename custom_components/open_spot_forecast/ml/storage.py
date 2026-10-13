@@ -22,6 +22,7 @@ from .bias_storage import (
     BIAS_TABLE_SQL,
     migrate_bias_to_additive,
     migrate_bias_to_lead_time_buckets,
+    migrate_bias_to_raw_errors,
 )
 from .evaluation_storage import EvaluationStorageMixin
 from .external_storage import EXTERNAL_SCHEMA_SQL, ExternalForecastStorageMixin
@@ -80,6 +81,8 @@ class LearningStorage(
                         #123, ENTSO-E #138) and their unavailable-capacity
                         periods (outage_storage.py)
       lead_time_accuracy — daily per-lead-time error sums (accuracy_storage.py)
+      bias_accuracy   — the same sums with and without the bias correction
+                        (#203; accuracy_storage.py)
       external_forecasts, external_accuracy — other integrations' forecasts
                         awaiting scoring, and their daily error sums per
                         source and lead time (#120; external_storage.py)
@@ -228,7 +231,8 @@ class LearningStorage(
                 stored_at       TEXT    NOT NULL,
                 forecast_temp   REAL,
                 forecast_wind   REAL,
-                forecast_cloud  REAL
+                forecast_cloud  REAL,
+                bias_offset     REAL
             );
 
             CREATE INDEX IF NOT EXISTS idx_predictions_start
@@ -421,6 +425,7 @@ class LearningStorage(
         migrate_weather_to_utc(conn)
         migrate_price_history_to_rows(conn)
         migrate_bias_to_lead_time_buckets(conn)
+        migrate_bias_to_raw_errors(conn)
         conn.commit()
 
     def __del__(self) -> None:
@@ -479,6 +484,7 @@ class LearningStorage(
                     DROP TABLE IF EXISTS spot_prices;
                     DROP TABLE IF EXISTS volatility;
                     DROP TABLE IF EXISTS lead_time_accuracy;
+                    DROP TABLE IF EXISTS bias_accuracy;
                     DROP TABLE IF EXISTS evaluation;
                     DROP TABLE IF EXISTS external_forecasts;
                     DROP TABLE IF EXISTS external_accuracy;

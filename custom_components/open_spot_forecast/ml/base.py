@@ -11,11 +11,12 @@ mixins inherit a consistent, fully-typed ``self``.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime, tzinfo
+from datetime import date, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.core import HomeAssistant
 
+from ..const import BIAS_FALLBACK_BUCKET
 from .gbm import NumpyGradientBoosting
 from .numpy_models import NumpyRandomForest
 from .storage import LearningStorage
@@ -61,7 +62,6 @@ class PredictorBase:
     # Additive bias offsets per slot and lead-time bucket (#118)
     bias_correction: dict[int, dict[str, float]]
     volatility_mae: dict[int, float]
-    learning_rate: float
     price_history: list[dict[str, Any]]
     max_history_days: int
     storage: LearningStorage
@@ -94,16 +94,25 @@ class PredictorBase:
         forecast_temp: float | None = None,
         forecast_wind: float | None = None,
         forecast_cloud: float | None = None,
+        bias_offset: float = 0.0,
     ) -> None:
         raise NotImplementedError
 
     def catch_up_learning(self) -> int:
         raise NotImplementedError
 
-    def _update_bias_correction(self, slot: int) -> None:
+    def _update_bias_correction(self, slot: int, today: date) -> None:
+        raise NotImplementedError
+
+    def refresh_bias_offsets(self, today: date) -> None:
         raise NotImplementedError
 
     def _bias_offset(self, slot: int, bucket: str) -> float | None:
+        raise NotImplementedError
+
+    def apply_bias_correction(
+        self, predicted_price: float, slot: int, bucket: str = BIAS_FALLBACK_BUCKET
+    ) -> float:
         raise NotImplementedError
 
     def record_lead_time_accuracy(

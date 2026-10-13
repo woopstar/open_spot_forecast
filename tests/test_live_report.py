@@ -4,6 +4,7 @@ import hashlib
 import math
 import sqlite3
 from collections.abc import Iterator
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 from unittest.mock import Mock
@@ -16,6 +17,7 @@ from scripts import live_report
 from scripts.live_report import (
     Units,
     bucket_stats,
+    correction_stats,
     error_stats,
     evaluation_stats,
     format_report,
@@ -352,3 +354,67 @@ def test_without_external_forecasts_the_report_has_no_source_table(
 
     assert data.external == {}
     assert "External forecasts" not in format_report(data, Units())
+
+
+def test_the_bias_correction_is_reported_with_and_without_per_bucket(
+    tmp_path: Path,
+) -> None:
+    """Per bucket, the stored predictions' errors next to the raw model's (#203)."""
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    storage = LearningStorage(hass, "DK1")
+    try:
+        # (raw error, error as stored): day 1's offset of -0.3 adds to the error
+        storage.add_bias_accuracy(
+            "2026-10-12", {"day_1": [(0.1, 0.4), (0.3, 0.6)], "day_3": [(0.5, 0.5)]}
+        )
+        storage.add_bias_accuracy("2026-10-13", {"day_1": [(-0.2, 0.1)]})
+        path = storage.db_path
+    finally:
+        storage.close()
+
+    data = load_live_data(path)
+    stats = correction_stats(data)
+
+    assert list(stats) == ["day_1", "day_3"]
+    corrected, raw = stats["day_1"]
+    assert (corrected.samples, corrected.days) == (raw.samples, raw.days) == (3, 2)
+    assert corrected.mae == pytest.approx((0.4 + 0.6 + 0.1) / 3)
+    assert raw.mae == pytest.approx((0.1 + 0.3 + 0.2) / 3)
+    assert corrected.bias == pytest.approx((0.4 + 0.6 + 0.1) / 3)
+    assert raw.bias == pytest.approx((0.1 + 0.3 - 0.2) / 3)
+    # Daily MAE: the mean of each day's MAE
+    assert corrected.daily_mae == pytest.approx((0.5 + 0.1) / 2)
+    assert raw.daily_mae == pytest.approx((0.2 + 0.2) / 2)
+    report = format_report(data, Units())
+    section = report[report.index("## Bias correction: with and without") :]
+    assert (
+        "| Bucket | Samples | Days | MAE with | MAE without | Bias with |"
+        " Bias without | Daily MAE with | Daily MAE without |" in section
+    )
+    assert "| day_1 | 3 | 2 | 0.367 | 0.200 | 0.367 | 0.067 | 0.300 | 0.200 |" in (
+        section
+    )
+    # A bucket that is not corrected: the same error twice
+    assert "| day_3 | 1 | 1 | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 | 0.500 |" in (
+        section
+    )
+    later = load_live_data(path, since=date(2026, 10, 13))
+    assert correction_stats(later)["day_1"][0].samples == 1
+    assert "day_3" not in correction_stats(later)
+
+
+def test_an_export_without_stored_offsets_has_no_correction_table(
+    export: Path, tmp_path: Path
+) -> None:
+    """No rows yet, or an export from before #203 without the table."""
+    data = load_live_data(export)
+    assert data.correction == {}
+    assert "Bias correction" not in format_report(data, Units())
+
+    with closing(sqlite3.connect(export)) as conn:
+        conn.execute("DROP TABLE bias_accuracy")
+        conn.commit()
+    older = load_live_data(export)
+    assert older.correction == {}
+    assert bucket_stats(older)["day_1"].samples == 7
