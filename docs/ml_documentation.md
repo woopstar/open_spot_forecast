@@ -1855,7 +1855,8 @@ one day ahead.
   all from day 2 on. That is the rule that shipped (`gas_band_edges()`,
   `ml/gas_price.py`): the 180-day rows are its five bands, the 90-day
   "3 bands" row its three. Windows of 60 and 120 days (two and four bands)
-  were not run; a 30-day window has no bands and so no gas price.
+  are in the table further down (#209); a 30-day window has no bands and so
+  no gas price.
 
 **The days of the issue**, origins 2026-09-28 to 2026-10-13 replayed as the
 instance ran them (90-day window, `--cross-border --load entsoe`, 16 origins):
@@ -1903,7 +1904,37 @@ near-term model in DK2), same origins:
 horizon in seven regions, in DK2 more than the price itself did. In Finland
 neither form helps at this window (the price itself: 2.61 / 2.79 / 2.80 /
 2.86, with a higher 95th percentile than without), so FI is out of
-`GAS_PRICE_REGIONS`. SE3 and the Baltics, off since #28, were not re-run.
+`GAS_PRICE_REGIONS`.
+
+**The other windows, and the regions that are off** (#209). Same origins and
+columns, each pair with and without the gas price, the bands as the rule
+gives them for the window; DK1 with the near-term model, cross-border and
+single-stage; recorded 2026-10-14:
+
+| Region, window                        | Without: MAE 1d / 2d / 3d / 4-7d |                Bands: MAE |               P95 without |                 P95 bands |    Worse days |          Worst day |
+| ------------------------------------- | -------------------------------: | ------------------------: | ------------------------: | ------------------------: | ------------: | -----------------: |
+| DK1, 60 days, cross-border (2 bands)  |        1.88 / 2.03 / 2.09 / 2.15 | 1.86 / 2.01 / 2.07 / 2.13 | 3.77 / 4.10 / 4.08 / 4.35 | 3.73 / 4.04 / 4.07 / 4.28 | 0 / 0 / 0 / 0 | +0.54 (2026-09-28) |
+| DK1, 60 days, single-stage (2 bands)  |        2.20 / 2.44 / 2.54 / 2.58 | 2.19 / 2.42 / 2.49 / 2.55 | 4.33 / 4.90 / 4.87 / 4.99 | 4.39 / 4.87 / 4.85 / 5.02 | 0 / 0 / 0 / 0 | +0.87 (2026-03-11) |
+| DK1, 120 days, cross-border (4 bands) |        1.87 / 1.96 / 2.07 / 2.13 | 1.83 / 1.92 / 2.01 / 2.07 | 3.83 / 3.82 / 4.07 / 4.29 | 3.68 / 3.70 / 4.10 / 4.11 | 0 / 0 / 0 / 0 | +0.64 (2025-11-29) |
+| DK1, 120 days, single-stage (4 bands) |        2.19 / 2.41 / 2.50 / 2.54 | 2.16 / 2.37 / 2.44 / 2.49 | 4.33 / 4.78 / 5.10 / 5.34 | 4.22 / 4.67 / 4.89 / 5.15 | 0 / 0 / 0 / 0 | +1.00 (2026-03-11) |
+| DK2, 90 days (3 bands)                |        2.46 / 2.70 / 2.69 / 2.74 | 2.45 / 2.69 / 2.64 / 2.70 | 4.78 / 5.60 / 5.01 / 5.21 | 4.80 / 5.54 / 5.23 / 5.25 | 0 / 0 / 0 / 0 | +0.72 (2026-01-07) |
+| DE, 90 days (3 bands)                 |        2.14 / 2.23 / 2.27 / 2.31 | 2.11 / 2.19 / 2.21 / 2.27 | 4.35 / 4.44 / 4.40 / 4.52 | 4.26 / 4.38 / 4.36 / 4.43 | 0 / 0 / 0 / 0 | +1.36 (2026-03-11) |
+| FI, 90 days (3 bands)                 |        2.69 / 2.89 / 2.94 / 3.03 | 2.72 / 2.91 / 2.97 / 3.03 | 6.06 / 6.32 / 6.36 / 6.53 | 5.99 / 6.44 / 6.49 / 6.79 | 0 / 0 / 1 / 1 | +2.77 (2026-04-19) |
+| SE3, 180 days (5 bands)               |        2.27 / 2.37 / 2.41 / 2.45 | 2.27 / 2.38 / 2.41 / 2.44 | 4.88 / 5.01 / 5.03 / 5.28 | 4.91 / 4.96 / 5.14 / 5.38 | 0 / 0 / 0 / 0 | +1.15 (2026-02-21) |
+| EE, 180 days (5 bands)                |        3.83 / 3.94 / 3.97 / 4.03 | 3.89 / 4.01 / 4.04 / 4.08 | 7.37 / 7.66 / 7.67 / 7.79 | 7.55 / 7.61 / 7.59 / 8.31 | 1 / 1 / 0 / 5 | +4.43 (2026-03-04) |
+| LT, 180 days (5 bands)                |        3.96 / 4.11 / 4.18 / 4.28 | 3.99 / 4.15 / 4.23 / 4.38 | 7.83 / 8.36 / 8.45 / 8.42 | 7.73 / 8.10 / 8.12 / 8.53 | 2 / 1 / 1 / 4 | +3.26 (2025-12-22) |
+| LV, 180 days (5 bands)                |        3.94 / 4.09 / 4.11 / 4.18 | 3.96 / 4.12 / 4.16 / 4.25 | 7.66 / 8.01 / 8.11 / 8.29 | 8.29 / 8.42 / 8.67 / 8.77 | 0 / 1 / 0 / 8 | +2.85 (2025-12-22) |
+
+- **The rule holds at every window with bands**: in DK1 two bands (60 days)
+  and four (120 days) lower the MAE at every horizon with both models, with
+  no day more than 3 ct/kWh worse than without the gas price. Two bands
+  carry little (0.02 ct/kWh with the cross-border model), four 0.04-0.06,
+  about half of what five do at 180 days.
+- **Three bands at 90 days work outside DK1 too**: DK2 and DE gain at every
+  horizon.
+- **The regions that are off stay off.** With bands the gas price changes
+  nothing in SE3, and raises the error in FI (at 90 days as at 180), EE, LT
+  and LV, where it also adds days that are more than 3 ct/kWh worse.
 
 ### Nordpool prognoses at prediction (#91)
 
