@@ -1070,7 +1070,9 @@ Every 15 minutes:
 4. Update the slot's additive bias offsets, one per lead-time bucket, from
    the raw errors of its last days (see
    [self-learning](self_learning.md#bias-correction))
-5. Compare stored forecast weather vs actual → forecast accuracy tracking
+5. Compare stored forecast weather vs actual → forecast accuracy tracking;
+   temperature and wind are scored separately, and a snapshot value stored
+   while the sensor was unavailable (NULL) scores nothing (#216)
 6. Remove matched predictions from pending queue
 7. Add each error to its lead-time bucket (day 1/2/3/4+) → rolling 30-day
    MAE/RMSE per lead time (see [self-learning](self_learning.md))

@@ -34,6 +34,39 @@ def new_slot_metrics() -> dict[str, Any]:
     return {key: [] for key in _POOLED_KEYS} | {"count": 0, RAW_ERRORS_KEY: {}}
 
 
+# The forecast accuracy kept per slot: (metrics key, stored prediction's
+# forecast key, weather_history column)
+_FORECAST_ERROR_KEYS = (
+    ("forecast_temp_errors", "forecast_temp", "temperature"),
+    ("forecast_wind_errors", "forecast_wind", "wind_speed"),
+)
+
+
+def forecast_errors(
+    predictions: Sequence[dict[str, Any]],
+    forecast_key: str,
+    measured: float | None,
+) -> list[float]:
+    """Return the absolute errors of the predictions' recorded weather forecast.
+
+    A snapshot stored while the weather sensor was unavailable has a NULL
+    value (#216), and a prediction may have no forecast: either one leaves
+    nothing to score, so it adds no error rather than a fake zero.
+
+    Args:
+        predictions: Stored prediction rows matched for the slot.
+        forecast_key: The rows' forecast key (``forecast_temp``/``forecast_wind``).
+        measured: The slot's measured value, ``None`` when unknown.
+    """
+    if measured is None:
+        return []
+    return [
+        abs(forecast - measured)
+        for prediction in predictions
+        if (forecast := prediction.get(forecast_key)) is not None
+    ]
+
+
 def add_matched_errors(
     metrics: dict[str, Any],
     predictions: list[dict[str, Any]],
@@ -382,45 +415,22 @@ class LearningMixin(PredictorBase):
             self._update_bias_correction(target_slot, dt.date())
 
             # --- Forecast accuracy: compare stored forecast vs actual weather ---
-            actual_weather = self.storage.find_weather_for_timestamp(timestamp)
-            forecast_errors = []
-            for p in matching_predictions:
-                fc_temp = p.get("forecast_temp")
-                fc_wind = p.get("forecast_wind")
-                if actual_weather and fc_temp is not None:
-                    temp_err = abs(fc_temp - actual_weather.get("temperature", fc_temp))
-                    wind_err = (
-                        abs(fc_wind - actual_weather.get("wind_speed", fc_wind))
-                        if fc_wind is not None
-                        else 0
+            measured = self.storage.find_weather_for_timestamp(timestamp) or {}
+            for key, forecast_key, measured_key in _FORECAST_ERROR_KEYS:
+                errors = forecast_errors(
+                    matching_predictions, forecast_key, measured.get(measured_key)
+                )
+                if errors:
+                    # Kept for the confidence; the last 50 per slot
+                    samples = metrics.setdefault(key, [])
+                    samples.append(float(np.mean(errors)))
+                    del samples[:-50]
+                    _LOGGER.debug(
+                        "Forecast accuracy for slot %d: %s=%.1f",
+                        target_slot,
+                        key,
+                        samples[-1],
                     )
-                    forecast_errors.append((temp_err, wind_err))
-
-            if forecast_errors:
-                avg_temp_err = float(np.mean([e[0] for e in forecast_errors]))
-                avg_wind_err = float(np.mean([e[1] for e in forecast_errors]))
-                _LOGGER.debug(
-                    "Forecast accuracy for slot %d: temp_error=%.1f°C, wind_error=%.1f m/s",
-                    target_slot,
-                    avg_temp_err,
-                    avg_wind_err,
-                )
-                # Store forecast errors for confidence calculation
-                if "forecast_temp_errors" not in self.error_metrics[target_slot]:
-                    self.error_metrics[target_slot]["forecast_temp_errors"] = []
-                    self.error_metrics[target_slot]["forecast_wind_errors"] = []
-                self.error_metrics[target_slot]["forecast_temp_errors"].append(
-                    avg_temp_err
-                )
-                self.error_metrics[target_slot]["forecast_wind_errors"].append(
-                    avg_wind_err
-                )
-                # Keep last 50
-                for k in ["forecast_temp_errors", "forecast_wind_errors"]:
-                    if len(self.error_metrics[target_slot][k]) > 50:
-                        self.error_metrics[target_slot][k] = self.error_metrics[
-                            target_slot
-                        ][k][-50:]
 
             # Remove ALL matched predictions from SQLite (by id)
             for p in matching_predictions:
