@@ -12,12 +12,14 @@ no row outside a lookup's window comes back.
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.open_spot_forecast.ml.learning import forecast_errors
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import OPENMETEO_WEATHER
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
@@ -353,3 +355,64 @@ def test_learning_measures_the_forecast_error_near_midnight(
         assert metrics["forecast_wind_errors"] == pytest.approx([1.0])
     finally:
         predictor.storage.close()
+
+
+@pytest.mark.parametrize(
+    ("temperature", "wind_speed", "temp_errors", "wind_errors"),
+    [(None, 5.0, None, [1.0]), (12.0, None, [3.0], None), (None, None, None, None)],
+)
+def test_learning_survives_a_snapshot_without_weather(
+    tmp_path: Path,
+    temperature: float | None,
+    wind_speed: float | None,
+    temp_errors: list[float] | None,
+    wind_errors: list[float] | None,
+) -> None:
+    """A NULL measured value scores nothing instead of aborting learning (#216)."""
+    predictor = SpotPricePredictor(_hass(tmp_path), "DK1")
+    try:
+        slot = slot_start_in_day(NORMAL_DAY, 40)
+        predictor.storage.insert_weather_snapshot(
+            utc_slot_key(slot), temperature, wind_speed, 180.0, 50.0, 80.0, None
+        )
+        predictor.storage.insert_prediction(
+            slot.isoformat(),
+            0.5,
+            0.8,
+            slot.hour,
+            slot.minute,
+            dt_util.now().isoformat(),
+            15.0,
+            6.0,
+        )
+
+        assert predictor.learn_from_actual_price(slot.isoformat(), 0.4)
+
+        metrics = predictor.error_metrics[40]
+        assert metrics["count"] == 1
+        assert metrics.get("forecast_temp_errors") == (
+            None if temp_errors is None else pytest.approx(temp_errors)
+        )
+        assert metrics.get("forecast_wind_errors") == (
+            None if wind_errors is None else pytest.approx(wind_errors)
+        )
+        assert (
+            predictor.storage.find_predictions_for_timestamp(
+                NORMAL_DAY.isoformat(), slot.hour, slot.minute
+            )
+            == []
+        )
+    finally:
+        predictor.storage.close()
+
+
+def test_forecast_errors_skip_unknown_values() -> None:
+    """Only predictions with a forecast are scored, and only against a measurement."""
+    predictions: list[dict[str, Any]] = [
+        {"forecast_temp": 10.0},
+        {"forecast_temp": None},
+        {},
+    ]
+
+    assert forecast_errors(predictions, "forecast_temp", 12.5) == pytest.approx([2.5])
+    assert forecast_errors(predictions, "forecast_temp", None) == []
