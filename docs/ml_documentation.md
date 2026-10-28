@@ -1078,8 +1078,9 @@ Every 15 minutes:
    MAE/RMSE per lead time (see [self-learning](self_learning.md))
 
 **96 slots** (15-min intervals), not 24 hours. Each slot has independent
-bias offsets, one per lead-time bucket (#118; `day_1` and `day_2`, #203), and
-a prediction gets the offset of its own lead time.
+bias offsets, one per lead-time bucket (#118), and a prediction gets the
+offset of its own lead time. No bucket has one since #206 (see
+[Bias Correction](self_learning.md#bias-correction)).
 
 ## Backtesting
 
@@ -1363,9 +1364,9 @@ error window (see [Bias Correction](self_learning.md#bias-correction)).
 The 3 days since the 2026-10-10 release (`--since 2026-10-10`: day 1 MAE
 2.72, day 2 3.32, day 3 3.56, day 4+ 5.83; bias +2.6 to +3.9) say nothing
 about #128 yet: its offsets started as copies of the pooled ones (mean −1.3
-ct/kWh in all four buckets) and each bucket had 4-35 errors per slot. The
-per-bucket correction is measured after 14 days on #128 (follow-up issue
-#169).
+ct/kWh in all four buckets) and each bucket had 4-35 errors per slot. #203
+replaced those offsets before they could be measured (#169 became #206,
+below).
 
 Those offsets moved a tenth of the remaining error a day and were still
 negative on 2026-10-13, eight days into the over-prediction: on the export's
@@ -1376,6 +1377,25 @@ mean of the raw errors of a slot's last four measured days, for `day_1` and
 the offset it was made with, so the report prints each bucket's error with
 and without the correction (see
 [Bias Correction](self_learning.md#bias-correction)).
+
+**Bias correction with and without, 2026-10-28 export (#206).** The first
+export with stored offsets covers 14 days on v0.2.1 (installed 2026-10-14,
+with the 4-day offsets of #203 for `day_1` and `day_2`), `--since 2026-10-15`,
+EUR ct/kWh:
+
+| Bucket     | Samples | Days | MAE with | MAE without | Bias with | Bias without | Daily MAE with | Daily MAE without |
+| :--------- | ------: | ---: | -------: | ----------: | --------: | -----------: | -------------: | ----------------: |
+| day_1      |    1317 |   14 |     2.21 |        1.97 |     +0.09 |        −0.35 |           2.05 |              1.88 |
+| day_2      |    7863 |   14 |     2.60 |        2.24 |     +0.12 |        −0.41 |           2.50 |              2.17 |
+| day_3      |    8222 |   13 |     2.43 |        2.43 |     −0.01 |        −0.01 |           2.40 |              2.40 |
+| day_4_plus |   30291 |   12 |     3.91 |        3.91 |     +0.94 |        +0.94 |           3.74 |              3.74 |
+
+The correction brought the bias closer to zero but raised the MAE of both
+corrected buckets by 0.24 and 0.36: the offsets of the last days chased a
+bias that had moved on. No window, pooled offset or shrinkage scored better
+than no correction (tables in
+[Bias Correction](self_learning.md#which-buckets)), so since #206 no bucket
+is corrected and "with" equals "without" in later exports.
 
 ### Benchmark against external forecasts (#115)
 

@@ -376,16 +376,17 @@ Each 15-minute slot has an additive offset (currency/kWh) per lead-time bucket
 
 ```
 raw_error = stored_price + stored_bias_offset - actual    # predictions.bias_offset
-offset[slot][bucket] = mean(raw_error)                    # the bucket's last 4 measured days
+offset[slot][bucket] = mean(raw_error)                    # the bucket's last N measured days
 corrected_price = raw_price - offset[slot][bucket]        # bucket = the prediction's own lead time
 ```
 
 `offset > 0` → model overpredicts → subtract. `offset < 0` → model underpredicts → add.
 Every stored prediction keeps the offset subtracted from it, so the raw error is known and
 nothing is smoothed on top (the EMA of before #203 lagged the bias by ~10 days and added to
-the error after a change of sign). Only `day_1` and `day_2` have an offset
-(`BIAS_WINDOW_DAYS`): a later bucket's errors are older than its bias lasts. A window without
-3 errors from its last 4 days gives no offset, and no bucket uses another's. Offsets are set
+the error after a change of sign). **No bucket has an offset since #206**: `BIAS_WINDOW_DAYS`
+is empty because on 14 live DK1 days every trailing offset (per slot or pooled, any window)
+raised the error; tests turn the #203 windows on with the `bias_windows` fixture. A window
+without 3 errors from its last N days gives no offset, and no bucket uses another's. Offsets are set
 at each match and refreshed before every forecast run (`refresh_bias_offsets`).
 `bias_accuracy` holds the error sums with and without the correction, for
 `scripts/live_report.py`. Prices can be negative: never clamp predictions at 0 and never

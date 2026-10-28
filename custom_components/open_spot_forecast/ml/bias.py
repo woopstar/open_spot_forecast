@@ -20,6 +20,11 @@ eight for the later buckets. The lead-time bias does not last that long
 (``docs/self_learning.md`` "Bias Correction"), so only the buckets in
 ``BIAS_WINDOW_DAYS`` have an offset. A window without errors from its last
 days gives none, and no bucket borrows another's.
+
+No bucket is listed since #206: on 14 live DK1 days the 4-day offsets of
+``day_1`` and ``day_2`` raised their error, and so did every other window,
+pooled or per slot. The machinery stays, so a bucket can be corrected again
+by listing it.
 """
 
 from collections.abc import Mapping, Sequence
@@ -31,8 +36,10 @@ from .base import PredictorBase
 from .lead_time import raw_bucket_errors
 
 # Days of raw errors a bucket's offset is the mean of, per slot. A bucket
-# that is not listed is not corrected: its errors are older than its bias
-BIAS_WINDOW_DAYS: dict[str, int] = {"day_1": 4, "day_2": 4}
+# that is not listed is not corrected. Empty since #206: the raw model's
+# lead-time bias does not last until its errors are measured, and every
+# trailing offset on the live DK1 export added error (#203 had day_1/day_2: 4)
+BIAS_WINDOW_DAYS: dict[str, int] = {}
 # Fewer raw errors in the window than this give no offset
 MIN_BIAS_SAMPLES = 3
 # A slot's metrics key: {bucket: {ISO day: [samples, sum of raw errors]}}

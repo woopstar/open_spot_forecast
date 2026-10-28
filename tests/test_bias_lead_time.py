@@ -50,6 +50,10 @@ from custom_components.open_spot_forecast.ml.learning import (
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 
+# The offsets are tested with the windows of #203: no bucket is corrected
+# since #206 (``BIAS_WINDOW_DAYS`` above is the shipped, empty value)
+pytestmark = pytest.mark.usefixtures("bias_windows")
+
 SLOT = 48  # 12:00
 BUCKETS = [bucket for bucket, _upper in LEAD_TIME_BUCKETS]
 TODAY = date(2026, 10, 13)
@@ -173,7 +177,7 @@ def test_a_window_needs_three_samples(predictor: SpotPricePredictor) -> None:
 
 def test_the_window_is_the_last_days_with_errors() -> None:
     """Four measured days at most, none more than four days old."""
-    assert BIAS_WINDOW_DAYS["day_1"] == 4
+    assert bias.BIAS_WINDOW_DAYS["day_1"] == 4
     days = {
         (TODAY - timedelta(days=age)).isoformat(): [3, 3 * error]
         for age, error in enumerate([0.1, 0.2, 0.3, 0.4, 5.0])
@@ -195,7 +199,7 @@ def test_a_bucket_without_recent_errors_has_no_offset(
 ) -> None:
     """E.g. ``day_1`` from 13:00 on: its prices are known before a forecast
     under 24 hours ahead is stored, so it never gets an error."""
-    stale = TODAY - timedelta(days=BIAS_WINDOW_DAYS["day_1"] + 1)
+    stale = TODAY - timedelta(days=bias.BIAS_WINDOW_DAYS["day_1"] + 1)
     predictor.bias_correction = {SLOT: {"day_1": -0.38, "day_2": 0.1}}
     predictor.error_metrics = {
         SLOT: _metrics({"day_1": {stale: [-0.4] * 9}, "day_2": {TODAY: [0.2] * 3}})
@@ -235,7 +239,7 @@ def test_offsets_are_refreshed_before_they_are_used(
 
 def test_only_the_near_buckets_are_corrected() -> None:
     """Day 3 and day 4+ errors are 3-8 days old when they could be used."""
-    assert set(BIAS_WINDOW_DAYS) == {"day_1", "day_2"}
+    assert set(bias.BIAS_WINDOW_DAYS) == {"day_1", "day_2"}
     start = _noon(TODAY)
     metrics = new_slot_metrics()
     predictions = [
@@ -305,7 +309,7 @@ def test_with_a_constant_bias_the_offset_is_the_bias(model_bias: float) -> None:
     """
     result = _simulate([model_bias] * 30, noise=0.02)
 
-    for bucket, window_days in BIAS_WINDOW_DAYS.items():
+    for bucket, window_days in bias.BIAS_WINDOW_DAYS.items():
         offsets = result[bucket]["offset"]
         assert offsets[0] == pytest.approx(model_bias, abs=0.03)
         assert offsets[window_days:] == pytest.approx(
@@ -327,7 +331,7 @@ def test_after_a_sign_change_the_offset_follows_within_its_window() -> None:
     before, after, flip = -0.3, 0.3, 12
     result = _simulate([before] * flip + [after] * 12)
 
-    for bucket, window_days in BIAS_WINDOW_DAYS.items():
+    for bucket, window_days in bias.BIAS_WINDOW_DAYS.items():
         offsets = result[bucket]["offset"]
         assert offsets[flip - 1] == pytest.approx(before)
         # Half the window is from after the change on its second day
@@ -548,6 +552,39 @@ def test_learning_from_an_actual_price_updates_each_bucket(
     assert rows[0][2:] == pytest.approx((0.3, 0.3, -0.3, 0.3, 0.03))
     assert rows[1][2:] == pytest.approx((1.2, 1.2, 1.5, 1.5, 0.75))
     assert rows[2][2:] == pytest.approx((2.1, 2.1, 2.1, 2.1, 1.47))
+
+
+def test_no_bucket_is_corrected_since_206() -> None:
+    """On 14 live DK1 days every trailing offset added error (#206).
+
+    ``day_1`` MAE 2.21 with the 4-day offsets against 1.97 without, ``day_2``
+    2.60 against 2.24 EUR ct/kWh (``docs/self_learning.md``).
+    """
+    assert BIAS_WINDOW_DAYS == {}
+
+
+def test_the_offsets_of_an_upgraded_instance_are_dropped(
+    predictor: SpotPricePredictor,
+) -> None:
+    """The offsets and windows an instance learned before #206 stop applying
+    at the first refresh, and new errors are not kept for them."""
+    predictor.bias_correction = {SLOT: {"day_1": 0.3, "day_2": -0.2}}
+    predictor.error_metrics = {
+        SLOT: _metrics({"day_1": {TODAY: [0.3] * 3}, "day_2": {TODAY: [-0.2] * 3}})
+    }
+
+    with patch.object(bias, "BIAS_WINDOW_DAYS", BIAS_WINDOW_DAYS):
+        predictor.refresh_bias_offsets(TODAY)
+        assert predictor.bias_correction == {}
+        for bucket in BUCKETS:
+            assert predictor.apply_bias_correction(1.0, SLOT, bucket) == (
+                pytest.approx(1.0)
+            )
+
+        start = _noon(TODAY)
+        predictions = [_prediction(start, LEAD_HOURS["day_1"], 1.5) for _ in "abc"]
+        add_matched_errors(predictor.error_metrics[SLOT], predictions, 1.0, TODAY)
+        assert predictor.error_metrics[SLOT][RAW_ERRORS_KEY] == {}
 
 
 def test_a_prediction_stored_before_the_offsets_were_kept_is_handled(

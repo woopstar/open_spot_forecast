@@ -76,6 +76,7 @@ def test_bias_correction_subtracts_the_offset(predictor: SpotPricePredictor) -> 
     assert predictor.apply_bias_correction(1.0, SLOT + 1) == pytest.approx(1.0)
 
 
+@pytest.mark.usefixtures("bias_windows")
 def test_zero_offset_never_changes_a_prediction(predictor: SpotPricePredictor) -> None:
     """A correct slot (offset 0) keeps negative and positive predictions as they are.
 
@@ -89,6 +90,7 @@ def test_zero_offset_never_changes_a_prediction(predictor: SpotPricePredictor) -
     assert predictor.apply_bias_correction(0.4, SLOT) == pytest.approx(0.4)
 
 
+@pytest.mark.usefixtures("bias_windows")
 def test_the_offset_is_the_mean_raw_error_at_negative_prices(
     predictor: SpotPricePredictor,
 ) -> None:
@@ -110,6 +112,7 @@ def test_update_needs_three_samples(predictor: SpotPricePredictor) -> None:
     assert SLOT not in predictor.bias_correction
 
 
+@pytest.mark.usefixtures("bias_windows")
 @pytest.mark.parametrize("actual", [-0.8, 0.0, 0.6])
 def test_offset_converges_to_the_model_bias_whatever_the_price_sign(
     predictor: SpotPricePredictor, actual: float
@@ -218,6 +221,7 @@ def _negative_history(predictor: SpotPricePredictor) -> None:
     ]
 
 
+@pytest.mark.usefixtures("bias_windows")
 def test_negative_prices_survive_model_bias_correction_and_sensor(
     predictor: SpotPricePredictor,
 ) -> None:
@@ -273,6 +277,7 @@ def test_heuristic_predictions_can_be_negative(predictor: SpotPricePredictor) ->
     assert all(p["price"] == pytest.approx(-0.5) for p in predictor.predictions)
 
 
+@pytest.mark.usefixtures("bias_windows")
 def test_learning_from_a_negative_actual_updates_the_offset(
     predictor: SpotPricePredictor,
 ) -> None:
