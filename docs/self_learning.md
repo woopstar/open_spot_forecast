@@ -403,7 +403,14 @@ source, their equal-weight mean and their inverse-MSE weighted mean over the
 same slots. A blend is only built if it wins there, and only with sources
 whose terms allow their forecast to be an input (see #115 for the dev-only
 benchmark and the licence limits of other forecasts; Smartere Elforbrug's
-forbid it).
+forbid it). The first evaluation (2026-10-28, 16 days of Stromligning's
+forecast, recorded as the ex-VAT variant and corrected to the entry's terms
+offline) found that a blend beats the model in every lead-time bucket with
+enough slots, by up to 25 % at `day_2`; it is not built until Stromligning's
+terms allow it (see
+[Live accuracy](ml_documentation.md#live-accuracy-94)). A source in the
+wrong terms also makes its recorded accuracy meaningless: the ex-VAT variant
+on an entry with VAT reads about 0.2 × its price too low.
 
 ## Metrics Available
 
