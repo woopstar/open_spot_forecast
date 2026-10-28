@@ -11,7 +11,7 @@
 **Open Spot Forecast** is a Home Assistant integration that predicts electricity
 spot prices using machine learning, weather forecasts, and confirmed market data.
 It runs a self-learning loop that compares its predictions against actual prices
-and continuously improves accuracy via per-slot bias correction.
+and retrains on them, and measures its accuracy per lead time.
 
 ---
 
@@ -50,9 +50,9 @@ and continuously improves accuracy via per-slot bias correction.
 
 ### Self-Learning
 
-- **Per-slot bias correction** — an additive offset per 15-minute slot and
-  lead time, the mean of the model's recent errors; negative prices are forecast
-  as negative
+- **Measured bias** — the model's error with and without a per-slot bias
+  correction is recorded per lead time; no correction is applied since it added
+  error on live data (#206). Negative prices are forecast as negative
 - **Solar scaling factor** — a learned EMA ratio between Solcast's estimate and
   actual inverter output
 - **Adaptive confidence** — heuristic confidence early on, switching to a

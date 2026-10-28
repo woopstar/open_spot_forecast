@@ -5,8 +5,9 @@
 Open Spot Forecast is a Home Assistant integration that predicts electricity
 spot prices using machine learning, weather forecasts, and confirmed market
 data. The system runs a self-learning loop that compares predictions against
-actual prices and continuously improves accuracy via per-slot, per-lead-time
-bias correction.
+actual prices, retrains on them and measures its accuracy per lead time. A
+per-slot, per-lead-time bias correction exists but corrects no bucket since
+#206 (it added error on live data).
 
 ## Data Sources
 
@@ -262,7 +263,7 @@ Every 6 hours → Read weather forecast (weather.get_forecasts)
              │   Retrain model if training data changed since last training
              │   Generate 672 predictions (7 days × 96 slots)
              │   Store predictions in SQLite for future learning
-             │   Apply per-slot bias corrections
+             │   Apply per-slot bias corrections (none since #206)
              │   Record the configured external forecasts for the same slots
              │
 From 13:00 ──→ Re-read prices every ~5 min until tomorrow is complete

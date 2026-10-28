@@ -37,6 +37,21 @@ def umm_in_dk1() -> Iterator[None]:
 
 
 @pytest.fixture
+def bias_windows() -> Iterator[dict[str, int]]:
+    """Correct ``day_1`` and ``day_2`` with 4-day windows for one test (#203).
+
+    No bucket is corrected since #206 (``BIAS_WINDOW_DAYS`` is empty); the
+    offsets, their windows and their storage stay, and stay tested, through
+    this fixture.
+    """
+    windows = {"day_1": 4, "day_2": 4}
+    with patch(
+        "custom_components.open_spot_forecast.ml.bias.BIAS_WINDOW_DAYS", windows
+    ):
+        yield windows
+
+
+@pytest.fixture
 def setup_entry(
     tmp_path: Path,
 ) -> Iterator[Callable[[Any, Any], Awaitable[tuple[dict, dict[str, Any]]]]]:

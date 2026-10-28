@@ -140,7 +140,7 @@ inline a feature list. Adding/removing a feature is a model change — see the
 
 ```python
 raw_error = stored_price + stored_bias_offset - actual   # the raw model's error (#203)
-offset[slot][bucket] = mean(raw_error)   # the bucket's last 4 measured days; day_1 and day_2 only
+offset[slot][bucket] = mean(raw_error)   # the bucket's last N days (BIAS_WINDOW_DAYS); none since #206
 corrected_price = raw_price - offset[slot][bucket]       # bucket: the prediction's lead time (#118)
 ```
 
