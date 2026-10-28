@@ -26,8 +26,8 @@ def copenhagen_time_zone() -> Iterator[ZoneInfo]:
 def umm_in_dk1() -> Iterator[None]:
     """Give DK1's model the UMM outage features for one test.
 
-    No region has them since #175 (``UMM_REGIONS`` is empty); the source, the
-    storage and the features stay, and stay tested, through this fixture.
+    DK1 has not had them since #175 (``UMM_REGIONS`` is SE3 and NO2 since
+    #137); the Danish tests keep testing them through this fixture.
     """
     with patch(
         "custom_components.open_spot_forecast.ml.outages.UMM_REGIONS",

@@ -1328,15 +1328,21 @@ def test_the_outage_messages_need_the_model_and_a_region_they_help(
     assert (harness.api_data["outages"] is None) is not used
 
 
-def test_no_region_has_an_outage_source_by_default(
+def test_only_se3_and_no2_have_an_outage_source_by_default(
     make: Callable[..., Harness],
 ) -> None:
-    """``UMM_REGIONS`` and ``ENTSOE_OUTAGE_REGIONS`` are empty (#175)."""
+    """``UMM_REGIONS`` is SE3 and NO2 (#137), ``ENTSOE_OUTAGE_REGIONS`` empty."""
     for region, key in (("DK1", None), ("DK2", None), ("DE", "token")):
         harness = make(region=region, ml=True, entsoe_key=key)
 
         assert harness.updater.outages is None
         assert harness.api_data["outages"] is None
+
+    for region in ("SE3", "NO2"):
+        harness = make(region=region, ml=True)
+
+        assert harness.updater.outages is not None
+        assert harness.api_data["outages"] is harness.updater.outages.attribution
 
 
 @pytest.mark.asyncio
