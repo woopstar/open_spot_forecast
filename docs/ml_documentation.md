@@ -433,7 +433,8 @@ Germany, the Netherlands (COBRA), NO2 (Skagerrak), SE3 (Konti-Skan) and DK2
 (Great Belt), so a wind lull in Germany raises the DK1 price even when
 Jutland is windy. The single-stage model only sees DK1's own inputs.
 
-With the option **Cross-border model** (options flow, off by default; for
+With the option **Cross-border model** (options flow, on by default since
+#122; for
 DK1 and DK2, the regions in `NEIGHBOURS` in `const.py`: DK1 → DE, NL, NO2,
 SE3, DK2; DK2 → DK1, DE, SE4) the model is trained in two stages, after
 EpexPredictor (`pricepredictor.py` `get_cross_features`, BSD-3-Clause,
@@ -485,14 +486,28 @@ the development container with the option, against 0.45 s and 1.1 s without
 it (see [Training Window](#training-window) → Footprint). It was not
 measured on a Raspberry Pi: a Pi 4 core is roughly 5-10 times slower, so
 expect 50-100 s per training there at the default window, in the executor,
-a few times a day (whenever an input changed); the
-[live-accuracy procedure](#live-accuracy-94) measures it from the log. Prediction
-only adds the stage-1 forecasts of the forecast week's slots. The database
-grows by about 19 MB at 60 days and 60-70 MB at 180 days: the neighbours'
-prices and their weather (DK1: 23 weather points besides its own 4). The
-option is off by default
-because of that cost and the extra requests (energy-charts and Open-Meteo,
-per neighbour), not because of accuracy.
+a few times a day (whenever an input changed). Prediction only adds the
+stage-1 forecasts of the forecast week's slots. The database grows by about
+19 MB at 60 days and 60-70 MB at 180 days: the neighbours' prices and their
+weather (DK1: 23 weather points besides its own 4).
+
+**Measured live (#122).** On a DK1 instance (Home Assistant OS, about 23 GB
+of free memory, so not a Raspberry Pi) with the option, the near-term model
+and a 90-day window, the 100 trainings from 2026-10-12 to 10-28 took 21.0 s
+(median; 19.5-34.7 s), 12.7 s of it stage 1, about six times a day; the
+`training_seconds` / `stage1_seconds` attributes of the learning-metrics
+sensor, read from the recorder history. Its learning database was 71 MB. A
+Raspberry Pi is still unmeasured.
+
+**On by default since #122.** Off until then because of that cost and the
+extra requests (energy-charts and Open-Meteo, per neighbour), not because
+of accuracy: 17-18 % lower MAE for DK1 and 14-16 % for DK2 at every
+horizon in the backtest (see [Backtesting](#backtesting)). 16 live days with
+it (see [Live accuracy](#live-accuracy-94)) found the training cost
+acceptable on a real instance, so new entries and entries that never saved
+the option get it; the options flow still turns it off. It only applies in
+`NEIGHBOURS` (DK1, DK2); other regions are single-stage whatever the
+option says.
 
 ## Near-Term Model (#135)
 
@@ -802,7 +817,7 @@ MAE over days 2-7 (after 13:00, day 1 is mostly known prices) and decides
 the default. Four configurations: the single-stage model without and with
 the gas price (`--gas`; on in production for every region in
 `GAS_PRICE_REGIONS`, DK1 and DK2 included) and the cross-border model
-(`--cross-border`, option off by default) without and with it. Recorded
+(`--cross-border`, option on by default since #122) without and with it. Recorded
 2026-10-02.
 
 **DK1, single-stage**
@@ -1396,6 +1411,34 @@ bias that had moved on. No window, pooled offset or shrinkage scored better
 than no correction (tables in
 [Bias Correction](self_learning.md#which-buckets)), so since #206 no bucket
 is corrected and "with" equals "without" in later exports.
+
+**Second DK1 export, the cross-border model on (2026-10-13 to 2026-10-28,
+#122).** Taken 2026-10-28 13:32 UTC from an instance with the cross-border
+model, the near-term model, no outage features and a 90-day window since
+2026-10-12 13:52 UTC (`model_options_since`), on v0.2.0 until 2026-10-14 and
+v0.2.1 (the raw-error bias offsets of #203 for `day_1` and `day_2`) since.
+`--since 2026-10-13`, EUR ct/kWh:
+
+| Bucket     | Samples | Days |  MAE | RMSE |  Bias | Daily MAE | Daily RMSE |
+| :--------- | ------: | ---: | ---: | ---: | ----: | --------: | ---------: |
+| day_1      |    1487 |   16 | 2.32 | 3.22 | +0.22 |      2.23 |       3.08 |
+| day_2      |    9662 |   16 | 2.69 | 3.42 | +0.42 |      2.65 |       3.39 |
+| day_3      |   11028 |   16 | 2.72 | 3.44 | +0.49 |      2.68 |       3.39 |
+| day_4_plus |   54540 |   16 | 3.91 | 5.30 | +1.42 |      4.06 |       5.47 |
+
+Per ISO week the MAE was 2.17 / 2.94 / 3.15 / 3.97 (week of 2026-10-12),
+1.63 / 2.27 / 2.30 / 3.38 (2026-10-19) and 4.01 / 3.07 / 2.76 / 5.36 (the
+three days from 2026-10-26) for day 1 / 2 / 3 / 4+. The evaluation series
+(the prediction closest to 24 h ahead, 8 days, 672 slots) had MAE 2.58, RMSE
+3.47 and bias +0.32; the latest holdout MAE was 2.67 (RMSE 3.84, 8644
+training samples). Against the first export (15 days, most of them without
+the near-term model and with the pooled offsets) every bucket is 0.4-0.9
+lower, but the periods, the prices and the model differ in more than the
+cross-border model, and there is no live period without it: the default
+rests on the backtest's gain and on the cost measured here (see
+[Cross-Border Model](#cross-border-model-29)). The `day_1` and `day_2` rows
+include the bias offsets of #203, which raised their error (#206, the
+table above).
 
 ### Benchmark against external forecasts (#115)
 

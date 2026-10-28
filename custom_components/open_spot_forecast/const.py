@@ -235,9 +235,11 @@ HOLIDAY_SUBDIVISIONS: dict[str, tuple[str, ...]] = {
 # region's model can take the price forecasts of the zones its interconnectors
 # reach (DK1: Germany, the Netherlands (COBRA), NO2 (Skagerrak), SE3
 # (Konti-Skan) and DK2 (Great Belt); DK2: DK1, Germany (Kontek) and SE4
-# (Øresund)). Off by default: it trains extra models for every neighbour
+# (Øresund)). On by default since #122: it trains extra models for every
+# neighbour (about 20 s per training on a live DK1 instance) for 14-18 % lower
+# MAE in the backtest
 CONF_CROSS_BORDER = "cross_border"
-DEFAULT_CROSS_BORDER = False
+DEFAULT_CROSS_BORDER = True
 NEIGHBOURS: dict[str, tuple[str, ...]] = {
     "DK1": ("DE", "NL", "NO2", "SE3", "DK2"),
     "DK2": ("DK1", "DE", "SE4"),
