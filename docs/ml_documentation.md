@@ -1283,9 +1283,9 @@ learning-database export:
   would flatter it). The weights over every slot are listed below the table.
   An error is the slot's mean over the forecasts of the bucket, so a blend's
   error is the weighted sum of its members', and the numbers are a little
-  lower than the per-forecast ones above. **No result is recorded yet, and
-  no blend is shipped**: instances keep these errors from the release with
-  #157 on, so the first export with 14 days of them decides.
+  lower than the per-forecast ones above. **No blend is shipped**: on the
+  first evaluation (2026-10-28, below) a blend won in every bucket, and it
+  waits for the source's terms.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
   count, how long the latest training took (`training_seconds`, and
   `stage1_seconds` with the cross-border model), the model options and
@@ -1439,6 +1439,45 @@ rests on the backtest's gain and on the cost measured here (see
 [Cross-Border Model](#cross-border-model-29)). The `day_1` and `day_2` rows
 include the bias offsets of #203, which raised their error (#206, the
 table above).
+
+**Blend with Stromligning's forecast, 2026-10-28 export (#157).** The first
+export with 14 or more days of `external_slot_errors`: 2026-10-12 to 10-28
+(16 days), one source. The instance recorded Stromligning's forecast **ex
+VAT** (`sensor.stromligning_forecasts_ex_vat`) while its entry shows prices
+with 25 % VAT and tariffs, so every forecast `p` was converted as if it
+included VAT: `c = p / 1.25 − tariff` instead of `p − tariff`, 0.2 × `p`
+too low (bias −4.5 to −4.8 ct/kWh as recorded). The VAT variant is exactly
+1.25 × the ex-VAT one, so what the right sensor would have stored is
+`1.25 × c + 0.25 × tariff`; the tariff per local 15-minute slot is
+Stromligning's current price ex VAT minus its spot price ex VAT (0.21 /
+0.37 / 0.83 DKK/kWh on 2026-10-28, the winter schedule of the whole
+period). With that correction, EUR ct/kWh, MAE / RMSE over the slots both
+have:
+
+| Bucket     | Slots | Model       | Stromligning (corrected) | Equal weights | Inverse MSE | Inverse-MSE weights (model / source) |
+| :--------- | ----: | :---------- | :----------------------- | :------------ | :---------- | -----------------------------------: |
+| day_1      |    14 | 1.21 / 1.92 | 1.60 / 2.01              | 1.19 / 1.64   | (too few)   |                                    — |
+| day_2      |  1480 | 2.57 / 3.28 | 2.14 / 2.70              | 1.93 / 2.53   | 2.05 / 2.66 |                          0.40 / 0.60 |
+| day_3      |  1426 | 2.47 / 3.13 | 2.46 / 3.14              | 2.20 / 2.74   | 2.33 / 2.93 |                          0.50 / 0.50 |
+| day_4_plus |  1330 | 3.05 / 3.75 | 3.14 / 4.01              | 2.86 / 3.57   | 2.92 / 3.65 |                          0.53 / 0.47 |
+
+In the entry's terms Stromligning's forecast is as good as the model (better
+at `day_2`), the two err on opposite sides (bias +0.30 to +1.09 against
+−0.37 to −1.16), and **a blend beats the model in every bucket with enough
+slots**: the equal-weight mean by 0.64 at `day_2` (25 %), 0.27 at `day_3`
+and 0.19 at `day_4_plus`, the inverse-MSE blend a little less (its weights
+lag the earlier days). As recorded, uncorrected, the source looked 2 ct/kWh
+worse and the blend's gain was only the offset pulling the model's bias
+towards zero; that reading is wrong. Caveats: the tariff profile of one
+day is applied to all 16; the model's `day_1` and `day_2` errors include
+the bias offsets of #203, which raised them by about 0.3 (#206, above), so the
+gain over the raw model is smaller, though still clear at `day_2`; `day_1`
+has 14 slots (the source rarely forecasts under 24 hours ahead).
+
+**No blend is shipped yet**: it waits for Stromligning's terms to allow
+their forecast as an input of a shipped option. A later export recorded
+with `sensor.stromligning_forecasts_vat` (no correction needed) and without
+bias offsets confirms these numbers.
 
 ### Benchmark against external forecasts (#115)
 
