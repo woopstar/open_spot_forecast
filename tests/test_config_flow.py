@@ -338,17 +338,18 @@ async def test_the_entsoe_key_can_be_added_in_the_options(
 async def test_the_cross_border_model_is_an_option_for_regions_with_neighbours() -> (
     None
 ):
-    """Off by default (#29); only DK1 and DK2 have neighbours configured."""
+    """On by default since #122; only DK1 and DK2 have neighbours configured."""
     flow = _options_flow()
     await flow.async_step_init()
     schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
     key = next(k for k in schema if str(k) == "cross_border")
-    assert key.default() is False
+    assert key.default() is True
 
-    flow.config_entry.options = {"cross_border": True}
+    # A user who turned it off keeps it off
+    flow.config_entry.options = {"cross_border": False}
     await flow.async_step_init()
     schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
-    assert next(k for k in schema if str(k) == "cross_border").default() is True
+    assert next(k for k in schema if str(k) == "cross_border").default() is False
 
     flow.config_entry.data = {CONF_REGION: "SE3"}
     await flow.async_step_init()

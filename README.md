@@ -153,9 +153,10 @@ for the Stromligning entities in its `apps.yaml`: see
   slot, as known when each price was set. No region fetches them at the
   moment: the backtest found no region where they lower the error at every
   forecast day
-- **Neighbouring zones** (optional, DK1/DK2) — the cross-border model
-  learns the neighbours' day-ahead prices from their weather and feeds the
-  forecasts to the region's model (more CPU per training)
+- **Neighbouring zones** (DK1/DK2, on by default, can be turned off) — the
+  cross-border model learns the neighbours' day-ahead prices from their
+  weather and feeds the forecasts to the region's model (more CPU per
+  training: about 20 s instead of a few seconds)
 - **Met.no weather** — current weather + 48h hourly forecast (built into HA)
 - **Open-Meteo** — 15-minute weather at several points across the bidding
   zone, 8 days ahead (no key; weather data by Open-Meteo.com, CC BY 4.0)

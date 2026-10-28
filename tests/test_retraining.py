@@ -344,7 +344,9 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
     with (
         patch(f"{module}.async_get_integration", new=AsyncMock()),
         patch(f"{module}.SensorReader", return_value=reader),
-        patch(f"{module}.SpotPricePredictor", return_value=ml_predictor),
+        patch(
+            f"{module}.SpotPricePredictor", return_value=ml_predictor
+        ) as predictor_cls,
         patch(f"{module}.updater.NordpoolPrognosisSource", autospec=True),
         patch(f"{module}.updater.OpenMeteoWeatherSource", autospec=True),
         patch(f"{module}.async_track_time_change", side_effect=track_time_change),
@@ -353,6 +355,9 @@ async def test_tomorrow_prices_arrival_refreshes_forecast(tmp_path: Path) -> Non
     ):
         assert await async_setup_entry(hass, entry) is True
         assert ml_predictor.predict.call_count == 1
+        # An entry that never saved the option gets the cross-border model (#122)
+        _hass, _region, _tz, _days, cross_border = predictor_cls.call_args.args
+        assert cross_border is True
 
         # The history backfill starts in the background at setup (#32)
         _hass_arg, backfill, name = entry.async_create_background_task.call_args.args

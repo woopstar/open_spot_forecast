@@ -329,7 +329,7 @@ NaN before the first fetch and elsewhere, 0 when nothing is announced. Never agg
 latest versions only. `for_slot()` bisects a step function built once per UTC day and origin from
 the periods in force (#167): never loop over the stored periods per slot (ENTSO-E archives hold
 tens of thousands a month).
-The cross-border model (#29, option `cross_border`, regions in `NEIGHBOURS`) lives in
+The cross-border model (#29, option `cross_border`, on by default since #122, regions in `NEIGHBOURS`) lives in
 `ml/cross_border.py`: stage-1 models per neighbour (`Stage1Model`, out-of-sample per
 `local_day_fold`) whose columns follow the 26 features via `ModelMixin._model_inputs()`;
 build model input rows there, never with `build_feature_vector()` alone.
