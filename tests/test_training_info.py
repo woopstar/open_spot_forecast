@@ -110,7 +110,7 @@ def test_the_cross_border_stage_1_time_is_stored_with_that_model(
 def test_a_region_without_the_optional_parts_says_so(
     make_predictor: Callable[..., SpotPricePredictor],
 ) -> None:
-    predictor = make_predictor("SE3", training_days=60)
+    predictor = make_predictor("SE4", training_days=60)
 
     assert predictor.model_options() == {
         "cross_border": False,
@@ -118,6 +118,8 @@ def test_a_region_without_the_optional_parts_says_so(
         "near_term": False,
         "outages": False,
     }
+    # SE3 has the UMM outage features (#137)
+    assert make_predictor("SE3", training_days=60).model_options()["outages"] is True
 
 
 @pytest.mark.asyncio

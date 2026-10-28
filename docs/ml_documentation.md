@@ -370,13 +370,14 @@ messages stored a slot nothing is announced for is 0; before the first
 fetch, and outside `UMM_REGIONS`, the two features are NaN in both phases.
 Nord Pool publishes UMMs for its own delivery areas (`UMM_AREAS`: DK, SE,
 NO, FI and the Baltics), and the backtest can measure every one of them, but
-the model uses them only where the backtest found they help, and since #175
-that is **no region**: `UMM_REGIONS` is empty, so the two features are
-unknown (NaN) in every installation's rows and no instance fetches the
-messages. DK1 had them from #123 to #175; with the near-term model they
-lower no day's error there, and on recent origins they raise days 2-7 (see
-[Nord Pool UMM outages](#nord-pool-umm-outages-123)). In DK2 they lower the
-day-1 error and raise the error at days 2-7. The source, the tables and
+the model uses them only where the backtest found they help: since #137
+that is **SE3 and NO2** (`UMM_REGIONS`), the only areas where they lower the
+error at every forecast day. Everywhere else the two features are unknown
+(NaN) in every installation's rows and no instance fetches the messages.
+DK1 had them from #123 to #175; with the near-term model they lower no
+day's error there, and on recent origins they raise days 2-7. In DK2, SE4,
+FI, EE, LT and LV they lower the day-1 error at best and raise a later
+day's (see [Nord Pool UMM outages](#nord-pool-umm-outages-123)). The source, the tables and
 `OutageIndex` stay, so the backtest keeps measuring them. Messages an
 instance stored before #175 stay in its database, unused.
 
@@ -2182,7 +2183,7 @@ What the numbers say:
   two-day-old price misleads when the level moves fast. The year, which
   `NEAR_TERM_DAYS` = 2 was chosen on, has day 2 0.06 better.
 
-**Decision**: `UMM_REGIONS` is empty. No region meets the rule (a lower
+**Decision (#175, extended by #137 below)**: `UMM_REGIONS` is empty. No Danish region meets the rule (a lower
 day-1 error and no higher error later) any more, with the features in both
 models or in the near-term model only. The source, the storage and
 `OutageIndex` stay, and `UMM_AREAS` keeps every Nord Pool area measurable.
@@ -2193,6 +2194,51 @@ outage state as known at each lead time, not at the gate.
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --outages none
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2025-10-06 --end 2026-10-05 --outages umm
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --start 2026-08-27 --end 2026-10-05 --outages umm --outages-near-term-only
+```
+
+**The other Nord Pool areas (#137).** SE3, SE4, NO2, FI, EE, LT and LV, 365
+daily origins from 2025-10-21 to 2026-10-20, 60-day window, `--horizon-days
+7`, production model (NumPy GBM, one model: none of them has the near-term
+model; `--gas` in SE4 and NO2, the regions of these with the gas price).
+MAE in EUR ct/kWh, **without / with** the two outage features, and the
+change. Recorded 2026-10-28.
+
+| Zone | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          | Change 1d / worst of 2-7d |
+| ---- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ------------------------: |
+| SE3  | 2.31 / 2.19 | 2.50 / 2.41 | 2.55 / 2.48 | 2.57 / 2.51 | 2.58 / 2.53 | 2.60 / 2.56 | 2.62 / 2.58 |             −0.12 / −0.04 |
+| NO2  | 1.75 / 1.67 | 1.90 / 1.84 | 1.95 / 1.89 | 1.97 / 1.91 | 1.98 / 1.93 | 2.02 / 1.96 | 2.05 / 1.99 |             −0.08 / −0.05 |
+| SE4  | 2.89 / 2.76 | 3.13 / 3.08 | 3.21 / 3.13 | 3.25 / 3.18 | 3.27 / 3.27 | 3.30 / 3.34 | 3.34 / 3.36 |             −0.13 / +0.04 |
+| FI   | 2.68 / 2.57 | 2.94 / 2.89 | 3.00 / 2.98 | 3.00 / 3.03 | 3.05 / 3.05 | 3.10 / 3.10 | 3.14 / 3.13 |             −0.11 / +0.03 |
+| LT   | 3.98 / 3.90 | 4.24 / 4.23 | 4.31 / 4.31 | 4.39 / 4.39 | 4.47 / 4.46 | 4.54 / 4.53 | 4.55 / 4.56 |             −0.08 / +0.01 |
+| LV   | 3.96 / 3.84 | 4.22 / 4.34 | 4.25 / 4.40 | 4.30 / 4.42 | 4.35 / 4.51 | 4.41 / 4.55 | 4.46 / 4.56 |             −0.12 / +0.16 |
+| EE   | 3.93 / 3.94 | 4.12 / 4.14 | 4.16 / 4.18 | 4.17 / 4.20 | 4.25 / 4.28 | 4.28 / 4.31 | 4.30 / 4.32 |             +0.01 / +0.03 |
+
+Day 1 improves in every area but EE, as in Denmark, with the RMSE down too
+(SE3 3.10 → 2.96, NO2 2.52 → 2.42). SE3 and NO2 also gain at every later
+day; their outages (Swedish nuclear units, Norwegian hydro and the
+interconnectors) are large next to the zone. SE4 and FI trade a later day
+for day 1 (+0.04 at 6d, +0.03 at 4d), LV shows DK2's pattern (+0.10 to +0.16
+at days 2-7) and EE gains nothing. The three candidates on the 40 origins
+from 2026-09-11 to 2026-10-20, where #175 found DK1's loss:
+
+| Zone | 1d          | 2d          | 3d          | 4d          | 5d          | 6d          | 7d          |
+| ---- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
+| SE3  | 2.69 / 2.60 | 2.76 / 2.74 | 2.79 / 2.79 | 2.80 / 2.85 | 2.74 / 2.80 | 2.71 / 2.77 | 2.71 / 2.74 |
+| NO2  | 2.55 / 2.30 | 2.74 / 2.59 | 2.86 / 2.66 | 2.88 / 2.63 | 2.83 / 2.57 | 2.83 / 2.55 | 2.81 / 2.55 |
+| LT   | 5.78 / 5.61 | 6.33 / 6.12 | 6.08 / 6.03 | 6.15 / 6.16 | 6.22 / 6.34 | 6.36 / 6.52 | 6.38 / 6.74 |
+
+**Decision (#137)**: `UMM_REGIONS` is `{"SE3", "NO2"}`, the areas with a
+lower day-1 error and no higher error later over the year. NO2 gains at
+every day on the recent origins too (−0.15 to −0.28); SE3 is 0.05-0.06 worse
+at days 4-6 there, within what 40 origins move, against a gain at every day
+of the year. LT met the rule on the year only within ±0.01, and its recent
+days 5-7 are 0.12-0.36 worse, DK1's pattern of #175: it stays off with SE4,
+FI, EE and LV.
+
+```bash
+python -m scripts.backtest --region SE3 --window-days 60 --horizon-days 7 --start 2025-10-21 --end 2026-10-20 --models naive,current --outages none
+python -m scripts.backtest --region SE3 --window-days 60 --horizon-days 7 --start 2025-10-21 --end 2026-10-20 --models naive,current --outages umm
+python -m scripts.backtest --region NO2 --window-days 60 --horizon-days 7 --start 2025-10-21 --end 2026-10-20 --models naive,current --gas --outages umm
 ```
 
 ### ENTSO-E outages (#138)
