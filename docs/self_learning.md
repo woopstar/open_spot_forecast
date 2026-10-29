@@ -387,12 +387,19 @@ metric, `bias` and `samples` per source for its bucket, next to its own state.
 (see [Live accuracy](ml_documentation.md#live-accuracy-94)).
 
 **Choosing the sensors.** Pick the variant that matches how this integration
-shows prices: with the default VAT of 25 % that is Stromligning's
-`forecasts_vat` sensor (consumer price with tariffs and VAT, enabled with
-Stromligning's forecast option), and an Energi Data Service sensor whose cost
-template and VAT give the same total. A source in other terms (no VAT, no
-tariffs, øre instead of kr) is still recorded, but its `bias` shows the
-constant difference and its MAE includes it.
+shows prices: the same unit, with tariffs, and with VAT exactly when VAT is
+set in the integration. With the default VAT of 25 % that is Stromligning's
+`sensor.stromligning_forecasts_vat` (consumer price with tariffs and VAT,
+enabled with Stromligning's forecast option), **not**
+`sensor.stromligning_forecasts_ex_vat` next to it, and an Energi Data Service
+sensor whose cost template and VAT give the same total. A source in other
+terms (no VAT, no tariffs, øre instead of kr) is still recorded, but its
+error is wrong, and not only by a constant: the ex-VAT forecast on an entry
+with 25 % VAT is converted as `p / 1.25 − tariff` instead of `p − tariff`,
+0.2 × its price too low (−4.5 to −4.8 ct/kWh on the DK1 instance of #157),
+which the forecast MAE/RMSE sensors' `external` attribute shows as a large
+negative `bias`. Switching the sensor fixes new forecasts; the errors
+already recorded keep the old terms until they leave the rolling 30 days.
 
 **Blending is evaluated, not done** (#157). The forecast is the model's alone:
 no option blends it with a source. Whether a blend would be better is measured
