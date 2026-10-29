@@ -78,7 +78,9 @@ and retrains on them, and measures its accuracy per lead time.
 - Optional comparison with other forecasts: pick Stromligning's forecast
   sensor or an Energi Data Service sensor as an external forecast sensor and
   the forecast MAE/RMSE sensors show its error next to the ML forecast's, per
-  lead time (it never changes the ML forecast)
+  lead time (it never changes the ML forecast). Pick the variant in the same
+  terms as this integration's prices: with VAT set (the default 25 %) that is
+  `sensor.stromligning_forecasts_vat`, not `sensor.stromligning_forecasts_ex_vat`
 - Optional Predbat rate entities (import/export, today/tomorrow) in the
   shape of the Stromligning entities Predbat reads, with the 7-day forecast:
   see [QUICKSTART.md → Predbat](QUICKSTART.md#predbat)
