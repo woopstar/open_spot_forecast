@@ -391,7 +391,10 @@ shows prices: the same unit, with tariffs, and with VAT exactly when VAT is
 set in the integration. With the default VAT of 25 % that is Stromligning's
 `sensor.stromligning_forecasts_vat` (consumer price with tariffs and VAT,
 enabled with Stromligning's forecast option), **not**
-`sensor.stromligning_forecasts_ex_vat` next to it, and an Energi Data Service
+`sensor.stromligning_forecasts_ex_vat` next to it, even though the consumer
+price sensor is the ex-VAT one (the integration adds VAT to that input
+itself, while an external forecast is compared with the prices as shown),
+and an Energi Data Service
 sensor whose cost template and VAT give the same total. A source in other
 terms (no VAT, no tariffs, øre instead of kr) is still recorded, but its
 error is wrong, and not only by a constant: the ex-VAT forecast on an entry
