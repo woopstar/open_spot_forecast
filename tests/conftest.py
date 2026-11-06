@@ -60,8 +60,8 @@ def setup_entry(
     The integration runs against a mock Home Assistant with a Stromligning
     and a temperature sensor configured. ``reader`` replaces SensorReader and
     ``ml_predictor`` replaces SpotPricePredictor. ``setup`` returns the
-    entry's ``api_data`` and its time-triggered callbacks by function name
-    (e.g. ``"new_quarter"``). The patches stay active for the whole test.
+    entry's ``api_data`` and its time-triggered callbacks and the options
+    update listener by function name (e.g. ``"new_quarter"``). The patches stay active for the whole test.
     """
     from custom_components.open_spot_forecast import async_setup_entry
     from custom_components.open_spot_forecast.const import (
@@ -114,6 +114,10 @@ def setup_entry(
                 coro.close() if name == "open_spot_forecast_history_backfill" else None
             )
             entry.entry_id = "test"
+            # The options update listener (#245) is a callback as well
+            entry.add_update_listener.side_effect = lambda listener: (
+                callbacks.setdefault(listener.__name__, listener) and Mock()
+            )
             entry.options = {}
             entry.data = {
                 CONF_REGION: "DK1",
