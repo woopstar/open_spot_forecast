@@ -1,7 +1,7 @@
 """Tests for the Open Spot Forecast sensor platform."""
 
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -44,6 +44,8 @@ def _hass() -> Mock:
     """Return a mock Home Assistant whose ``data`` attribute is a real dict."""
     hass = Mock()
     hass.data = {}
+    # Run executor jobs inline (the ML sensor builds its state in one)
+    hass.async_add_executor_job = AsyncMock(side_effect=lambda job, *args: job(*args))
     return hass
 
 
