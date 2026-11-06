@@ -501,3 +501,14 @@ its own worktree, `git worktree add /workspaces/worktrees/osf-<issue> -b <branch
 origin/main` (the `osf-worktrees` volume), and is removed after the merge
 (`git worktree remove`, `git branch -D`). `scripts/quality.sh` namespaces the mypy, ruff
 and pytest caches per worktree path. Procedure: `osf-pre-flight`, `osf-pr-workflow`.
+
+## Home Assistant Marketplace Replaces HACS (#244)
+
+Home Assistant 2026.11 ships HACS in core as the **Marketplace**. HACS installs migrate on the first start. OSF is not in the hacs/default catalog, so new users add it with **Add from link**. The catalog PR is the maintainer's call (it must come from the owner's personal account).
+
+What the Marketplace reads (verified for HSEM, woopstar/hsem#1354, against `homeassistant/components/marketplace`):
+
+- `hacs.json` is read **from the release tag**. A release whose `homeassistant` is newer than the running core is refused. `main` declares `2026.10.0`, the core CI pins and tests against. Bump it (and `OLDEST_SUPPORTED_HOMEASSISTANT` in `tests/test_marketplace_metadata.py`) when the code needs a newer core.
+- The version shown and compared is the release **`tag_name`** (`v1.0.0`), never the manifest `version`. The manifest `version` only has to be loadable (CalVer/SemVer/SimpleVer/BuildVer/PEP 440). `release.yml` writes the tag version into the ZIP only, so the tagged tree keeps `0.2.0-beta1`. That is harmless: from the tree the Marketplace only reads `domain`, `name`, `codeowners` and `config_flow`. Do not change the release flow for this.
+- The HACS action's `brands` check passes with `custom_components/open_spot_forecast/brand/icon.png` (256 px) and `icon@2x.png` (512 px), copies of `assets/`. The release ZIP is built from the integration folder, so they ship. `hacs-validate.yml` has no `ignore`; the catalog does not accept ignored checks.
+- `manifest.json` `categories` is `["energy.energy_prices"]`, from the published integration category list. hassfest rejects a parent (`energy`) next to its subcategory.

@@ -169,7 +169,7 @@ for the Stromligning entities in its `apps.yaml`: see
 
 ## Quick Start
 
-1. **Install** Open Spot Forecast via HACS or manually.
+1. **Install** Open Spot Forecast via the Marketplace (Home Assistant 2026.11+), HACS or manually.
 2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
 3. **Choose a price source** — Stromligning's sensors (DK1/DK2, consumer
    prices with tariffs) or the day-ahead price (all regions, spot price +
@@ -197,7 +197,23 @@ To use this package, you need the following integrations:
 
 ## Installation
 
-### Method 1: HACS (Home Assistant Community Store)
+Open Spot Forecast needs Home Assistant 2026.10 or newer.
+
+### Method 1: Marketplace (Home Assistant 2026.11 and newer)
+
+Home Assistant 2026.11 ships HACS in core as the **Marketplace**. Open Spot
+Forecast is not in its catalog, so add it from its link:
+
+1. Go to **Settings** -> **Marketplace**.
+2. Select **Add from link** and enter
+   `https://github.com/woopstar/open_spot_forecast`.
+3. Select **Install**.
+4. Restart Home Assistant.
+
+An install made with HACS moves to the Marketplace by itself on the first
+start of 2026.11. Nothing needs to be done.
+
+### Method 2: HACS (Home Assistant 2026.10)
 
 1. In HACS, go to **Integrations**.
 2. Click the three dots in the top-right corner, and select **Custom repositories**.
@@ -207,7 +223,7 @@ To use this package, you need the following integrations:
 5. The integration will now appear in HACS under the **Integrations** section. Click **Install**.
 6. Restart Home Assistant.
 
-### Method 2: Manual Installation
+### Method 3: Manual Installation
 
 1. Copy the `open_spot_forecast` folder to your `custom_components` folder in your Home Assistant configuration.
 2. Restart Home Assistant.
@@ -221,7 +237,12 @@ To use this package, you need the following integrations:
 2. Find the **Open Spot Forecast** integration, click the menu icon (three dots), and select **Delete**.
 3. Restart Home Assistant.
 
-### If installed via HACS
+### If installed via the Marketplace
+
+4. Go to **Settings** -> **Marketplace**, find Open Spot Forecast, click the menu icon (three dots), and select **Remove**.
+5. Restart Home Assistant again.
+
+### If installed via HACS (Home Assistant 2026.10)
 
 4. In HACS, go to **Integrations**, find Open Spot Forecast, click the menu icon (three dots), and select **Remove**.
 5. Restart Home Assistant again.

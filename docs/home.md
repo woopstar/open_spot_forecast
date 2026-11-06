@@ -22,7 +22,7 @@ prices and continuously improves accuracy via per-slot bias correction.
 
 ## Quick Start
 
-1. **Install** Open Spot Forecast via HACS or manually.
+1. **Install** Open Spot Forecast via the Marketplace (Home Assistant 2026.11+), HACS or manually.
 2. **Configure** your region (DK1, DK2, SE3, SE4, NO2, FI, EE, LT, LV, NL, BE, FR, DE).
 3. **Add a price source** — Stromligning (recommended) or Nordpool.
 4. **Add weather sensors** (optional) to score the local weather forecast in
