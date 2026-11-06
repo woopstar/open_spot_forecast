@@ -74,7 +74,7 @@ from .const import (
     STROMLIGNING_REGIONS,
     TRAINING_DAYS_OPTIONS,
 )
-from .sensor_entities import external_forecast_sensors
+from .sensor_entities import configured_option, external_forecast_sensors
 from .validation import vol
 
 _LOGGER = logging.getLogger(__name__)
@@ -129,6 +129,17 @@ def normalize_training_days(user_input: dict[str, Any]) -> dict[str, Any]:
 def external_forecast_selector() -> Any:
     """Return the picker of the sensors whose forecasts are recorded (#120)."""
     return selector({"entity": {"domain": "sensor", "multiple": True}})
+
+
+# The optional weather and solar sensors. No entity is suggested for them: a
+# default would be saved when the field is left or cleared (#239, #245)
+OPTIONAL_SENSOR_KEYS = (
+    CONF_WIND_SPEED_SENSOR,
+    CONF_WIND_DIRECTION_SENSOR,
+    CONF_SOLAR_POWER_SENSOR,
+    CONF_SOLAR_FORECAST_SENSOR,
+    CONF_TEMPERATURE_SENSOR,
+)
 
 
 class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -241,35 +252,33 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(
                     CONF_WIND_SPEED_SENSOR,
-                    default=self._data.get(
-                        CONF_WIND_SPEED_SENSOR, "weather.forecast_mellemlokken_23"
-                    ),
+                    description={
+                        "suggested_value": self._data.get(CONF_WIND_SPEED_SENSOR)
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 vol.Optional(
                     CONF_WIND_DIRECTION_SENSOR,
-                    default=self._data.get(
-                        CONF_WIND_DIRECTION_SENSOR, "weather.forecast_mellemlokken_23"
-                    ),
+                    description={
+                        "suggested_value": self._data.get(CONF_WIND_DIRECTION_SENSOR)
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 vol.Optional(
                     CONF_SOLAR_POWER_SENSOR,
-                    default=self._data.get(
-                        CONF_SOLAR_POWER_SENSOR, "sensor.power_inverter_input_total"
-                    ),
+                    description={
+                        "suggested_value": self._data.get(CONF_SOLAR_POWER_SENSOR)
+                    },
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_SOLAR_FORECAST_SENSOR,
-                    default=self._data.get(
-                        CONF_SOLAR_FORECAST_SENSOR,
-                        "sensor.solcast_pv_forecast_forecast_today",
-                    ),
+                    description={
+                        "suggested_value": self._data.get(CONF_SOLAR_FORECAST_SENSOR)
+                    },
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_TEMPERATURE_SENSOR,
-                    default=self._data.get(
-                        CONF_TEMPERATURE_SENSOR,
-                        "sensor.metroair_330_outdoor_temperature",
-                    ),
+                    description={
+                        "suggested_value": self._data.get(CONF_TEMPERATURE_SENSOR)
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 # Other forecasts to record and score (#120); none by default
                 vol.Optional(
@@ -329,6 +338,11 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
             # list, or the sensors configured before would come back
             if external_forecast_sensors(self.config_entry):
                 user_input.setdefault(CONF_EXTERNAL_FORECAST_SENSORS, [])
+            # The same for an optional sensor: store None, or the one saved
+            # at setup would be read again (#239, #245)
+            for key in OPTIONAL_SENSOR_KEYS:
+                if configured_option(self.config_entry, key):
+                    user_input.setdefault(key, None)
             return self.async_create_entry(
                 title=self.config_entry.data.get(CONF_REGION, DEFAULT_REGION),
                 data=normalize_training_days(user_input),
@@ -459,35 +473,43 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                 ): selector({"entity": {"domain": "binary_sensor"}}),
                 vol.Optional(
                     CONF_WIND_SPEED_SENSOR,
-                    default=self.config_entry.options.get(
-                        CONF_WIND_SPEED_SENSOR, "weather.forecast_mellemlokken_23"
-                    ),
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_WIND_SPEED_SENSOR
+                        )
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 vol.Optional(
                     CONF_WIND_DIRECTION_SENSOR,
-                    default=self.config_entry.options.get(
-                        CONF_WIND_DIRECTION_SENSOR, "weather.forecast_mellemlokken_23"
-                    ),
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_WIND_DIRECTION_SENSOR
+                        )
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 vol.Optional(
                     CONF_SOLAR_POWER_SENSOR,
-                    default=self.config_entry.options.get(
-                        CONF_SOLAR_POWER_SENSOR, "sensor.power_inverter_input_total"
-                    ),
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_SOLAR_POWER_SENSOR
+                        )
+                    },
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_SOLAR_FORECAST_SENSOR,
-                    default=self.config_entry.options.get(
-                        CONF_SOLAR_FORECAST_SENSOR,
-                        "sensor.solcast_pv_forecast_forecast_today",
-                    ),
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_SOLAR_FORECAST_SENSOR
+                        )
+                    },
                 ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_TEMPERATURE_SENSOR,
-                    default=self.config_entry.options.get(
-                        CONF_TEMPERATURE_SENSOR,
-                        "sensor.metroair_330_outdoor_temperature",
-                    ),
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_TEMPERATURE_SENSOR
+                        )
+                    },
                 ): selector({"entity": {"domain": ["sensor", "weather"]}}),
                 # Other forecasts to record and score (#120)
                 vol.Optional(

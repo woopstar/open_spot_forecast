@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 
@@ -39,6 +40,11 @@ def external_forecast_sensors(entry: ConfigEntry) -> tuple[str, ...]:
     return tuple(sensors or ())
 
 
+def configured_option(entry: ConfigEntry, key: str, default: Any = None) -> Any:
+    """Return an entry's value: the saved options first, then the setup data."""
+    return entry.options.get(key, entry.data.get(key, default))
+
+
 @dataclass(frozen=True, slots=True)
 class SensorEntities:
     """The external entities a config entry reads.
@@ -65,7 +71,7 @@ class SensorEntities:
         """Read the configured entity ids from a config entry."""
 
         def option(key: str, default: str | None = None) -> str | None:
-            value: str | None = entry.options.get(key, entry.data.get(key, default))
+            value: str | None = configured_option(entry, key, default)
             return value
 
         return cls(
