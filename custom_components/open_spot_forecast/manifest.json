@@ -8,6 +8,9 @@
         "solcast_solar",
         "recorder"
     ],
+    "categories": [
+        "energy.energy_prices"
+    ],
     "codeowners": [
         "@woopstar"
     ],

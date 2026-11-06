@@ -190,7 +190,7 @@ automation:
 The examples below were tested on Home Assistant 2026.9 with
 [ApexCharts Card](https://github.com/RomRider/apexcharts-card) 2.2.3 and
 [Plotly Graph Card](https://github.com/dbuezas/lovelace-plotly-graph-card)
-3.3.5 (both from HACS). Entity IDs contain the region: replace `dk1` with
+3.3.5 (both from the Marketplace, or HACS before Home Assistant 2026.11). Entity IDs contain the region: replace `dk1` with
 yours (check **Developer Tools** → **States**). Prices are the spot price with
 each slot's tariffs (Stromligning source), surcharge and VAT.
 
