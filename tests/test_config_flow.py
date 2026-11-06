@@ -355,3 +355,8 @@ async def test_the_cross_border_model_is_an_option_for_regions_with_neighbours()
     await flow.async_step_init()
     schema = flow.async_show_form.call_args.kwargs["data_schema"].schema
     assert "cross_border" not in {str(k) for k in schema}
+
+
+def test_the_flow_does_not_set_the_obsolete_connection_class() -> None:
+    """``iot_class`` in manifest.json replaces it; HA 2026.11 warns on its use."""
+    assert "CONNECTION_CLASS" not in vars(OpenSpotForecastConfigFlow)

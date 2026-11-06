@@ -1,6 +1,7 @@
 """Sensor platform for Open Spot Forecast."""
 
 import logging
+import threading
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 from typing import Any
@@ -429,6 +430,12 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             ]
             | None
         ) = None
+        # The state and attributes of the last refresh. They are built in an
+        # executor job (see async_update), so a state write only reads them
+        self._state: tuple[float | None, dict[str, Any]] | None = None
+        # A poll and a forecast signal may refresh at once; the series cache
+        # is shared between them
+        self._build_lock = threading.Lock()
 
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_prediction")
         self._attr_name = "Price Forecast (ML)"
@@ -447,7 +454,29 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         )
 
     async def _handle_update(self) -> None:
+        # A new forecast: rebuild the state off the event loop, then write it
+        await self.async_update()
         self.async_write_ha_state()
+
+    async def async_update(self) -> None:
+        """Build the state and attributes in an executor job and keep them.
+
+        Walking a week of slots, the known prices and the compact attribute
+        took almost a second on a Raspberry Pi, so a state write that built
+        them blocked the event loop. Home Assistant calls this before every
+        write of the polled entity; the properties return what it stored.
+        """
+        self._state = await self.hass.async_add_executor_job(
+            self._build_state, dt_util.utcnow()
+        )
+
+    def _build_state(self, now: datetime) -> tuple[float | None, dict[str, Any]]:
+        """Return the state and the attributes at ``now``.
+
+        Runs in an executor job; it only reads ``api_data``.
+        """
+        with self._build_lock:
+            return self._state_value(now), self._state_attributes(now)
 
     def _cached_forecast(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Return the forecast per exposed interval: tariffs added, and converted.
@@ -500,17 +529,35 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
     def native_value(self) -> float | None:
         """Return the forecast price of the current slot (or hour).
 
-        Falls back to the first future slot when the predictions start later.
+        The value of the last refresh; built here only before the first one.
         """
-        entry = current_prediction(self._forecast(), dt_util.utcnow())
-        return entry["price"] if entry is not None else None
+        if self._state is not None:
+            return self._state[0]
+        return self._state_value(dt_util.utcnow())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
+        """Return the forecast attributes of the last refresh.
+
+        Built here only before the first refresh.
+        """
+        if self._state is not None:
+            return self._state[1]
+        return self._state_attributes(dt_util.utcnow())
+
+    def _state_value(self, now: datetime) -> float | None:
+        """Return the forecast price of the slot (or hour) containing ``now``.
+
+        Falls back to the first future slot when the predictions start later.
+        """
+        entry = current_prediction(self._forecast(), now)
+        return entry["price"] if entry is not None else None
+
+    def _state_attributes(self, now: datetime) -> dict[str, Any]:
+        """Return the forecast attributes at ``now``."""
         ml_predictor = self.api_data.get("ml_predictor")
         attrs: dict[str, Any] = {}
         if ml_predictor:
-            now = dt_util.utcnow()
             forecast = self._forecast()
             unit = self.output.unit(self.currency)
             spot_data = self.api_data.get("spot_data")
