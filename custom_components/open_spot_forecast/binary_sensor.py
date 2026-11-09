@@ -13,6 +13,7 @@ from homeassistant.components.binary_sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util, slugify as util_slugify
@@ -58,9 +59,9 @@ class TomorrowAvailableSensor(PriceAttributionMixin, BinarySensorEntity):
         )
         self._attr_name = "Tomorrow Prices Available"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+        )
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""
@@ -107,9 +108,9 @@ class MLModelTrainedSensor(ModelAttributionMixin, BinarySensorEntity):
         self._attr_unique_id = util_slugify(f"{DOMAIN}_{entry.entry_id}_ml_trained")
         self._attr_name = "ML Model Trained"
 
-        self._attr_device_info = {
-            "identifiers": {(DOMAIN, entry.entry_id)},
-        }
+        self._attr_device_info = DeviceInfo(
+            identifiers={(DOMAIN, entry.entry_id)},
+        )
 
     async def async_added_to_hass(self) -> None:
         """Register callbacks."""
