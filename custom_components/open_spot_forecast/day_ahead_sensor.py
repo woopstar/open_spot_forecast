@@ -22,6 +22,7 @@ from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util, slugify as util_slugify
@@ -63,7 +64,7 @@ class DayAheadPredictionSensor(ModelAttributionMixin, SensorEntity):
         )
         self._attr_native_unit_of_measurement = output.unit(currency)
         self._attr_suggested_display_precision = output.precision
-        self._attr_device_info = {"identifiers": {(DOMAIN, entry.entry_id)}}
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
         """Refresh on every slot boundary and after each forecast or learning update."""

@@ -26,6 +26,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.util import dt as dt_util, slugify as util_slugify
 
@@ -148,7 +149,7 @@ class PredbatRateSensor(ModelAttributionMixin, SensorEntity):
             else "mdi:transmission-tower-export"
         )
         self._attr_suggested_display_precision = output.precision
-        self._attr_device_info = {"identifiers": {(DOMAIN, entry.entry_id)}}
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, entry.entry_id)})
 
     async def async_added_to_hass(self) -> None:
         """Refresh after every price update (the state) and every forecast."""
