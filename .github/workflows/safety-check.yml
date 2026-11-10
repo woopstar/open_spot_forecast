@@ -12,6 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Dependabot runs get no repository secrets, so the API key is empty.
+    # The scan runs again on main once the bump is merged.
+    if: github.actor != 'dependabot[bot]'
     permissions:
       contents: read
     steps:
