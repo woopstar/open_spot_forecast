@@ -90,8 +90,11 @@ compares two UTC timestamps:
   - with the cross-border model (#29), a neighbour's stored price or zone
     weather row that changed, so stage 2 retrains whenever any stage-1
     input changes
-- `last_trained_at` — when the last successful training **started**, so data
-  written during a training run triggers the next one
+- `last_trained_at` — when the last training that left a model in use
+  **started** (a promoted candidate, or a rejected one with the live model
+  kept, see [Promotion Gate](#promotion-gate-275)), so data written during a
+  training run triggers the next one and a rejected candidate's data is not
+  retrained on every run
 
 The model retrains if it is untrained or `last_data_update > last_trained_at`;
 otherwise the existing model is reused. Each forecast run refreshes the
@@ -139,6 +142,51 @@ At startup the old results (`hpo_n_estimators`, `hpo_learning_rate`,
 `hpo_max_depth`, `hpo_best_mae`, `hpo_counter`; `OBSOLETE_HPO_META_KEYS`)
 are deleted from `meta` and never applied. Change the defaults only with a
 backtest.
+
+### Promotion Gate (#275)
+
+A retrain fits a **candidate** into new model objects: the holdout copy, the
+price model and the near-term model (`ModelMixin._train_models`). The live
+`price_model` and `near_model` are replaced only when the candidate passes
+`rejection_reason()` (`ml/promotion.py`), checked on the holdout copy before
+the live candidate is fitted:
+
+| Check          | Rejects when                                                                                   | Reason code     |
+| -------------- | ---------------------------------------------------------------------------------------------- | --------------- |
+| Finite         | a holdout prediction or the holdout MAE is NaN or infinite                                     | `non_finite`    |
+| Not constant   | the predictions' standard deviation is below 1 % (`NEAR_CONSTANT_RATIO`) of the actual prices' | `near_constant` |
+| Holdout MAE    | `candidate > max(live × 1.25, live + 0.005)` (`PROMOTION_MAE_FACTOR`, `PROMOTION_MAE_FLOOR`)   | `worse_mae`     |
+| Training error | any exception while training                                                                   | `error`         |
+
+The live MAE is the live model's own holdout MAE (`holdout_mae`), so the two
+are scored on different rows: the newest 20 % move with every retrain. The
+gate therefore has a wide margin and only catches a clearly broken candidate
+(a stuck sensor, a partial Open-Meteo archive, a broken prognosis), not
+ordinary drift. The floor (raw spot price excl. VAT, currency/kWh) keeps a
+tiny live MAE from rejecting every candidate. The constant and MAE checks
+need a live model and at least `PROMOTION_MIN_ROWS` (14 days × 96) training
+rows: the first training, the first after a restart (models are not
+persisted) and every training of a short history are accepted unless they
+are not finite. With a few days, each retrain moves the holdout to mostly
+new days and the MAEs say nothing about each other.
+
+A rejected or failed candidate rolls back to a `ModelSnapshot` taken before
+training: the price model, the near-term model, the gas price band edges
+(#202), the training sample count and, with the cross-border model, the
+stage-1 models (`CrossBorderModels.snapshot()` / `restore()`). Training
+refits the bands and stage 1 before the candidate is scored, so all three
+models follow one decision. The live model keeps its holdout metrics and
+training duration in `meta`, `is_trained` stays true, and a WARNING logs the
+reason with both MAEs. `last_trained_at` still moves to the training's
+start, so the same data is not retrained on every forecast run; the next
+data change retrains. Without a live model a failed training leaves the
+predictor untrained (heuristic forecast) and clears the holdout metrics and
+durations, as before. Each rejection is stored in `meta`
+(`last_retrain_rejected_at`, `last_retrain_rejected_reason`,
+`last_retrain_rejected_mae`, `ml/training_info.py`) and shown as
+attributes of the learning-metrics sensor; a later rejection replaces them.
+The factor and floor are a first setting, not backtested: the backtest
+(`scripts/backtest.py`) refits every origin and has no live model to keep.
 
 ## Feature Vector (26 features)
 
@@ -762,9 +810,12 @@ until the next restart rebuilt the days from the database:
    time in `meta` (`holdout_mae`, `holdout_rmse`, `holdout_trained_at`), so
    the learning-metrics sensor shows them across restarts (see
    [Self-Learning](self_learning.md#metrics-available)); the copy is then
-   discarded. A failed training deletes them, so they never describe a model
-   that is not in use.
-2. **Live model.** `price_model` is fitted on 100 % of the rows. The most
+   discarded. Its predictions and MAE decide whether the candidate is
+   promoted (see [Promotion Gate](#promotion-gate-275)). A rejected or failed
+   retrain keeps the live model's metrics; a failed first training deletes
+   them, so they never describe a model that is not in use.
+2. **Live model.** A new price model is fitted on 100 % of the rows and
+   replaces `price_model` if the candidate is promoted. The most
    recent days are the most similar to the days being predicted, so they
    must be part of the model: fitting on the oldest 80 % only would ignore
    the newest ~36 of 180 days. The backtest's `current` row (see

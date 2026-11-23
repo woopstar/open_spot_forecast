@@ -426,25 +426,28 @@ on an entry with VAT reads about 0.2 × its price too low.
 
 Via `sensor.open_spot_forecast_dk1_learning_metrics`:
 
-| Field                 | Description                                           |
-| --------------------- | ----------------------------------------------------- |
-| `status`              | "learning" when actively comparing predictions        |
-| `total_samples`       | Total prediction→actual comparisons made              |
-| `mae`                 | Mean absolute error across all slots                  |
-| `rmse`                | Root mean square error                                |
-| `mean_bias`           | Average systematic error (negative = underpredicting) |
-| `slots_tracked`       | Number of 15-min slots with data                      |
-| `pending_predictions` | Predictions still waiting for their slot to arrive    |
-| `bias_corrections`    | Number of slots with a learned bias offset            |
-| `bias_offsets`        | Per lead-time bucket: slots with an own offset, mean  |
-| `hourly_metrics`      | Per-slot MAE, bias, sample count, bias offsets (¹)    |
-| `holdout_mae`         | Latest training's holdout MAE (see below)             |
-| `holdout_rmse`        | Latest training's holdout RMSE                        |
-| `holdout_trained_at`  | When that training ran (UTC ISO)                      |
-| `training_seconds`    | How long that training took (s)                       |
-| `stage1_seconds`      | Its cross-border stage-1 part (s), with that model    |
-| `model_options`       | What shapes the model: cross-border, window, …        |
-| `model_options_since` | First training with those options (UTC ISO)           |
+| Field                          | Description                                              |
+| ------------------------------ | -------------------------------------------------------- |
+| `status`                       | "learning" when actively comparing predictions           |
+| `total_samples`                | Total prediction→actual comparisons made                 |
+| `mae`                          | Mean absolute error across all slots                     |
+| `rmse`                         | Root mean square error                                   |
+| `mean_bias`                    | Average systematic error (negative = underpredicting)    |
+| `slots_tracked`                | Number of 15-min slots with data                         |
+| `pending_predictions`          | Predictions still waiting for their slot to arrive       |
+| `bias_corrections`             | Number of slots with a learned bias offset               |
+| `bias_offsets`                 | Per lead-time bucket: slots with an own offset, mean     |
+| `hourly_metrics`               | Per-slot MAE, bias, sample count, bias offsets (¹)       |
+| `holdout_mae`                  | Latest training's holdout MAE (see below)                |
+| `holdout_rmse`                 | Latest training's holdout RMSE                           |
+| `holdout_trained_at`           | When that training ran (UTC ISO)                         |
+| `training_seconds`             | How long that training took (s)                          |
+| `stage1_seconds`               | Its cross-border stage-1 part (s), with that model       |
+| `model_options`                | What shapes the model: cross-border, window, …           |
+| `model_options_since`          | First training with those options (UTC ISO)              |
+| `last_retrain_rejected_at`     | Latest retrain that kept the live model (UTC ISO)        |
+| `last_retrain_rejected_reason` | Why: `non_finite`, `near_constant`, `worse_mae`, `error` |
+| `last_retrain_rejected_mae`    | That candidate's holdout MAE (none for `error`)          |
 
 (¹) In the live state only: Home Assistant's recorder does not store it
 (`_unrecorded_attributes`, #103). With 96 slots it would push the
@@ -457,7 +460,11 @@ and scores it on the newest 20 % (see
 [Training and Validation Split](ml_documentation.md#training-and-validation-split)).
 They are in the model's unit (raw spot price excl. VAT, currency/kWh), are
 persisted in `meta` so they survive a restart, and are `null` before the
-first successful training or after a failed one. `mae` and `rmse` above are
+first successful training or after a failed one without a live model. A
+retrain whose candidate is rejected (see
+[Promotion Gate](ml_documentation.md#promotion-gate-275)) keeps the live
+model and its metrics; the `last_retrain_rejected_*` fields say when and why
+(`null` before a rejection). `mae` and `rmse` above are
 the live errors of stored predictions against actual prices.
 
 ## Reset

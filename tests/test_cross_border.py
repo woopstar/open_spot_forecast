@@ -24,6 +24,7 @@ from custom_components.open_spot_forecast.ml.cross_border import (
     neighbour_feature_rows,
 )
 from custom_components.open_spot_forecast.ml.features import FEATURE_NAMES
+from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.ml.series_storage import (
     OPENMETEO_WEATHER,
@@ -352,12 +353,15 @@ def test_stage_2_trains_on_one_column_per_neighbour(
     two_stage: SpotPricePredictor,
 ) -> None:
     _store_neighbour(two_stage.storage, "DE", _starts())
-    fit = Mock(wraps=two_stage.price_model.fit)
-    with patch.object(two_stage.price_model, "fit", fit):
+    real_fit = NumpyGradientBoosting.fit
+    with patch.object(
+        NumpyGradientBoosting, "fit", autospec=True, side_effect=real_fit
+    ) as fit:
         two_stage._train_models()
 
     assert two_stage.is_trained is True
-    X, _ = fit.call_args.args
+    (live,) = [c for c in fit.call_args_list if c.args[0] is two_stage.price_model]
+    _, X, _ = live.args
     assert X.shape == (DAYS * SLOTS, len(FEATURE_NAMES) + 5)
     assert np.isfinite(X[:, len(FEATURE_NAMES)]).all()  # cross_price_DE
     assert np.isnan(X[:, len(FEATURE_NAMES) + 1 :]).all()
@@ -408,3 +412,28 @@ def test_training_logs_its_duration(
         record.getMessage().startswith("ML model trained in")
         for record in caplog.records
     )
+
+
+def test_a_rejected_retrain_keeps_the_stage_1_models(
+    two_stage: SpotPricePredictor,
+) -> None:
+    """Stage 1 follows the price model's accept/rollback decision (#275)."""
+    _store_neighbour(two_stage.storage, "DE", _starts())
+    two_stage._train_models()
+    cross = two_stage.cross_border
+    assert cross is not None
+    stage1, fit_seconds = cross.snapshot(), cross.fit_seconds
+    price_model = two_stage.price_model
+
+    with patch(
+        "custom_components.open_spot_forecast.ml.models.rejection_reason",
+        return_value="worse_mae",
+    ):
+        two_stage._train_models()
+
+    assert two_stage.price_model is price_model
+    kept = cross.snapshot()
+    assert kept.keys() == stage1.keys()
+    assert all(kept[zone] is stage1[zone] for zone in stage1)
+    assert fit_seconds is not None
+    assert cross.fit_seconds == pytest.approx(fit_seconds)

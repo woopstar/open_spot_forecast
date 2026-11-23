@@ -187,24 +187,26 @@ def test_nordpool_rows_trigger_retrain_only_when_changed(
 def test_failed_training_is_retried_on_next_run(
     predictor: SpotPricePredictor,
 ) -> None:
-    """A training error leaves the model untrained so the next run retries."""
-    real_fit = predictor.price_model.fit
+    """A failed first training leaves the model untrained so the next run retries."""
+    real_fit = NumpyGradientBoosting.fit
     fit_calls: list[int] = []
 
-    def flaky_fit(X: np.ndarray, y: np.ndarray) -> None:
+    def flaky_fit(model: NumpyGradientBoosting, X: np.ndarray, y: np.ndarray) -> None:
         fit_calls.append(len(y))
         if len(fit_calls) == 1:
             raise ValueError("boom")
-        real_fit(X, y)
+        real_fit(model, X, y)
 
-    with patch.object(predictor.price_model, "fit", side_effect=flaky_fit):
+    with patch.object(
+        NumpyGradientBoosting, "fit", autospec=True, side_effect=flaky_fit
+    ):
         _forecast(predictor, TODAY)
         assert predictor.is_trained is False
         assert predictor.last_trained_at is None
 
         _forecast(predictor, TODAY)
 
-    assert len(fit_calls) == 2
+    assert len(fit_calls) > 1
     assert predictor.is_trained is True
 
 

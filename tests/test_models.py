@@ -77,13 +77,16 @@ def test_live_model_is_fitted_on_all_rows_and_follows_level_shift(
     If it were fitted on the oldest 80 % only, it would never see Friday's
     new price level and would keep predicting the old one.
     """
-    live_fit = Mock(wraps=predictor.price_model.fit)
-    with patch.object(predictor.price_model, "fit", live_fit):
+    real_fit = NumpyGradientBoosting.fit
+    with patch.object(
+        NumpyGradientBoosting, "fit", autospec=True, side_effect=real_fit
+    ) as fit:
         _train(predictor)
 
     assert predictor.is_trained is True
-    live_fit.assert_called_once()
-    X, y = live_fit.call_args.args
+    # The promoted candidate is a new object, fitted once (#275)
+    (live,) = [c for c in fit.call_args_list if c.args[0] is predictor.price_model]
+    _, X, y = live.args
     assert len(X) == len(y) == 5 * SLOTS_PER_DAY
 
     friday = predictor.price_model.predict(X[4 * SLOTS_PER_DAY :])

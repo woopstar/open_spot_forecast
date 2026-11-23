@@ -60,6 +60,10 @@ class PredictorBase:
     stage1_seconds: float | None
     model_options_since: datetime | None
     _model_options_stored: str | None
+    # The latest retrain whose candidate was not promoted (#275); None before
+    last_retrain_rejected_at: datetime | None = None
+    last_retrain_rejected_reason: str | None = None
+    last_retrain_rejected_mae: float | None = None
     error_metrics: dict[int, dict[str, Any]]
     # Additive bias offsets per slot and lead-time bucket (#118)
     bias_correction: dict[int, dict[str, float]]
@@ -156,6 +160,9 @@ class PredictorBase:
         raise NotImplementedError
 
     def _restore_training_info(self, data: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+    def _store_rejection(self, reason: str, mae: float | None) -> None:
         raise NotImplementedError
 
     def training_info(self) -> dict[str, Any]:

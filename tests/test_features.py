@@ -183,12 +183,20 @@ def test_training_rows_come_from_build_feature_vector(
         {"date": day, "prices": [float(i % 7) for i in range(96)]}
         for day in ("2026-06-01", "2026-06-02")
     ]
-    spy = _SpyModel()
-    monkeypatch.setattr(predictor, "price_model", spy)
+    # Every model of the training (holdout copy, candidate, near-term) is a
+    # spy; the promoted candidate becomes the price model (#275)
+    spies: list[_SpyModel] = []
+
+    def new_spy() -> _SpyModel:
+        spies.append(_SpyModel())
+        return spies[-1]
+
+    monkeypatch.setattr(predictor, "_candidate_model", new_spy)
     monkeypatch.setattr(predictor, "store_daily_prices", lambda *args: None)
 
     predictor._train_models()
 
+    (spy,) = [model for model in spies if model is predictor.price_model]
     assert len(built_rows) == 192
     np.testing.assert_array_equal(spy.fit_rows, np.array(built_rows))
     assert spy.fit_rows.shape[1] == len(FEATURE_NAMES)

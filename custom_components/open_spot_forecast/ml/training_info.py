@@ -15,6 +15,11 @@ been what it is now. Both are kept in ``meta`` next to the holdout metrics:
 * ``model_options_since`` — when (UTC) the stored options last changed: the
   first training with them. A restart does not move it; switching an option
   does. It is the ``--since`` date of ``scripts/live_report.py``.
+* ``last_retrain_rejected_at`` / ``last_retrain_rejected_reason`` /
+  ``last_retrain_rejected_mae`` — the latest retrain whose candidate was not
+  promoted (#275, ``ml/promotion.py``): when (UTC), why (a ``REJECTED_*``
+  code) and the candidate's holdout MAE (absent after a training error).
+  Kept until the next rejection replaces them.
 """
 
 from __future__ import annotations
@@ -35,6 +40,12 @@ _LOGGER = logging.getLogger(__name__)
 
 # meta keys of the latest training's durations (deleted after a failed one)
 TRAINING_TIME_META_KEYS = ("training_seconds", "stage1_seconds")
+# meta keys of the latest rejected retrain (#275)
+REJECTION_META_KEYS = (
+    "last_retrain_rejected_at",
+    "last_retrain_rejected_reason",
+    "last_retrain_rejected_mae",
+)
 
 
 class TrainingInfoMixin(PredictorBase):
@@ -95,8 +106,41 @@ class TrainingInfoMixin(PredictorBase):
         except Exception as err:
             _LOGGER.warning("Could not store the training information: %s", err)
 
+    def _store_rejection(self, reason: str, mae: float | None) -> None:
+        """Keep and persist a retrain whose candidate was not promoted (#275).
+
+        Args:
+            reason: A ``REJECTED_*`` code of ``ml/promotion.py``.
+            mae: The candidate's holdout MAE; None after a training error.
+        """
+        self.last_retrain_rejected_at = dt_util.utcnow()
+        self.last_retrain_rejected_reason = reason
+        self.last_retrain_rejected_mae = mae
+        try:
+            meta: dict[str, Any] = {
+                "last_retrain_rejected_at": self.last_retrain_rejected_at.isoformat(),
+                "last_retrain_rejected_reason": reason,
+            }
+            if mae is None:
+                self.storage.delete_meta_keys(("last_retrain_rejected_mae",))
+            else:
+                meta["last_retrain_rejected_mae"] = mae
+            self.storage.save_meta_dict(meta)
+        except Exception as err:
+            _LOGGER.warning("Could not store the rejected retrain: %s", err)
+
     def _restore_training_info(self, data: dict[str, Any]) -> None:
-        """Restore the durations and the stored options from loaded meta data."""
+        """Restore the durations, options and last rejection from meta data."""
+        rejected_at = dt_util.parse_datetime(
+            str(data.get("last_retrain_rejected_at", ""))
+        )
+        reason = data.get("last_retrain_rejected_reason")
+        if rejected_at is not None and isinstance(reason, str):
+            self.last_retrain_rejected_at = dt_util.as_utc(rejected_at)
+            self.last_retrain_rejected_reason = reason
+            self.last_retrain_rejected_mae = optional_float(
+                data.get("last_retrain_rejected_mae")
+            )
         self.training_seconds = optional_float(data.get("training_seconds"))
         self.stage1_seconds = optional_float(data.get("stage1_seconds"))
         stored = data.get("model_options")
@@ -113,10 +157,17 @@ class TrainingInfoMixin(PredictorBase):
 
         ``training_seconds`` / ``stage1_seconds`` are None before a
         successful training (and the latter without the cross-border
-        model); ``model_options_since`` is None before the first one.
+        model); ``model_options_since`` is None before the first one. The
+        ``last_retrain_rejected_*`` values are None before a rejection.
         """
         since: datetime | None = self.model_options_since
+        rejected_at = self.last_retrain_rejected_at
         return {
+            "last_retrain_rejected_at": rejected_at.isoformat()
+            if rejected_at
+            else None,
+            "last_retrain_rejected_reason": self.last_retrain_rejected_reason,
+            "last_retrain_rejected_mae": self.last_retrain_rejected_mae,
             "training_seconds": self.training_seconds,
             "stage1_seconds": self.stage1_seconds,
             "model_options": self.model_options(),
