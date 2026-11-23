@@ -30,7 +30,7 @@ from .api.entsoe_load import EntsoeLoadSource
 from .api.gas_prices import GasPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .api.tariff_changes import TariffChangeSource
-from .api.time_series_source import HistorySource, TimeSeriesSource
+from .api.time_series_source import TimeSeriesSource
 from .const import (
     ENTSOE_LOAD_REGIONS,
     GAS_PRICE_REGIONS,
@@ -48,6 +48,7 @@ from .price_series import carry_over_day_prices
 from .price_source import DayAheadPrices, PriceSettings
 from .sensor_entities import SensorEntities
 from .sensor_reader import SensorReader, async_read_weather_forecast
+from .source_health import SPOT_SENSOR_SOURCE, STROMLIGNING_SOURCE, SourceHealth
 from .spot_prices import dayahead_spot_data, fill_missing_days, ml_price_inputs
 from .tariffs import TariffSchedule
 from .time_slots import (
@@ -99,6 +100,8 @@ class ForecastUpdater(HistoryUpdaterMixin):
         self.sensor_reader = sensor_reader
         self.ml_predictor = ml_predictor
         self.region: str = api_data["region"]
+        # Each source's last attempt, success and error (#276)
+        self.health = api_data["source_health"] = SourceHealth()
         # Only the ML model uses the prognoses and the zone weather (#22), and
         # they live in its database
         self.nordpool = (
@@ -183,11 +186,11 @@ class ForecastUpdater(HistoryUpdaterMixin):
         (``async_read_prices``).
         """
         if self.ml_predictor and self.dayahead is None:
-            self._carry_over_spot(
-                self.sensor_reader.read_spot_prices(
-                    self.sensors.spot_price, self.sensors.spot_price_tomorrow
-                )
+            read = self.sensor_reader.read_spot_prices(
+                self.sensors.spot_price, self.sensors.spot_price_tomorrow
             )
+            self.health.record_prices(SPOT_SENSOR_SOURCE, read)
+            self._carry_over_spot(read)
             self._build_tariffs()
 
     def _carry_over_spot(self, read: dict[str, Any]) -> dict[str, Any]:
@@ -235,6 +238,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
             return False
         api_data = self.api_data
         data = self.sensor_reader.read_stromligning_sensor(self.sensors.stromligning)
+        self.health.record_prices(STROMLIGNING_SOURCE, data)
         _LOGGER.debug("Stromligning data: %s", data)
         if self.sensors.stromligning_tomorrow:
             tomorrow_data = self.sensor_reader.read_stromligning_tomorrow_sensor(
@@ -286,11 +290,15 @@ class ForecastUpdater(HistoryUpdaterMixin):
         if self.dayahead is None:
             return self.read_prices()
         today = dt_util.now().date()
+        source = self.dayahead.source
         try:
             spot_data = await self.dayahead.async_read(today)
         except Exception as err:
             _LOGGER.warning("Could not read the day-ahead prices: %s", err)
+            self.health.record_failure(source.source_name, err)
             spot_data = dayahead_spot_data((), lambda _day: None, today)
+        else:
+            self.health.record_source_prices(source, spot_data)
         self._fill_from_price_sensor(spot_data)
         spot_data = self._carry_over_spot(spot_data)
         if not spot_data["today"]:
@@ -435,23 +443,6 @@ class ForecastUpdater(HistoryUpdaterMixin):
 
             # Save learning data after prediction (includes stored predictions)
             await ml_predictor.save_learning_data()
-
-    async def _refresh(
-        self, source: HistorySource, start: datetime, end: datetime, label: str
-    ) -> list[dict[str, Any]] | None:
-        """Update a source for ``[start, end)`` and return its stored rows.
-
-        A failed update keeps what is stored; None if nothing can be read.
-        """
-        try:
-            await source.async_update(start, end)
-        except Exception as err:
-            _LOGGER.warning("Could not update the %s: %s", label, err)
-        try:
-            return await source.async_load(start, end)
-        except Exception as err:
-            _LOGGER.warning("Could not read the stored %s: %s", label, err)
-            return None
 
     async def _update_prognoses(self, weather_data: dict[str, Any]) -> None:
         """Refresh today's and tomorrow's prognoses; attach the stored ones.

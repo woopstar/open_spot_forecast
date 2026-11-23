@@ -292,6 +292,40 @@ update run the same forecast pipeline, `ForecastUpdater.run_forecast()`:
 weather sensors and forecast → Nordpool prognoses (stored for training) →
 known-data end → predict → save.
 
+## Source Health and Diagnostics (#276)
+
+`SourceHealth` (`source_health.py`, in `api_data["source_health"]`, built by
+`ForecastUpdater`) keeps per source, keyed by its stable name (a time series'
+table, `spec.name`; an outage source's `state_name`; `stromligning` and
+`spot_price_sensor` for the HA price sensors): the last attempt, the last
+success, the last error and `data_until`, the latest stored row or known price.
+It is recorded at the existing error-handling points only:
+
+- `HistoryUpdaterMixin._refresh()` → `async_refresh()`: every stored source of
+  the forecast run (Nordpool prognoses, Open-Meteo, ENTSO-E load, gas price,
+  outages);
+- `async_read_prices()` (day-ahead APIs), `read_consumer_prices()`
+  (Stromligning) and `read_spot_prices()` (spot sensor): healthy with today's
+  prices;
+- `_backfill_prices()`, `_backfill_source()` and `update_neighbours()`: the
+  backfill and the cross-border model's neighbour sources.
+
+An update fails when it raises or when one of its requests got no usable
+answer: `TimeSeriesSource` and `OutageSource` count those in
+`failed_requests` (reset at every update), so the API clients need no
+try/except of their own. An error is kept as its class and message with every
+URL and secret-looking parameter removed (`describe_error()`). Nothing is
+persisted: the health starts empty after a restart.
+
+`diagnostics.py` (`async_get_config_entry_diagnostics`) returns the config
+entry (data and options, `entsoe_api_key` redacted with `async_redact_data`
+and scrubbed from every text), the source health, the forecast's freshness
+(`forecast_freshness()`, #277), the model's `holdout_metrics()` and
+`training_info()`, and `LearningStorage.table_row_counts()`. The diagnostic
+`Data sources` sensor (`source_health_sensor.py`) shows the number of healthy
+sources as its state, and per source `healthy`, `age_minutes`, `last_error`
+and `data_until` plus the `failing` names as attributes.
+
 ## Model: Single Price Predictor
 
 The system uses **one model** — a Gradient Boosting regressor that takes 26

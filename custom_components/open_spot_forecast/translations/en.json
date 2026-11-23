@@ -131,6 +131,9 @@
       "forecast_evaluation": {
         "name": "Forecast evaluation"
       },
+      "data_sources": {
+        "name": "Data sources"
+      },
       "day_ahead_prediction": {
         "name": "Day-ahead prediction"
       },

@@ -60,6 +60,8 @@ class OutageSource(ABC):
         self.region = region
         self.eic = str(REGIONS[region]["entsoe"])
         self._failed = False
+        # Whether the latest update's request failed (source health, #276)
+        self.failed_requests = 0
         # Coverage: (events from, events until, publications until), or None
         self._state: tuple[datetime, datetime, datetime] | None = None
         self._state_loaded = False
@@ -78,6 +80,11 @@ class OutageSource(ABC):
         ``[event_start, event_stop)``, published before ``published_until``
         and, for an incremental update, from ``published_from`` on.
         """
+
+    @property
+    def source_name(self) -> str:
+        """Return the source's stable name: its state key (``state_name``)."""
+        return self.state_name
 
     def _warn(self, message: str, *args: Any) -> None:
         """Log a failure once as a warning, repeats at debug level."""
@@ -118,6 +125,7 @@ class OutageSource(ABC):
             Whether a new message version was stored.
         """
         now = dt_util.utcnow()
+        self.failed_requests = 0
         state = await self._load_state()
         windows: list[tuple[datetime, datetime, datetime | None]] = []
         if state is None:
@@ -135,6 +143,7 @@ class OutageSource(ABC):
                 continue
             rows = await self._fetch(event_start, event_stop, now, published_from)
             if rows is None:
+                self.failed_requests = 1
                 return changed
             if rows:
                 stored: bool = await self.hass.async_add_executor_job(

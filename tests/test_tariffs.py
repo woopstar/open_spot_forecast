@@ -33,6 +33,7 @@ from custom_components.open_spot_forecast.price_source import PriceSettings
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
 from custom_components.open_spot_forecast.sensor_entities import SensorEntities
 from custom_components.open_spot_forecast.services import forecast_response
+from custom_components.open_spot_forecast.source_health import SourceHealth
 from custom_components.open_spot_forecast.spot_prices import slot_prices
 from custom_components.open_spot_forecast.tariffs import TariffSchedule
 from custom_components.open_spot_forecast.time_slots import (
@@ -460,6 +461,7 @@ def test_the_updater_builds_the_schedule_from_both_prices() -> None:
     updater.ml_predictor = Mock()
     updater.dayahead = None
     updater.tariff_changes = None
+    updater.health = SourceHealth()
     updater.sensors = Mock()
     updater.sensor_reader = Mock()
     updater.sensor_reader.read_spot_prices.return_value = spot
