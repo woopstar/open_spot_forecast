@@ -22,6 +22,7 @@ from .features import (
 )
 from .gas_price import gas_band_edges, gas_bands
 from .gbm import NumpyGradientBoosting
+from .intervals import with_bounds
 from .lead_time import prediction_bucket
 from .price_lags import (
     NEAR_TERM_DAYS,
@@ -387,6 +388,8 @@ class ModelMixin(PredictorBase):
         now = dt_util.now()
         # The offsets as of today: a window without recent errors has none
         self.refresh_bias_offsets(now.date())
+        # The p10/p90 bands' error quantiles of the last scored days (#280)
+        self.refresh_interval_quantiles(now.date())
 
         for idx, feature in enumerate(features):
             feature_vector = feature_vectors[idx].tolist()
@@ -423,15 +426,18 @@ class ModelMixin(PredictorBase):
             price = self.apply_bias_correction(price, slot, bucket)
             confidence = round(self._estimate_confidence(feature), 2)
 
-            self.predictions.append(
-                {
-                    "start": start,
-                    "end": feature.get("end"),
-                    "price": price,
-                    "confidence": confidence,
-                    "model": "GradientBoosting",
-                }
+            prediction: dict[str, Any] = {
+                "start": start,
+                "end": feature.get("end"),
+                "price": price,
+                "confidence": confidence,
+                "model": "GradientBoosting",
+            }
+            # p10/p90 bounds from past errors, never clamped at 0 (#280)
+            with_bounds(
+                prediction, self.prediction_interval(price, offset, slot, bucket)
             )
+            self.predictions.append(prediction)
 
             self.confidence_scores.append(confidence)
 

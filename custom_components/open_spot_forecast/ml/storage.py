@@ -27,6 +27,7 @@ from .bias_storage import (
 from .evaluation_storage import EvaluationStorageMixin
 from .external_storage import EXTERNAL_SCHEMA_SQL, ExternalForecastStorageMixin
 from .history_storage import HistoryStorageMixin
+from .interval_storage import INTERVAL_SCHEMA_SQL, IntervalStorageMixin
 from .outage_storage import UMM_SCHEMA_SQL, OutageStorageMixin
 from .prediction_storage import PredictionStorageMixin
 from .price_storage import migrate_price_history_to_rows
@@ -47,6 +48,7 @@ class LearningStorage(
     EvaluationStorageMixin,
     ExternalForecastStorageMixin,
     OutageStorageMixin,
+    IntervalStorageMixin,
 ):
     """Handles persistence of learning data to a SQLite database.
 
@@ -89,6 +91,9 @@ class LearningStorage(
       external_slot_errors — per scored slot and lead time, the mean error of
                         the model and of every external forecast (#157;
                         external_storage.py)
+      interval_errors — every scored prediction's raw error per lead time
+                        and slot, the p10/p90 bands' sample (#280;
+                        interval_storage.py)
     """
 
     def __init__(self, hass: HomeAssistant, region: str):
@@ -330,6 +335,7 @@ class LearningStorage(
         conn.execute(BIAS_TABLE_SQL)
         conn.executescript(UMM_SCHEMA_SQL)
         conn.executescript(EXTERNAL_SCHEMA_SQL)
+        conn.executescript(INTERVAL_SCHEMA_SQL)
 
         # Schema migration: old DBs had start as PRIMARY KEY without id column
         cols = [c[1] for c in conn.execute("PRAGMA table_info(predictions)").fetchall()]
@@ -489,6 +495,7 @@ class LearningStorage(
                     DROP TABLE IF EXISTS external_forecasts;
                     DROP TABLE IF EXISTS external_accuracy;
                     DROP TABLE IF EXISTS external_slot_errors;
+                    DROP TABLE IF EXISTS interval_errors;
                     DROP TABLE IF EXISTS meta;
                     """
                 )

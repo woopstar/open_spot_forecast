@@ -602,6 +602,7 @@ class LearningMixin(PredictorBase):
         self.evaluation_snapshots = {}
         self.day_ahead_predictions = {}
         self.external_accuracy = {}
+        self.interval_quantiles = {}
 
         # Clear storage file
         cleared = await self.storage.async_clear_storage()

@@ -104,6 +104,7 @@ from custom_components.open_spot_forecast.ml.zone_weather import ZoneWeatherInde
 from custom_components.open_spot_forecast.time_series import iso_weeks
 
 from .backtest_entsoe_outages import load_entsoe_outages
+from .backtest_intervals import IntervalScore, format_intervals
 from .backtest_lags import LagConfig, NearTermModel, PriceLagIndex
 from .backtest_nordpool import NordpoolInputs, load_nordpool_db
 from .backtest_umm import PlantOutageIndex, load_outages_db, load_umm_outages
@@ -1027,6 +1028,8 @@ class BacktestResult:
     scores: dict[str, list[HorizonScore]]
     origins: int = 0
     skipped_models: dict[str, str] = field(default_factory=dict)
+    # Every origin's forecast per model, for the p10/p90 coverage (#280)
+    intervals: dict[str, IntervalScore] = field(default_factory=dict)
 
 
 def local_midnight(day: date, tz: tzinfo) -> int:
@@ -1114,6 +1117,9 @@ def run_backtest(
                 raise ValueError(
                     f"{model.name} returned {predicted.shape}, expected {targets.shape}"
                 )
+            result.intervals.setdefault(model.name, IntervalScore(config.tz)).add(
+                origin, targets, horizon, actual, predicted
+            )
             for day, score in enumerate(result.scores[model.name], start=1):
                 if config.score_days is not None and (
                     origin + timedelta(days=day - 1) not in config.score_days
@@ -1344,6 +1350,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         f"in {', '.join(sorted(NEAR_TERM_REGIONS))} and 0, one model for "
         "every day, elsewhere)",
     )
+    parser.add_argument(
+        "--intervals",
+        action="store_true",
+        help="also score the p10/p90 bands of every forecast day (#280)",
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path(".cache/backtest"))
     parser.add_argument("--output", type=Path, help="also write the report here")
     parser.add_argument(
@@ -1515,6 +1526,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     result = run_backtest(series, models, config, progress)
     result.skipped_models.update(skipped)
     report = format_report(result, args.region)
+    if args.intervals:
+        report += "\n\n" + format_intervals(result.intervals, config.horizon_days)
     if args.daily is not None:
         report += "\n\n" + format_tail(result)
         with args.daily.open("w", encoding="utf-8", newline="") as handle:

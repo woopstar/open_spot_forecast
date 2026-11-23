@@ -30,6 +30,7 @@ All learning data is stored in a single SQLite database:
 | `external_forecasts`   | `(start, source, stored_at)`                           | Other integrations' forecasts awaiting scoring: raw spot price per UTC slot, source (entity id) and reading (#120)                                           |
 | `external_accuracy`    | `(source, date, bucket)`                               | Per source, slot date and lead-time bucket: sample count and sums of error, absolute and squared error (#120)                                                |
 | `external_slot_errors` | `(start, bucket, source)`                              | Per scored slot and lead-time bucket: the forecast count and mean signed error of every external source and of the model (`model`) (#157)                    |
+| `interval_errors`      | none (index on `date`)                                 | One row per scored prediction: slot date, lead-time bucket, slot of the day by wall clock (0-95) and the raw model's signed error; the p10/p90 sample (#280) |
 
 The price history never stores an invalid day (known prices all zero, or not
 all finite; see `is_invalid_price_series()` in `price_series.py`), and
@@ -61,7 +62,7 @@ The latest retrain whose candidate was not promoted (#275, see
 rejection replaces them, and they are restored at startup. The trained
 models themselves are not persisted.
 
-`lead_time_accuracy`, `evaluation`, `external_forecasts`, `external_accuracy`, `external_slot_errors`, `entsoe_load`, `gas_prices`,
+`lead_time_accuracy`, `evaluation`, `external_forecasts`, `external_accuracy`, `external_slot_errors`, `interval_errors`, `entsoe_load`, `gas_prices`,
 `neighbour_prices`, `umm_messages` and `umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without
 a versioned migration. `evaluation` keeps the last 7 days of slots (pruned
 whenever it is written or reloaded; about 700 rows per lead time, #113). An
@@ -89,6 +90,19 @@ with every bucket filled; the table is `WITHOUT ROWID`, its key is the row).
 Nothing in the integration reads it: it is for `scripts/live_report.py`.
 All three are dropped and recreated by `clear_all()`.
 
+`interval_errors` (#280, `ml/interval_storage.py`) is the sample of the
+forecast's p10/p90 bounds (see
+[Prediction Intervals](ml_documentation.md#prediction-intervals-280)). When a
+slot is scored, every matched prediction with a stored `bias_offset` adds one
+row: the slot's local date, the prediction's lead-time bucket, the slot of the
+local day by wall clock (0-95, as `error_metrics`) and its raw error
+(`price + bias_offset - actual`, currency/kWh). Rows are not aggregated: the
+bounds are quantiles, which sums cannot give. Every slot is predicted by about
+30 forecast runs, so a day adds about 3,000 rows and the 30-day window
+(`INTERVAL_WINDOW_DAYS`) holds about 90,000 (a few MB). Rows before the window
+are deleted before every forecast run, which then reads the window once. It is
+dropped and recreated by `clear_all()`.
+
 ## Code Layout
 
 `LearningStorage` (`ml/storage.py`) is the only class that touches the
@@ -105,6 +119,7 @@ tables:
 | `ml/accuracy_storage.py`   | `LeadTimeAccuracyStorageMixin` | `lead_time_accuracy`, `bias_accuracy`                                    |
 | `ml/evaluation_storage.py` | `EvaluationStorageMixin`       | `evaluation`                                                             |
 | `ml/external_storage.py`   | `ExternalForecastStorageMixin` | `external_forecasts`, `external_accuracy`, `external_slot_errors`        |
+| `ml/interval_storage.py`   | `IntervalStorageMixin`         | `interval_errors`                                                        |
 
 The mixins inherit `StorageMixinBase` (`ml/storage_base.py`), which declares
 the shared `_lock`, `_ensure_conn()` and `last_data_write` for type checking
@@ -327,6 +342,7 @@ Predictions stored ──→ predictions table (individual INSERTs)
 Self-learning matches prediction → error_metrics updated
          │                         bias_correction updated
          │                         lead_time_accuracy sums added (committed)
+         │                         interval_errors rows added (committed)
          │                         prediction removed from table
          │
 Every 6 hours ──→ save_all() flushes error_metrics, bias_correction,
@@ -334,7 +350,8 @@ Every 6 hours ──→ save_all() flushes error_metrics, bias_correction,
          │
 Every 15 min ──→ weather snapshot inserted into weather_history
          │
-Each forecast ──→ today's and tomorrow's missing Nordpool prognoses fetched
+Each forecast ──→ today's and tomorrow's missing Nordpool prognoses fetched;
+                  interval_errors pruned to 30 days and read for the bounds
          │
 At midnight ──→ history older than the training window + 2 days pruned;
                 missing Nordpool history backfilled in the background

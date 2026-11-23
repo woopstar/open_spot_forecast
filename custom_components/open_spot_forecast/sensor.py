@@ -520,9 +520,7 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
         ):
             return cached[3], cached[4]
         series = self.output.forecast_series(predictions, tariffs)
-        forecast = [
-            {**entry, "price": self.output.convert(entry["price"])} for entry in series
-        ]
+        forecast = [self.output.convert_entry(entry) for entry in series]
         self._series_cache = (predictions, len(predictions), tariffs, series, forecast)
         return series, forecast
 

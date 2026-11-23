@@ -36,7 +36,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `external_forecasts.py`   | `async_record_external_forecasts()` — external forecast sensors → raw spot rows (`PriceOutput.to_spot()` − tariff) at every forecast run (#120)             |
 | `price_source.py`         | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source               |
 | `services.py`             | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
-| `forecast_attributes.py`  | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()`, `fit_compact()` (16 KB), `forecast_freshness()` (#277)                       |
+| `forecast_attributes.py`  | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (l/h bounds, #280), `fit_compact()` (16 KB), `forecast_freshness()` (#277)    |
 | `price_output.py`         | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
 | `tariffs.py`              | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days: latest day's time of day + national charge changes (#107, #278)  |
 | `attribution.py`          | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
@@ -78,6 +78,8 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `retraining.py`         | `RetrainMixin` — retrain when training data changed                                                                                                                                                            |
 | `lead_time.py`          | `LeadTimeMixin` — lead-time bucketing + rolling MAE/RMSE per bucket                                                                                                                                            |
 | `bias.py`               | `BiasMixin` — bias offsets per slot and lead-time bucket: windows of raw errors (`add_raw_errors`, `window_offset`, `BIAS_WINDOW_DAYS`), #203                                                                  |
+| `intervals.py`          | `IntervalMixin` — p10/p90 bounds (`price_low`/`price_high`) from quantiles of raw errors per (bucket, local hour), 30 days: `group_quantiles()`, `interval_bounds()` (#280)                                    |
+| `interval_storage.py`   | `IntervalStorageMixin` — `interval_errors` table: one raw error per scored prediction, the bounds' sample (#280)                                                                                               |
 | `external_forecasts.py` | `ExternalForecastMixin` — store external forecasts, score them per lead-time bucket with the slot (#120)                                                                                                       |
 
 ### API layer (`custom_components/open_spot_forecast/api/`)
@@ -129,6 +131,11 @@ later days the latest day's same local time plus the change in Energinet's dated
 (`NationalCharges`, `api/tariff_changes.py`, #278; DK1/DK2 with Stromligning only). Pass it to `forecast()`/`forecast_series()`/
 `evaluation()`; never add a tariff inline. Never multiply by `(1 + vat)` inline, and never add
 tariffs or VAT in `ml/`.
+A prediction's p10/p90 bounds (`price_low`/`price_high`, `PRICE_BOUNDS` in `const.py`, #280)
+take the same path: `with_tariffs()`, the hourly mean and `PriceOutput.convert_entry()` shift and
+convert them with the price; never convert a forecast entry's `price` alone. The bounds come from
+`ml/intervals.py` (quantiles of the raw errors per lead-time bucket and local hour) and are never
+clamped at 0.
 
 With the `dayahead` price source (#27) the model's prices are the stored day-ahead auction
 prices (`dayahead_prices`, EUR/MWh) converted by `dayahead_spot_data()` / `dayahead_prices_by_day()`

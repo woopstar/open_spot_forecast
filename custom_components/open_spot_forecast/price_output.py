@@ -17,6 +17,10 @@ contracts billed by the hour.
 Averaging, then converting, gives the same result as converting each price
 first: the conversion is affine and increasing, so it also keeps the order
 of prices (min/max) and commutes with the mean.
+
+A prediction's p10/p90 bounds (``price_low``/``price_high``, #280) take the
+same path as its price: the slot's tariff, the hourly mean, the unit,
+surcharge and VAT. So the order ``low <= price <= high`` is kept.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ from .const import (
     DEFAULT_PRICE_TYPE,
     DEFAULT_SURCHARGE,
     DEFAULT_VAT,
+    PRICE_BOUNDS,
     PRICE_IN,
     SLOTS_PER_HOUR,
     SOURCE_ACTUAL,
@@ -93,6 +98,13 @@ def _predicted_slots(
             yield start, prediction
 
 
+def _bounds(prediction: dict[str, Any]) -> dict[str, float]:
+    """Return a prediction's p10/p90 bounds that are known (#280)."""
+    return {
+        key: prediction[key] for key in PRICE_BOUNDS if prediction.get(key) is not None
+    }
+
+
 def with_tariffs(
     predictions: Iterable[dict[str, Any]], tariffs: TariffSchedule | None
 ) -> list[dict[str, Any]]:
@@ -103,15 +115,20 @@ def with_tariffs(
         tariffs: The tariff schedule; None or empty adds nothing.
 
     Returns:
-        Copies of the predictions that have a start and a price.
+        Copies of the predictions that have a start and a price; the tariff
+        is added to their p10/p90 bounds too.
     """
-    return [
-        {
-            **prediction,
-            "price": prediction["price"] + (tariffs.at(start) if tariffs else 0.0),
-        }
-        for start, prediction in _predicted_slots(predictions)
-    ]
+    shifted = []
+    for start, prediction in _predicted_slots(predictions):
+        tariff = tariffs.at(start) if tariffs else 0.0
+        shifted.append(
+            {
+                **prediction,
+                "price": prediction["price"] + tariff,
+                **{key: bound + tariff for key, bound in _bounds(prediction).items()},
+            }
+        )
+    return shifted
 
 
 def _with_source(
@@ -139,7 +156,7 @@ def slot_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
     Returns:
         ``{"start", "end", "price", "confidence"}`` entries; ``end`` is filled
         in (start + 15 minutes) when a prediction has none. A prediction's
-        ``source`` (#40) is kept.
+        ``source`` (#40) and p10/p90 bounds (#280) are kept.
     """
     return [
         _with_source(
@@ -150,6 +167,7 @@ def slot_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any]]
                     start + timedelta(minutes=SLOT_MINUTES)
                 ).isoformat(),
                 "price": prediction["price"],
+                **_bounds(prediction),
                 "confidence": prediction.get("confidence"),
             },
             [prediction],
@@ -167,7 +185,8 @@ def hourly_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any
     Returns:
         One entry per hour that has a prediction, in order: the hour's local
         ``start``/``end``, the mean ``price`` of its predicted slots and
-        their mean ``confidence`` (None without one).
+        their mean ``confidence`` (None without one). The hour's bounds are
+        the means of its slots' bounds, if every slot has them (#280).
     """
     hours: dict[datetime, list[dict[str, Any]]] = {}
     for start, prediction in _predicted_slots(predictions):
@@ -185,12 +204,23 @@ def hourly_forecast(predictions: Iterable[dict[str, Any]]) -> list[dict[str, Any
                         hour_start + timedelta(minutes=HOUR_MINUTES)
                     ).isoformat(),
                     "price": _mean([slot["price"] for slot in slots]),
+                    **_hour_bounds(slots),
                     "confidence": None if confidence is None else round(confidence, 2),
                 },
                 slots,
             )
         )
     return forecast
+
+
+def _hour_bounds(slots: Sequence[dict[str, Any]]) -> dict[str, float]:
+    """Return the mean p10/p90 bounds of an hour's slots, if all have them."""
+    bounds = [_bounds(slot) for slot in slots]
+    return {
+        key: sum(bound[key] for bound in bounds) / len(bounds)
+        for key in PRICE_BOUNDS
+        if all(key in bound for bound in bounds)
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -328,12 +358,21 @@ class PriceOutput:
             tariffs: Each slot's tariff, added to its price (#107).
 
         Returns:
-            ``{"start", "end", "price", "confidence"}`` entries.
+            ``{"start", "end", "price", "confidence"}`` entries, with
+            ``price_low``/``price_high`` where the slot has bounds (#280).
         """
         return [
-            {**entry, "price": self.convert(entry["price"])}
+            self.convert_entry(entry)
             for entry in self.forecast_series(predictions, tariffs)
         ]
+
+    def convert_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Return a ``forecast_series()`` entry with its price and bounds converted."""
+        return {
+            **entry,
+            "price": self.convert(entry["price"]),
+            **{key: self.convert(bound) for key, bound in _bounds(entry).items()},
+        }
 
     def evaluation(
         self,

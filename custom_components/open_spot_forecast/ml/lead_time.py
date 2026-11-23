@@ -160,6 +160,21 @@ def raw_bucket_errors(
     return errors
 
 
+def prediction_slot(prediction: dict[str, Any]) -> int | None:
+    """Return a stored prediction's slot of the local day by wall clock (0-95).
+
+    From its stored ``hour``/``minute``, else from its ISO ``start``; None
+    if neither is readable.
+    """
+    hour, minute = prediction.get("hour"), prediction.get("minute")
+    if hour is None or minute is None:
+        start = dt_util.parse_datetime(str(prediction.get("start", "")))
+        if start is None:
+            return None
+        hour, minute = start.hour, start.minute
+    return int(hour) * 4 + int(minute) // 15
+
+
 def evaluation_prediction(
     predictions: list[dict[str, Any]], target_hours: float = EVALUATION_LEAD_HOURS
 ) -> tuple[dict[str, Any], float] | None:
@@ -278,9 +293,18 @@ class LeadTimeMixin(PredictorBase):
                 slot_date = str(predictions[0]["start"])[:10]
                 self.storage.add_lead_time_errors(slot_date, errors)
                 # The same errors with and without the bias correction (#203)
-                self.storage.add_bias_accuracy(
-                    slot_date, raw_bucket_errors(predictions, actual_price)
-                )
+                raw = raw_bucket_errors(predictions, actual_price)
+                self.storage.add_bias_accuracy(slot_date, raw)
+                # The raw errors are the p10/p90 bands' sample (#280)
+                if (slot := prediction_slot(predictions[0])) is not None:
+                    self.record_interval_errors(
+                        slot_date,
+                        slot,
+                        {
+                            bucket: [e for e, _ in pairs]
+                            for bucket, pairs in raw.items()
+                        },
+                    )
             self.refresh_lead_time_accuracy()
         except sqlite3.Error as err:
             _LOGGER.error("Failed to record lead-time accuracy: %s", err)
