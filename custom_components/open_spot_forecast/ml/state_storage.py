@@ -6,6 +6,7 @@ uses persist and restore the per-slot ``error_metrics``, the ``bias_correction``
 offsets per slot and lead-time bucket (#118), ``volatility`` and the ``meta``
 key/value table in one transaction; ``save_meta_dict`` / ``delete_meta_keys``
 write individual ``meta`` keys (holdout metrics, hyperparameters, source state).
+``table_row_counts`` sizes every table for the config entry diagnostics (#276).
 """
 
 import contextlib
@@ -82,6 +83,27 @@ class LearningStateStorageMixin(StorageMixinBase):
     # ------------------------------------------------------------------
     # Bulk operations
     # ------------------------------------------------------------------
+
+    def table_row_counts(self) -> dict[str, int]:
+        """Return the number of rows of every table, by name (blocking)."""
+        with self._lock:
+            conn = self._ensure_conn()
+            names = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+                )
+            ]
+            # The names come from the schema itself, quoted as identifiers
+            return {
+                name: int(
+                    conn.execute(
+                        'SELECT COUNT(*) FROM "{}"'.format(name.replace('"', '""'))
+                    ).fetchone()[0]
+                )
+                for name in names
+            }
 
     def save_all(self, data: dict[str, Any]) -> None:
         """Save all learning data in one atomic transaction (blocking).

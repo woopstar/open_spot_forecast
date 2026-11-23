@@ -51,6 +51,7 @@ from .predbat_sensor import build_predbat_sensors
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
 from .price_source import PriceSettings
+from .source_health_sensor import DataSourcesSensor
 from .spot_prices import known_until, with_known_prices
 from .tariffs import TariffSchedule
 from .time_slots import SLOT_MINUTES, parse_utc
@@ -165,6 +166,9 @@ async def async_setup_entry(
         sensors.append(
             DayAheadPredictionSensor(hass, entry, api_data, currency, output)
         )
+    if api_data.get("source_health") is not None:
+        # Which data sources fail, and since when (#276)
+        sensors.append(DataSourcesSensor(hass, entry, api_data))
     if entry.options.get(CONF_PREDBAT_SENSORS, DEFAULT_PREDBAT_SENSORS):
         # Predbat's import/export, today/tomorrow rate entities (#124)
         sensors.extend(build_predbat_sensors(hass, entry, api_data, currency, output))

@@ -52,7 +52,15 @@ class HistorySource(Protocol):
 
     Every ``TimeSeriesSource`` has it; ``OutageSource`` (messages, not grid
     rows, ``api/outage_source.py``) implements it on its own.
+    ``source_name`` and ``failed_requests`` feed the source health (#276).
     """
+
+    # How many requests of the latest update got no usable answer
+    failed_requests: int
+
+    @property
+    def source_name(self) -> str:
+        """Return the source's stable name (its table or state key)."""
 
     async def async_update(self, start: datetime, end: datetime) -> bool:
         """Store what ``[start, end)`` is missing; return whether data changed."""
@@ -78,6 +86,8 @@ class TimeSeriesSource(ABC):
     recent_window: timedelta = timedelta(days=2)
     # Longest range one request may cover (None: the API takes any range)
     max_request_span: timedelta | None = None
+    # How many requests of the latest update failed (source health, #276)
+    failed_requests: int = 0
 
     def __init__(
         self,
@@ -97,6 +107,11 @@ class TimeSeriesSource(ABC):
         self.storage = storage
         self.horizon_cutoff = horizon_cutoff
         self._state: SourceState | None = None
+
+    @property
+    def source_name(self) -> str:
+        """Return the source's stable name: its table (``spec.name``)."""
+        return self.spec.name
 
     # ------------------------------------------------------------------
     # Source-specific behaviour
@@ -159,6 +174,7 @@ class TimeSeriesSource(ABC):
             Whether any stored value changed.
         """
         now = dt_util.utcnow()
+        self.failed_requests = 0
         if self.horizon_cutoff is not None:
             end = min(end, self.horizon_cutoff)
         available = self.available_until(now)
@@ -186,6 +202,7 @@ class TimeSeriesSource(ABC):
                 await asyncio.sleep(self.request_interval)
             rows = await self._fetch(chunk_start, chunk_end)
             if rows is None:
+                self.failed_requests += 1
                 continue
             attempted.append((chunk_start, chunk_end))
             if not rows:

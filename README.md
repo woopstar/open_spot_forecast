@@ -74,6 +74,9 @@ and retrains on them, and measures its accuracy per lead time.
 - Diagnostic day-ahead prediction sensor: what was predicted a day ago for
   the current slot, recorded in Home Assistant's history, so a history graph
   shows predicted against actual over weeks
+- Diagnostic data sources sensor: how many sources are healthy, and per
+  source the minutes since its last success and its last error. The config
+  entry's diagnostics download holds the full record (API key redacted)
 - Binary sensors for tomorrow's price availability and ML model training status
 - Optional comparison with other forecasts: pick Stromligning's forecast
   sensor or an Energi Data Service sensor as an external forecast sensor and

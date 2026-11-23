@@ -131,6 +131,9 @@
       "forecast_evaluation": {
         "name": "Prognoseevaluering"
       },
+      "data_sources": {
+        "name": "Datakilder"
+      },
       "day_ahead_prediction": {
         "name": "Prognose fra dagen før"
       },

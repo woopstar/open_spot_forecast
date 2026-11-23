@@ -14,33 +14,36 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 
 ### Component layer (`custom_components/open_spot_forecast/`)
 
-| File                     | Responsibility                                                                                                                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `const.py`               | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                                                                                |
-| `config_flow.py`         | Two-step config flow (basic settings → sensor configuration) + options flow                                                                                 |
-| `sensor.py`              | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                           |
-| `evaluation_sensor.py`   | Diagnostic `Forecast evaluation` sensor (#36): MAE and s/t/a arrays of the day-ahead prediction vs the actual price, last 48 h                              |
-| `day_ahead_sensor.py`    | Diagnostic `Day-ahead prediction` sensor (#113): the ~24 h-ahead prediction of the current slot as a recorded state (`ml_predictor.day_ahead_prediction()`) |
-| `accuracy_sensor.py`     | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                    |
-| `predbat_sensor.py`      | Optional Predbat rate entities (#124): import/export × today/tomorrow, Stromligning's `prices_today` / `prices_tomorrow` shape, `kr/kWh`, budget-trimmed    |
-| `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                           |
-| `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, fallback price, weather, Solcast)                                                                 |
-| `price_series.py`        | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                               |
-| `spot_prices.py`         | `ml_price_inputs()` (the model's raw spot prices + where they end), `known_until()`, `with_known_prices()` (confirmed, then predicted; #40)                 |
-| `time_slots.py`          | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                              |
-| `tomorrow_prices.py`     | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                           |
-| `__init__.py`            | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                      |
-| `updater.py`             | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline                                            |
-| `history_updater.py`     | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                                |
-| `sensor_entities.py`     | `SensorEntities` (the entity ids a config entry reads) and `external_forecast_sensors()` (#120)                                                             |
-| `external_forecasts.py`  | `async_record_external_forecasts()` — external forecast sensors → raw spot rows (`PriceOutput.to_spot()` − tariff) at every forecast run (#120)             |
-| `price_source.py`        | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source               |
-| `services.py`            | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
-| `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()`, `fit_compact()` (16 KB), `forecast_freshness()` (#277)                       |
-| `price_output.py`        | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
-| `tariffs.py`             | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days: latest day's time of day + national charge changes (#107, #278)  |
-| `attribution.py`         | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
-| `validation.py`          | `vol` — the schema library Home Assistant validates with (probatio, voluptuous before it); never import either directly (#195)                              |
+| File                      | Responsibility                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `const.py`                | `DOMAIN`, `CONF_*` keys, `REGIONS`, `PRICE_IN`, `PLATFORMS`, `UPDATE_SIGNAL`                                                                                |
+| `config_flow.py`          | Two-step config flow (basic settings → sensor configuration) + options flow                                                                                 |
+| `sensor.py`               | Price sensors (current, today/tomorrow min/max/mean, ML prediction, confidence, learning metrics)                                                           |
+| `evaluation_sensor.py`    | Diagnostic `Forecast evaluation` sensor (#36): MAE and s/t/a arrays of the day-ahead prediction vs the actual price, last 48 h                              |
+| `day_ahead_sensor.py`     | Diagnostic `Day-ahead prediction` sensor (#113): the ~24 h-ahead prediction of the current slot as a recorded state (`ml_predictor.day_ahead_prediction()`) |
+| `accuracy_sensor.py`      | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                    |
+| `predbat_sensor.py`       | Optional Predbat rate entities (#124): import/export × today/tomorrow, Stromligning's `prices_today` / `prices_tomorrow` shape, `kr/kWh`, budget-trimmed    |
+| `binary_sensor.py`        | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                           |
+| `sensor_reader.py`        | `SensorReader` — all external entity reads (Stromligning, fallback price, weather, Solcast)                                                                 |
+| `price_series.py`         | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                               |
+| `spot_prices.py`          | `ml_price_inputs()` (the model's raw spot prices + where they end), `known_until()`, `with_known_prices()` (confirmed, then predicted; #40)                 |
+| `time_slots.py`           | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                              |
+| `tomorrow_prices.py`      | `TomorrowPriceChecker` — re-reads prices every ~5 min from 13:00 local until tomorrow is complete                                                           |
+| `__init__.py`             | Setup and unload: builds the predictor and `ForecastUpdater`, runs the initial fetch, registers timers                                                      |
+| `updater.py`              | `ForecastUpdater` — update cycle (15-min / 6-hour / tomorrow poll / midnight), the one `run_forecast()` pipeline                                            |
+| `history_updater.py`      | `HistoryUpdaterMixin` — background backfill (day-ahead price days, Nordpool prognoses) and daily retention of stored history                                |
+| `sensor_entities.py`      | `SensorEntities` (the entity ids a config entry reads) and `external_forecast_sensors()` (#120)                                                             |
+| `external_forecasts.py`   | `async_record_external_forecasts()` — external forecast sensors → raw spot rows (`PriceOutput.to_spot()` − tariff) at every forecast run (#120)             |
+| `price_source.py`         | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source               |
+| `services.py`             | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
+| `forecast_attributes.py`  | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()`, `fit_compact()` (16 KB), `forecast_freshness()` (#277)                       |
+| `price_output.py`         | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
+| `tariffs.py`              | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days: latest day's time of day + national charge changes (#107, #278)  |
+| `attribution.py`          | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
+| `source_health.py`        | `SourceHealth` — per-source last attempt/success/error and `data_until` (#276); `async_refresh()`, `describe_error()` (no URLs or keys)                     |
+| `diagnostics.py`          | `async_get_config_entry_diagnostics` (#276): redacted entry, source health, forecast freshness, training info, table row counts                             |
+| `source_health_sensor.py` | Diagnostic `Data sources` sensor (#276): healthy-source count, per-source status and the failing names as attributes                                        |
+| `validation.py`           | `vol` — the schema library Home Assistant validates with (probatio, voluptuous before it); never import either directly (#195)                              |
 
 ### ML layer (`custom_components/open_spot_forecast/ml/`)
 
@@ -153,7 +156,18 @@ The raw spot prices go through the same helper (`ForecastUpdater._carry_over_spo
 price sources, #277), and without any known price `predict()` keeps the last good forecast
 (minus past slots, returns False). `run_forecast()` sets `api_data["forecast_generated_at"]` /
 `["forecast_stale"]`; the forecast sensor shows them via `forecast_freshness()`
-(`forecast_attributes.py`, `generated_at`, `stale`). Hook source health (#276) into these keys.
+(`forecast_attributes.py`, `generated_at`, `stale`); the diagnostics show them next to the source health.
+
+### Source health (#276)
+
+`SourceHealth` (`source_health.py`, `api_data["source_health"]`) is recorded only at the
+existing error-handling points: `HistoryUpdaterMixin._refresh()` (→ `async_refresh()`), the
+price reads in `updater.py` (`record_prices()` / `record_source_prices()`) and the backfill.
+A source reports a failed request through `failed_requests` (`TimeSeriesSource`,
+`OutageSource`, reset per update) and its name through `source_name`; never add a try/except
+or a health call inside an API client. Errors go through `describe_error()` (class + message,
+no URL or key); the diagnostics redact `entsoe_api_key` with `async_redact_data`. Nothing is
+persisted.
 
 ### Time-series sources
 

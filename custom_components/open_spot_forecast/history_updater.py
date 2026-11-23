@@ -11,7 +11,8 @@ UMMs, #123, or ENTSO-E's outage documents, #138) and, with the cross-border mode
 the neighbours' prices and zone weather (#29); if anything was added, the
 forecast is refreshed, so
 the model retrains on it at once. The sources only request what is missing,
-so an interrupted backfill resumes where it stopped. Once a day, history older than the training window plus
+so an interrupted backfill resumes where it stopped. Every update records
+the source's health (``source_health.py``, #276). Once a day, history older than the training window plus
 ``HISTORY_MARGIN_DAYS`` is deleted.
 """
 
@@ -32,6 +33,7 @@ from .api.openmeteo_weather import OpenMeteoWeatherSource
 from .const import WEATHER_POINTS
 from .ml.gas_price import GAS_LOOKBACK_DAYS
 from .ml.outages import OUTAGE_SOURCE_ENTSOE, OUTAGE_SOURCE_UMM, outage_source_kind
+from .source_health import SourceHealth, async_refresh
 from .time_slots import local_midnight
 
 if TYPE_CHECKING:
@@ -113,6 +115,8 @@ class HistoryUpdaterMixin:
     neighbour_weather: list[OpenMeteoWeatherSource]
     dayahead: DayAheadPrices | None
     history_prices: DayAheadPrices | None
+    # Each source's last attempt, success and error (#276)
+    health: SourceHealth
 
     async def refresh_forecast(self) -> None:
         """Re-read the prices and re-run the forecast (``ForecastUpdater``)."""
@@ -121,8 +125,12 @@ class HistoryUpdaterMixin:
     async def _refresh(
         self, source: HistorySource, start: datetime, end: datetime, label: str
     ) -> list[dict[str, Any]] | None:
-        """Update a source and return its stored rows (``ForecastUpdater``)."""
-        raise NotImplementedError
+        """Update a source for ``[start, end)`` and return its stored rows.
+
+        A failed update keeps what is stored; None if nothing can be read.
+        The source's health is recorded (#276).
+        """
+        return await async_refresh(self.health, source, start, end, label)
 
     def _first_price_day(self) -> date | None:
         """Return the oldest day of the model's price history, if any."""
@@ -144,11 +152,14 @@ class HistoryUpdaterMixin:
             return 0
         today = dt_util.now().date()
         first = today - timedelta(days=ml_predictor.max_history_days)
+        source = self.history_prices.source
         try:
             days = await self.history_prices.async_history(first, today)
         except Exception as err:
             _LOGGER.warning("Day-ahead price backfill failed: %s", err)
+            self.health.record_failure(source.source_name, err)
             return 0
+        self.health.record_update(source)
         if self.history_prices.license_info:
             self.api_data["price_license"] = self.history_prices.license_info
         known = {entry.get("date") for entry in ml_predictor.price_history}
@@ -170,12 +181,15 @@ class HistoryUpdaterMixin:
         if source is None:
             return False
         try:
-            return await source.async_update(
+            changed = await source.async_update(
                 local_midnight(first), local_midnight(dt_util.now().date())
             )
         except Exception as err:
             _LOGGER.warning("%s history backfill failed: %s", label, err)
+            self.health.record_failure(source.source_name, err)
             return False
+        self.health.record_update(source)
+        return changed
 
     async def backfill_history(self) -> None:
         """Fetch the history the model trains on that is still missing.
@@ -268,6 +282,9 @@ class HistoryUpdaterMixin:
                 await source.async_update(yesterday, end)
             except Exception as err:
                 _LOGGER.warning("Could not update %s: %s", source.spec.name, err)
+                self.health.record_failure(source.source_name, err)
+            else:
+                self.health.record_update(source)
 
     def start_history_backfill(self) -> None:
         """Run ``backfill_history`` in the background (it can take minutes)."""
