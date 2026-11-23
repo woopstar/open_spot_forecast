@@ -16,6 +16,12 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.open_spot_forecast.api.tariff_changes import (
+    ChargePeriod,
+    NationalCharges,
+    TariffChangeSource,
+)
+from custom_components.open_spot_forecast.const import NATIONAL_CHARGE_CODES
 from custom_components.open_spot_forecast.evaluation_sensor import (
     ForecastEvaluationSensor,
 )
@@ -23,7 +29,9 @@ from custom_components.open_spot_forecast.price_output import (
     PriceOutput,
     with_tariffs,
 )
+from custom_components.open_spot_forecast.price_source import PriceSettings
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
+from custom_components.open_spot_forecast.sensor_entities import SensorEntities
 from custom_components.open_spot_forecast.services import forecast_response
 from custom_components.open_spot_forecast.spot_prices import slot_prices
 from custom_components.open_spot_forecast.tariffs import TariffSchedule
@@ -77,6 +85,19 @@ def _schedule(
         "day": day,
     }
     return TariffSchedule.from_prices(consumer, spot)
+
+
+def _prices(day: date) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Consumer and spot data for ``day`` and the next day (time-of-use tariff)."""
+    following = day + timedelta(days=1)
+    today, tomorrow = _day_prices(day), _day_prices(following)
+    spot = {"today": today, "tomorrow": tomorrow, "day": day}
+    consumer = {
+        "today": _consumer(day, today),
+        "tomorrow": _consumer(following, tomorrow),
+        "day": day,
+    }
+    return consumer, spot
 
 
 def _prediction(start: datetime, price: float = 0.5) -> dict[str, Any]:
@@ -176,6 +197,126 @@ def test_without_consumer_prices_the_schedule_is_empty() -> None:
 
         assert not schedule
         assert schedule.at(datetime(2026, 9, 30, 18, 0, tzinfo=CPH)) == 0.0
+
+
+# --- Dated national charges (#278) ---------------------------------------------------
+
+
+def _charges(*changes: tuple[datetime, Sequence[float]]) -> NationalCharges:
+    """Every national charge: one hourly price list per change (split evenly)."""
+    return NationalCharges(
+        ChargePeriod(code, start, None, tuple(price / 3 for price in prices))
+        for start, prices in changes
+        for code in NATIONAL_CHARGE_CODES
+    )
+
+
+def test_a_forecast_across_new_year_takes_the_new_charges() -> None:
+    """From the first slot of 1 January (local), the 2027 charges apply."""
+    day = date(2026, 12, 30)
+    known = TariffSchedule.from_prices(
+        *_prices(day),
+        changes=_charges(
+            (datetime(2026, 1, 1, tzinfo=CPH), [0.123] * 24),
+            (datetime(2027, 1, 1, tzinfo=CPH), [0.113] * 24),
+        ),
+    )
+
+    # Published slots keep their exact tariff
+    assert known.at(datetime(2026, 12, 31, 23, 45, tzinfo=CPH)) == pytest.approx(0.10)
+    assert known.at(datetime(2026, 12, 31, 18, 0, tzinfo=CPH)) == pytest.approx(0.40)
+    # Later slots: the same time of day plus the change since 31 December
+    assert known.at(datetime(2027, 1, 1, 0, 0, tzinfo=CPH)) == pytest.approx(0.09)
+    assert known.at(datetime(2027, 1, 3, 18, 0, tzinfo=CPH)) == pytest.approx(0.39)
+
+
+def test_without_change_data_the_schedule_is_unchanged() -> None:
+    day = date(2026, 12, 30)
+    plain = TariffSchedule.from_prices(*_prices(day))
+    unknown_then = _charges((datetime(2027, 1, 1, tzinfo=CPH), [0.5] * 24))
+    for changes in (None, NationalCharges(), unknown_then):
+        schedule = TariffSchedule.from_prices(*_prices(day), changes=changes)
+        for start in (
+            datetime(2026, 12, 31, 18, 0, tzinfo=CPH),
+            datetime(2027, 1, 1, 0, 0, tzinfo=CPH),
+            datetime(2027, 1, 2, 18, 0, tzinfo=CPH),
+        ):
+            assert schedule.at(start) == pytest.approx(plain.at(start))
+    assert TariffSchedule.fixed(0.2).at(datetime(2027, 1, 1, tzinfo=CPH)) == (
+        pytest.approx(0.2)
+    )
+
+
+def test_hourly_charges_change_on_a_fall_back_day() -> None:
+    """Both 02:00 hours of 25 October take the new list's 02-03 price."""
+    day = date(2026, 10, 23)
+    new = [0.0] * 24
+    new[2] = 0.3
+    schedule = TariffSchedule.from_prices(
+        *_prices(day),
+        changes=_charges(
+            (datetime(2026, 1, 1, tzinfo=CPH), [0.0] * 24),
+            (datetime(2026, 10, 25, tzinfo=CPH), new),
+        ),
+    )
+
+    assert schedule.at(slot_start_in_day(FALL_BACK, 8)) == pytest.approx(0.40)
+    assert schedule.at(slot_start_in_day(FALL_BACK, 12)) == pytest.approx(0.40)
+    assert schedule.at(slot_start_in_day(FALL_BACK, 16)) == pytest.approx(0.10)
+
+
+@pytest.mark.asyncio
+async def test_the_updater_adds_the_fetched_charges_to_the_tariffs() -> None:
+    day = date(2026, 12, 30)
+    consumer, spot = _prices(day)
+    updater = ForecastUpdater.__new__(ForecastUpdater)
+    updater.api_data = {"stromligning_data": consumer, "spot_data": spot}
+    source = TariffChangeSource(Mock())
+    updater.tariff_changes = source
+    charges = _charges(
+        (datetime(2026, 1, 1, tzinfo=CPH), [0.123] * 24),
+        (datetime(2027, 1, 1, tzinfo=CPH), [0.113] * 24),
+    )
+
+    async def fetch(_today: date) -> bool:
+        source.charges = charges
+        return True
+
+    with patch.object(source, "async_update", side_effect=fetch):
+        await updater._update_tariff_changes()
+
+    tariffs = updater.api_data["tariffs"]
+    assert tariffs.at(datetime(2027, 1, 1, 0, 0, tzinfo=CPH)) == pytest.approx(0.09)
+
+
+@pytest.mark.parametrize(
+    ("region", "source", "currency", "ml", "fetched"),
+    [
+        ("DK1", "stromligning", "DKK", True, True),
+        ("DK2", "stromligning", "DKK", True, True),
+        ("DK1", "dayahead", "DKK", True, False),
+        ("DK1", "stromligning", "EUR", True, False),
+        ("SE3", "stromligning", "SEK", True, False),
+        ("DK1", "stromligning", "DKK", False, False),
+    ],
+)
+def test_the_charges_are_fetched_only_with_stromligning_in_denmark(
+    region: str, source: str, currency: str, ml: bool, fetched: bool
+) -> None:
+    sensors = SensorEntities(*([None] * 9))
+    predictor = MagicMock() if ml else None
+    updater = ForecastUpdater(
+        Mock(),
+        MagicMock(),
+        {"region": region, "sensor_config": sensors.sensor_config()},
+        sensors,
+        Mock(),
+        predictor,
+        PriceSettings(source, currency),
+        Mock(),
+    )
+
+    assert (updater.tariff_changes is not None) is fetched
 
 
 def test_slot_prices_skip_missing_slots_and_step_into_tomorrow() -> None:
@@ -318,6 +459,7 @@ def test_the_updater_builds_the_schedule_from_both_prices() -> None:
     updater = ForecastUpdater.__new__(ForecastUpdater)
     updater.ml_predictor = Mock()
     updater.dayahead = None
+    updater.tariff_changes = None
     updater.sensors = Mock()
     updater.sensor_reader = Mock()
     updater.sensor_reader.read_spot_prices.return_value = spot

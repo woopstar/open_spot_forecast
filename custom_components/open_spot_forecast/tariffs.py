@@ -11,40 +11,59 @@ current value.
 The model never sees a tariff (#16): ``PriceOutput`` adds it to the
 predicted spot price when a price is exposed. A slot past the published
 prices takes the latest known day's tariff at the same local time of day:
-Danish tariffs follow a fixed daily schedule.
+Danish tariffs follow a fixed daily schedule. Known dated changes of the
+national charges (Energinet's net and system tariffs and the electricity
+tax, e.g. on 1 January) are added on top (#278): the slot's charges minus
+those of the known slot its tariff was taken from (``NationalCharges``).
+Without them the schedule is unchanged.
 """
 
 from __future__ import annotations
 
 from bisect import bisect_right
 from datetime import UTC, datetime, time
+from typing import TYPE_CHECKING
 
 from homeassistant.util import dt as dt_util
 
 from .spot_prices import slot_prices
 
+if TYPE_CHECKING:
+    from .api.tariff_changes import NationalCharges
+
 
 class TariffSchedule:
     """Tariff (consumer − spot price, excl. VAT) by slot and by local time of day."""
 
-    def __init__(self, by_slot: dict[datetime, float], default: float = 0.0) -> None:
+    def __init__(
+        self,
+        by_slot: dict[datetime, float],
+        default: float = 0.0,
+        changes: NationalCharges | None = None,
+    ) -> None:
         """Initialize from the known tariffs, keyed by UTC slot start.
 
         Args:
             by_slot: The known tariffs by UTC slot start.
             default: The tariff of every slot when none is known (#124).
+            changes: Dated national charges (#278), added as a change
+                to the slots past the known ones; None adds nothing.
         """
         self._by_slot = by_slot
         self._default = default
-        self._by_time: dict[time, float] = {}
-        # In time order, so each local time of day keeps its latest tariff
+        self._changes = changes
+        # The latest known slot at each local time of day
+        self._by_time: dict[time, datetime] = {}
         for start in sorted(by_slot):
-            self._by_time[dt_util.as_local(start).time()] = by_slot[start]
+            self._by_time[dt_util.as_local(start).time()] = start
         self._times = sorted(self._by_time)
 
     @classmethod
     def from_prices(
-        cls, consumer_data: dict | None, spot_data: dict | None
+        cls,
+        consumer_data: dict | None,
+        spot_data: dict | None,
+        changes: NationalCharges | None = None,
     ) -> TariffSchedule:
         """Return the schedule of the slots where both prices are known.
 
@@ -53,6 +72,7 @@ class TariffSchedule:
                 (``read_stromligning_sensor()``-shaped: ``today``,
                 ``tomorrow``, ``day``).
             spot_data: Spot prices excl. VAT (``read_spot_prices()``).
+            changes: Dated national charges for the later slots (#278).
 
         Returns:
             The schedule; empty (falsy) without a slot known in both.
@@ -65,7 +85,8 @@ class TariffSchedule:
                 utc: consumer - spot[utc]
                 for start, _, consumer in slot_prices(consumer_data)
                 if (utc := start.astimezone(UTC)) in spot
-            }
+            },
+            changes=changes,
         )
 
     @classmethod
@@ -90,8 +111,10 @@ class TariffSchedule:
         Returns:
             The slot's own tariff if it is known; else the latest known
             day's tariff at the same local time of day (or the latest
-            earlier time of day, for an hour a DST change skipped); the
-            default (0.0 unless fixed) if no tariff is known.
+            earlier time of day, for an hour a DST change skipped), plus
+            the change in the national charges since that slot when both
+            are known (#278); the default (0.0 unless fixed) if no tariff
+            is known.
         """
         utc = start.astimezone(UTC)
         if utc in self._by_slot:
@@ -99,8 +122,12 @@ class TariffSchedule:
         if not self._times:
             return self._default
         local = dt_util.as_local(utc).time()
-        tariff = self._by_time.get(local)
-        if tariff is not None:
-            return tariff
-        index = bisect_right(self._times, local) - 1
-        return self._by_time[self._times[index]]
+        source = self._by_time.get(local)
+        if source is None:
+            source = self._by_time[self._times[bisect_right(self._times, local) - 1]]
+        tariff = self._by_slot[source]
+        if self._changes:
+            now, then = self._changes.total_at(utc), self._changes.total_at(source)
+            if now is not None and then is not None:
+                tariff += now - then
+        return tariff

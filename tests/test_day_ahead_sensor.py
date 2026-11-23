@@ -186,7 +186,7 @@ async def test_every_forecast_run_reloads_the_cache() -> None:
     predictor = MagicMock()
     predictor.save_learning_data = AsyncMock()
     updater.ml_predictor = predictor
-    updater.weather = updater.load = None
+    updater.weather = updater.load = updater.tariff_changes = None
     updater.sensors = Mock(external_forecasts=())
     updater.sensor_reader = updater.settings = Mock()
     updater.api_data = {"spot_data": None}
