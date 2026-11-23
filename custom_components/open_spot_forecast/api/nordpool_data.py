@@ -8,9 +8,16 @@ from typing import cast
 import aiohttp
 
 from ..const import NORDPOOL_API, USER_AGENT
+from ..ml.features import optional_float
 from .http import async_get
 
 _LOGGER = logging.getLogger(__name__)
+
+_PRODUCTION_TYPES = {
+    "solar": "Solar",
+    "wind_offshore": "WindOffshore",
+    "wind_onshore": "WindOnshore",
+}
 
 
 async def _get_json(url: str, label: str) -> dict | None:
@@ -88,7 +95,10 @@ async def fetch_production_prognosis(
     (Solar/WindOffshore/WindOnshore). Until that breakdown appears there is
     no per-type data to report, so the list is None even though the total is
     available; the caller uses ``updatedAt`` to detect when the breakdown is
-    published later.
+    published later. Nordpool can also publish the breakdown's structure
+    before its values: a ``null`` prognosis is unknown (None), never 0 MW,
+    and an interval whose types are all ``null`` counts as unpublished. A
+    type absent from the breakdown produces nothing in the area (0.0).
     """
     url = (
         f"{NORDPOOL_API}/ProductionDataPrognoses"
@@ -110,20 +120,19 @@ async def fetch_production_prognosis(
         forecast = entry.get("forecastByType", {})
         if not forecast:
             continue
+        prognoses = {
+            key: (forecast[name] or {}).get("dayAheadPrognosis")
+            for key, name in _PRODUCTION_TYPES.items()
+            if name in forecast
+        }
+        if all(optional_float(value) is None for value in prognoses.values()):
+            continue
         has_breakdown = True
-        solar_data = forecast.get("Solar", {})
-        wind_off = forecast.get("WindOffshore", {})
-        wind_on = forecast.get("WindOnshore", {})
-
-        result.append(
-            {
-                "deliveryStart": start,
-                "solar": float(solar_data.get("dayAheadPrognosis", 0)),
-                "wind_offshore": float(wind_off.get("dayAheadPrognosis", 0)),
-                "wind_onshore": float(wind_on.get("dayAheadPrognosis", 0)),
-                "total": float(entry.get("totalDayAheadPrognosis", 0)),
-            }
-        )
+        produced: dict = {"deliveryStart": start}
+        for key in _PRODUCTION_TYPES:
+            produced[key] = optional_float(prognoses[key]) if key in prognoses else 0.0
+        produced["total"] = optional_float(entry.get("totalDayAheadPrognosis"))
+        result.append(produced)
 
     if not has_breakdown:
         _LOGGER.info(
