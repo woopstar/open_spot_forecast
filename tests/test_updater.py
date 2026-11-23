@@ -1054,6 +1054,70 @@ async def test_without_todays_dayahead_prices_the_previous_are_kept(
     assert "Could not read the day-ahead prices: locked" in caplog.text
 
 
+def _fallback(today: list[float], currency: str | None = "DKK") -> dict[str, Any]:
+    """``read_price_sensor()`` data for the harness's day (#270)."""
+    return {**_stromligning(today, [0.3] * 96), "day": NOW.date(), "currency": currency}
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_sensor_fills_the_days_the_apis_lack(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Without day-ahead prices for today the sensor's are used (#270)."""
+    harness = make(_sensors(fallback_price="sensor.nordpool"), price_source="dayahead")
+    harness.reader.read_price_sensor.return_value = _fallback([0.2] * 96)
+    harness.dayahead.async_read.return_value = {
+        **_dayahead_spot(),
+        "today": [],
+        "day": NOW.date(),
+    }
+
+    with (
+        patch(f"{MODULE}.dt_util.now", return_value=NOW),
+        caplog.at_level("INFO"),
+    ):
+        assert await harness.updater.async_read_prices() is True
+        harness.dayahead.async_read.side_effect = RuntimeError("down")
+        assert await harness.updater.async_read_prices() is True
+
+    harness.reader.read_price_sensor.assert_called_with("sensor.nordpool")
+    assert harness.api_data["prices_today"] == [0.2] * 96
+    assert harness.api_data["prices_tomorrow"] == [0.3] * 96
+    assert harness.api_data["price_source"] == "dayahead"
+    # Logged once while the use stays the same
+    assert caplog.text.count("used for today and tomorrow") == 1
+
+
+@pytest.mark.asyncio
+async def test_the_fallback_sensor_is_not_read_when_the_apis_have_both_days(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(_sensors(fallback_price="sensor.nordpool"), price_source="dayahead")
+    harness.dayahead.async_read.return_value = _dayahead_spot([0.4] * 96)
+
+    assert await harness.updater.async_read_prices() is True
+
+    harness.reader.read_price_sensor.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_fallback_sensor_in_another_currency_is_ignored(
+    make: Callable[..., Harness], caplog: pytest.LogCaptureFixture
+) -> None:
+    harness = make(_sensors(fallback_price="sensor.nordpool"), price_source="dayahead")
+    harness.reader.read_price_sensor.return_value = _fallback([0.2] * 96, "EUR")
+    harness.dayahead.async_read.return_value = {
+        "today": [],
+        "tomorrow": [],
+        "day": NOW.date(),
+    }
+
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW):
+        assert await harness.updater.async_read_prices() is False
+
+    assert "its prices are in EUR, not DKK" in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_the_dayahead_source_needs_its_storage(
     make: Callable[..., Harness],

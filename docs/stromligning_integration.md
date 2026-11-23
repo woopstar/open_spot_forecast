@@ -206,6 +206,17 @@ results:
   model ENTSO-E's week-ahead load forecast (see
   [ML documentation](ml_documentation.md#feature-vector-26-features), #30).
   The options take effect when the integration is reloaded.
+- A **fallback price sensor** (optional, #270) covers a day both APIs
+  lack: when they have no prices for today or tomorrow (energy-charts once
+  had no NL prices for a whole day), that day's prices are read from
+  another integration's sensor (`SensorReader.read_price_sensor()`): the
+  Nordpool integration's `raw_today`/`raw_tomorrow` (`start`, `value`), or
+  a `prices` list (`start`, `price`). Its `unit` (kWh, MWh, Wh, or the
+  `unit_of_measurement`) and `price_in_cents` are converted to
+  currency/kWh, and a sensor whose `currency` differs from the configured
+  one is ignored. It must show the spot price excl. VAT and without
+  additional costs. A day the APIs know is never replaced, and the
+  sensor's prices are not stored: the training history stays the APIs'.
 - Requests span whole local days of the region, so zones east of UTC (e.g.
   FI and EE, whose day starts at 21:00/22:00 UTC) are not cut off. Hourly
   prices fill their four quarter-hours.

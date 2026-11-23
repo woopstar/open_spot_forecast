@@ -175,7 +175,8 @@ for the Stromligning entities in its `apps.yaml`: see
    prices with tariffs) or the day-ahead price (all regions, spot price +
    VAT; optionally an ENTSO-E API key as fallback, which also adds ENTSO-E's
    week-ahead load forecast to the model; it can be added later in the
-   options).
+   options). A Nordpool sensor can be set as **Fallback Price Sensor** for
+   days the day-ahead APIs have no prices for.
 4. **Add weather sensors** (optional) to score the local weather forecast in
    the confidence; the model's weather comes from Open-Meteo.
 5. **Let it learn** — accuracy improves as it accumulates history and self-corrects.

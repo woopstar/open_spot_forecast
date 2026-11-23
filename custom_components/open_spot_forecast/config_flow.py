@@ -26,6 +26,7 @@ from .const import (
     CONF_ENABLE_ML_PREDICTION,
     CONF_ENTSOE_API_KEY,
     CONF_EXTERNAL_FORECAST_SENSORS,
+    CONF_FALLBACK_PRICE_SENSOR,
     CONF_HOURLY_AVERAGE,
     CONF_INCLUDE_KNOWN_PRICES,
     CONF_PRECISION,
@@ -131,9 +132,11 @@ def external_forecast_selector() -> Any:
     return selector({"entity": {"domain": "sensor", "multiple": True}})
 
 
-# The optional weather and solar sensors. No entity is suggested for them: a
-# default would be saved when the field is left or cleared (#239, #245)
+# The optional weather, solar and fallback price sensors (#270). No entity is
+# suggested for them: a default would be saved when the field is left or
+# cleared (#239, #245)
 OPTIONAL_SENSOR_KEYS = (
+    CONF_FALLBACK_PRICE_SENSOR,
     CONF_WIND_SPEED_SENSOR,
     CONF_WIND_DIRECTION_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
@@ -250,6 +253,12 @@ class OpenSpotForecastConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         DEFAULT_SPOT_PRICE_TOMORROW_SENSOR,
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
+                vol.Optional(
+                    CONF_FALLBACK_PRICE_SENSOR,
+                    description={
+                        "suggested_value": self._data.get(CONF_FALLBACK_PRICE_SENSOR)
+                    },
+                ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_WIND_SPEED_SENSOR,
                     description={
@@ -471,6 +480,14 @@ class OpenSpotForecastOptionsFlow(config_entries.OptionsFlow):
                         ),
                     ),
                 ): selector({"entity": {"domain": "binary_sensor"}}),
+                vol.Optional(
+                    CONF_FALLBACK_PRICE_SENSOR,
+                    description={
+                        "suggested_value": configured_option(
+                            self.config_entry, CONF_FALLBACK_PRICE_SENSOR
+                        )
+                    },
+                ): selector({"entity": {"domain": "sensor"}}),
                 vol.Optional(
                     CONF_WIND_SPEED_SENSOR,
                     description={

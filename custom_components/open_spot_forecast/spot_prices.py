@@ -251,3 +251,27 @@ def dayahead_spot_data(
                 {"start": start.isoformat()} for start, _ in samples
             ]
     return result
+
+
+def fill_missing_days(spot_data: dict[str, Any], fallback: dict[str, Any]) -> list[str]:
+    """Fill ``spot_data``'s empty days from a fallback source, in place (#270).
+
+    Args:
+        spot_data: ``read_spot_prices()``-shaped data from the day-ahead APIs.
+        fallback: The same shape from ``SensorReader.read_price_sensor()``.
+
+    Returns:
+        The days (``today``/``tomorrow``) taken from ``fallback``; none if it
+        is for another local day. A day the APIs know is never replaced.
+    """
+    if fallback.get("day") != spot_data.get("day"):
+        return []
+    filled = [
+        key
+        for key in ("today", "tomorrow")
+        if not spot_data.get(key) and fallback.get(key)
+    ]
+    for key in filled:
+        spot_data[key] = fallback[key]
+        spot_data[f"raw_{key}"] = fallback[f"raw_{key}"]
+    return filled

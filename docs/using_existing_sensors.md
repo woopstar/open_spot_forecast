@@ -41,6 +41,21 @@ its forecast in a `prices` (`start`, `price`) or `forecast` (`hour`, `price`)
 attribute, in the terms this integration shows prices in (unit, tariffs,
 VAT). See [Self-Learning](self_learning.md#external-forecasts-120).
 
+## Optional: Fallback Price Sensor
+
+| Entity                                                          | Integration                                               | Purpose                                       |
+| --------------------------------------------------------------- | --------------------------------------------------------- | --------------------------------------------- |
+| Your Nordpool sensor (e.g. `sensor.nordpool_kwh_nl_eur_3_10_0`) | [Nordpool](https://github.com/custom-components/nordpool) | Spot prices when the day-ahead APIs have none |
+
+Set it as **Fallback Price Sensor** (config or options flow, none by
+default). Only the day-ahead price source reads it, and only for a day
+(today or tomorrow) energy-charts.info and ENTSO-E have no prices for
+(#270). It reads `raw_today`/`raw_tomorrow` (`start`, `value`) or a
+`prices` list (`start`, `price`). Set the Nordpool sensor up without VAT
+and without additional costs, in the currency configured here; its unit
+(kWh, MWh, Wh, cents) is converted. See
+[Price sources](stromligning_integration.md).
+
 ## Weather Entity
 
 A single `weather.*` entity scores the local weather forecast for the
