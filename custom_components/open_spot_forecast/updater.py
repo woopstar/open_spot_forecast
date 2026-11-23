@@ -183,18 +183,37 @@ class ForecastUpdater(HistoryUpdaterMixin):
         (``async_read_prices``).
         """
         if self.ml_predictor and self.dayahead is None:
-            self.api_data["spot_data"] = self.sensor_reader.read_spot_prices(
-                self.sensors.spot_price, self.sensors.spot_price_tomorrow
+            self._carry_over_spot(
+                self.sensor_reader.read_spot_prices(
+                    self.sensors.spot_price, self.sensors.spot_price_tomorrow
+                )
             )
             self._build_tariffs()
 
+    def _carry_over_spot(self, read: dict[str, Any]) -> dict[str, Any]:
+        """Store a spot price read, with the prices of the last one it lacks.
+
+        An unavailable source for one read keeps today's prices (#277):
+        ``carry_over_day_prices``, so a day that is no longer today's is
+        dropped after midnight and the model gets no prices of another day.
+        """
+        spot_data = carry_over_day_prices(
+            self.api_data.get("spot_data"), read, dt_util.now().date()
+        )
+        self.api_data["spot_data"] = spot_data
+        return spot_data
+
     def _build_tariffs(self) -> None:
-        """Consumer − spot per slot: the forecast's tariffs (#107, #278)."""
+        """Consumer − spot per slot: the forecast's tariffs (#107, #278).
+
+        Without today's spot prices the last schedule is kept (#277).
+        """
+        spot_data = self.api_data.get("spot_data") or {}
+        if not spot_data.get("today") and "tariffs" in self.api_data:
+            return
         changes = self.tariff_changes.charges if self.tariff_changes else None
         self.api_data["tariffs"] = TariffSchedule.from_prices(
-            self.api_data.get("stromligning_data"),
-            self.api_data.get("spot_data"),
-            changes,
+            self.api_data.get("stromligning_data"), spot_data, changes
         )
 
     async def _update_tariff_changes(self) -> None:
@@ -281,9 +300,9 @@ class ForecastUpdater(HistoryUpdaterMixin):
             _LOGGER.warning("Could not read the day-ahead prices: %s", err)
             spot_data = dayahead_spot_data((), lambda _day: None, today)
         self._fill_from_price_sensor(spot_data)
+        spot_data = self._carry_over_spot(spot_data)
         if not spot_data["today"]:
             return False
-        self.api_data["spot_data"] = spot_data
         # Raw spot prices: the sensors add the surcharge and VAT (#39)
         self.api_data["prices_today"] = spot_data["today"]
         self.api_data["prices_tomorrow"] = spot_data["tomorrow"]
@@ -393,7 +412,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
                 len(all_known_prices),
                 known_data_end_time,
             )
-            await self.hass.async_add_executor_job(
+            generated = await self.hass.async_add_executor_job(
                 ml_predictor.predict,
                 weather_data,
                 all_known_prices,
@@ -401,6 +420,10 @@ class ForecastUpdater(HistoryUpdaterMixin):
                 INTERVAL_MINUTES,
                 known_data_end_time,
             )
+            # Without prices the last good forecast is kept, flagged stale (#277)
+            if generated:
+                self.api_data["forecast_generated_at"] = dt_util.now()
+            self.api_data["forecast_stale"] = not generated
             self.api_data["ml_predictions"] = ml_predictor.predictions
             _LOGGER.info("Generated %d ML predictions", len(ml_predictor.predictions))
             # The stored predictions changed: so may a slot's day-ahead one (#113)

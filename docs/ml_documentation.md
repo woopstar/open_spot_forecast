@@ -1076,6 +1076,28 @@ start. The state is unknown if every prediction is in the past, rather than
 showing a stale slot. The sensor is polled, so the state moves to the next
 slot within Home Assistant's polling interval.
 
+### Missing Prices: The Last Good Forecast (#277)
+
+A forecast run without any known spot price (no source has prices for
+today: the spot sensor is unavailable after a restart, or the day-ahead
+APIs and the fallback sensor have none) keeps the previous forecast instead
+of clearing it, as a run on all-zero prices does. `predict()` returns
+whether it made a new forecast; a kept one loses its past slots
+(`_drop_past_predictions()`), and is not stored for self-learning again: its
+slots were stored when it was made, so no prediction is scored twice. The
+updater first carries the last read's spot prices over for the same local
+day (`carry_over_day_prices()`, see
+[Price sources](stromligning_integration.md)), so this only happens when no
+price of today is known at all.
+
+`run_forecast()` keeps `api_data["forecast_generated_at"]` (the last run
+that made a new forecast) and `api_data["forecast_stale"]` (the last run
+kept the previous one). The `Price Forecast (ML)` sensor stays available and
+shows them as `generated_at` (ISO, null before the first forecast) and
+`stale` (`forecast_freshness()` in `forecast_attributes.py`): true when the
+last run kept the forecast or it is older than `FORECAST_STALE_AFTER_HOURS`
+(12, two 6-hourly runs). The next run that makes a forecast clears it.
+
 ## Heuristic Fallback
 
 Until the price model is trained (e.g. during the first day of history),

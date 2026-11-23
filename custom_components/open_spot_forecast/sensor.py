@@ -40,7 +40,12 @@ from .const import (
 )
 from .day_ahead_sensor import DayAheadPredictionSensor
 from .evaluation_sensor import ForecastEvaluationSensor
-from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
+from .forecast_attributes import (
+    compact_forecast,
+    detailed_forecast,
+    fit_compact,
+    forecast_freshness,
+)
 from .ml.training_info import REJECTION_META_KEYS
 from .predbat_sensor import build_predbat_sensors
 from .price_output import HOUR_MINUTES, PriceOutput
@@ -586,6 +591,8 @@ class MLPredictionSensor(ModelAttributionMixin, SensorEntity):
             attrs["known_until"] = (
                 dt_util.as_local(known_end).isoformat() if known_end else None
             )
+            # The last good forecast is kept without prices, flagged (#277)
+            attrs.update(forecast_freshness(self.api_data, now))
             # Every price above and below: (spot + tariff + surcharge) + VAT
             attrs["includes_vat"] = True
             attrs["includes_tariffs"] = bool(self._tariffs)

@@ -36,7 +36,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `external_forecasts.py`  | `async_record_external_forecasts()` — external forecast sensors → raw spot rows (`PriceOutput.to_spot()` − tariff) at every forecast run (#120)             |
 | `price_source.py`        | `PriceSettings` (price source, currency, `PriceOutput`, ENTSO-E key) and `DayAheadPrices` (fetch, convert, history) for the `dayahead` source               |
 | `services.py`            | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
-| `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (s/t/c arrays), `fit_compact()` (16 KB limit)                                 |
+| `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()`, `fit_compact()` (16 KB), `forecast_freshness()` (#277)                       |
 | `price_output.py`        | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
 | `tariffs.py`             | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days: latest day's time of day + national charge changes (#107, #278)  |
 | `attribution.py`         | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
@@ -149,6 +149,11 @@ with the previous read by `carry_over_day_prices()` (`price_series.py`; a known 
 known, yesterday's `tomorrow` is today's after midnight). The price entities read today's list
 (`source_day_prices()` + `PriceOutput.price_at()`), never the sensor state of an earlier read
 (#201). Do not read the Stromligning sensor into `api_data` anywhere else.
+The raw spot prices go through the same helper (`ForecastUpdater._carry_over_spot()`, both
+price sources, #277), and without any known price `predict()` keeps the last good forecast
+(minus past slots, returns False). `run_forecast()` sets `api_data["forecast_generated_at"]` /
+`["forecast_stale"]`; the forecast sensor shows them via `forecast_freshness()`
+(`forecast_attributes.py`, `generated_at`, `stale`). Hook source health (#276) into these keys.
 
 ### Time-series sources
 

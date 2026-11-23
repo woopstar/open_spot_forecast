@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from ..const import DEFAULT_TRAINING_DAYS, NEIGHBOURS
 from ..price_series import is_invalid_price_series, known_prices
+from ..time_slots import SLOT_MINUTES, parse_utc
 from .bias import BiasMixin
 from .catch_up import CatchUpMixin
 from .cross_border import CrossBorderModels
@@ -154,7 +155,7 @@ class SpotPricePredictor(
         forecast_days: int = 7,
         interval_minutes: int = 15,
         known_data_end_time: datetime | None = None,
-    ) -> None:
+    ) -> bool:
         """Generate price predictions using ML models.
 
         Args:
@@ -166,9 +167,14 @@ class SpotPricePredictor(
                 No predictions will be generated for times we already
                 have actual/committed prices for. If None, starts at
                 the current slot (see first_prediction_slot).
+
+        Returns:
+            Whether a new forecast was generated. Without usable prices the
+            previous forecast is kept, minus its past slots (#277), and
+            nothing is stored for self-learning again.
         """
         with self._predict_lock:
-            self._predict(
+            return self._predict(
                 weather_data,
                 historical_prices,
                 forecast_days,
@@ -183,7 +189,7 @@ class SpotPricePredictor(
         forecast_days: int,
         interval_minutes: int,
         known_data_end_time: datetime | None,
-    ) -> None:
+    ) -> bool:
         """Generate price predictions; the caller holds _predict_lock."""
         try:
             _LOGGER.info(
@@ -193,13 +199,11 @@ class SpotPricePredictor(
             )
 
             # Validate input data (None marks a slot missing in the source)
+            # No prices from any source (#277): keep the last good forecast
             if not known_prices(historical_prices):
-                _LOGGER.warning(
-                    "No historical prices provided, cannot generate predictions"
-                )
-                self.predictions = []
-                self.confidence_scores = []
-                return
+                _LOGGER.warning("No known prices, keeping the previous predictions")
+                self._drop_past_predictions(dt_util.utcnow())
+                return False
 
             # All-zero or non-finite prices come from a failing source: don't
             # store, train or predict on them, keep the previous predictions
@@ -208,7 +212,8 @@ class SpotPricePredictor(
                     "Known prices are all zero or not finite, "
                     "keeping the previous predictions"
                 )
-                return
+                self._drop_past_predictions(dt_util.utcnow())
+                return False
 
             # Learn the solar scaling factor: how does actual output compare
             # to Solcast? Not a price model input (see docs/ml_documentation.md)
@@ -278,11 +283,31 @@ class SpotPricePredictor(
                     sample.get("price", 0),
                     sample.get("confidence", 0),
                 )
+            return True
 
         except Exception as err:
             _LOGGER.error("Error generating ML predictions: %s", err, exc_info=True)
             self.predictions = []
             self.confidence_scores = []
+            return False
+
+    def _drop_past_predictions(self, now: datetime) -> None:
+        """Remove the predictions of slots that ended before ``now`` (#277).
+
+        A kept forecast is a new list, so the forecast sensor rebuilds its
+        series; its predictions were stored for self-learning when they
+        were made and are not stored again.
+        """
+        kept = []
+        for prediction in self.predictions:
+            start = parse_utc(prediction.get("start"))
+            end = parse_utc(prediction.get("end"))
+            if end is None and start is not None:
+                end = start + timedelta(minutes=SLOT_MINUTES)
+            if end is not None and end > now:
+                kept.append(prediction)
+        self.predictions = kept
+        self.confidence_scores = [p.get("confidence", 0.0) for p in kept]
 
     def _zone_index(self, weather_data: dict) -> ZoneWeatherIndex:
         """Return the zone weather (#22) of the stored Open-Meteo rows, by slot."""

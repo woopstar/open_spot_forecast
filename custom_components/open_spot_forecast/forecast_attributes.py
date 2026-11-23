@@ -17,12 +17,17 @@ precision or prices.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.helpers.json import json_bytes
 
-from .const import RECORDER_MAX_ATTRIBUTES_BYTES, SOURCE_ACTUAL
+from .const import (
+    FORECAST_STALE_AFTER_HOURS,
+    RECORDER_MAX_ATTRIBUTES_BYTES,
+    SOURCE_ACTUAL,
+)
 from .price_output import HOUR_MINUTES
 from .time_slots import parse_utc
 
@@ -143,3 +148,28 @@ def fit_entries(
         per_entry = max(1, attributes_size({key: entries}) // len(entries))
         drop = math.ceil(math.ceil((size - budget) / per_entry) / per_hour) * per_hour
         del entries[max(0, len(entries) - drop) :]
+
+
+def forecast_freshness(api_data: Mapping[str, Any], now: datetime) -> dict[str, Any]:
+    """Return when the forecast was generated and whether it is stale (#277).
+
+    Args:
+        api_data: The config entry's data: ``forecast_generated_at`` (the
+            last run that made a new forecast) and ``forecast_stale`` (the
+            last run kept the previous one: no source had prices).
+        now: The current time, timezone-aware.
+
+    Returns:
+        ``generated_at`` (ISO, None before the first forecast) and
+        ``stale``: the last run kept the forecast, or it is older than
+        ``FORECAST_STALE_AFTER_HOURS``.
+    """
+    generated: datetime | None = api_data.get("forecast_generated_at")
+    stale = bool(api_data.get("forecast_stale")) or (
+        generated is not None
+        and now - generated > timedelta(hours=FORECAST_STALE_AFTER_HOURS)
+    )
+    return {
+        "generated_at": generated.isoformat() if generated else None,
+        "stale": stale,
+    }
