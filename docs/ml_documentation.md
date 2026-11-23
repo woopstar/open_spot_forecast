@@ -1238,9 +1238,9 @@ The backtest scores one forecast per origin at midnight; live, a slot is
 predicted by every run of the days before it, and the live errors include
 the weather forecast's own error, which the backtest's archived weather
 hides from day 2 on. The band is learned from those live errors, so it
-widens by itself where the live forecast is worse. Whether the live
-coverage matches can be read from the `evaluation` snapshots once the bounds
-are stored with them; until then the backtest is the measure.
+widens by itself where the live forecast is worse. Measuring the live
+coverage from an export's `interval_errors` is #288; until then the backtest
+is the measure.
 
 ## Self-Learning Loop
 
