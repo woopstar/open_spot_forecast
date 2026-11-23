@@ -349,6 +349,77 @@ async def test_production_uses_defaults_when_prognosis_missing():
     ]
 
 
+def _production_payload(*forecasts: dict) -> dict:
+    """Build a production payload with one 15-minute interval per breakdown."""
+    return {
+        "updatedAt": "2026-11-10T16:10:20Z",
+        "content": [
+            {
+                "deliveryStart": f"2026-11-11T00:{15 * i:02d}:00Z",
+                "forecastByType": forecast,
+                "totalDayAheadPrognosis": None,
+            }
+            for i, forecast in enumerate(forecasts)
+        ],
+    }
+
+
+async def _fetch_production(payload: dict) -> tuple[list[dict] | None, str | None]:
+    """Run ``fetch_production_prognosis`` against a mocked 200 response."""
+    with patch(
+        "custom_components.open_spot_forecast.api.nordpool_data.aiohttp.ClientSession",
+        return_value=_session(_response(200, payload)),
+    ):
+        return await fetch_production_prognosis(date(2026, 11, 11), "BE")
+
+
+@pytest.mark.asyncio
+async def test_production_all_null_breakdown_is_unpublished() -> None:
+    """Null per-type prognoses (structure before values) mean not published (#260).
+
+    The day must not raise, and must report no breakdown so the caller
+    retries once Nordpool publishes the values.
+    """
+    null = {"dayAheadPrognosis": None}
+    payload = _production_payload(
+        {"Solar": null, "WindOffshore": null, "WindOnshore": null},
+        {"Solar": None, "WindOffshore": null, "WindOnshore": null},
+    )
+
+    result, updated_at = await _fetch_production(payload)
+
+    assert result is None
+    assert updated_at == "2026-11-10T16:10:20Z"
+
+
+@pytest.mark.asyncio
+async def test_production_partial_null_keeps_known_values() -> None:
+    """A null type is None (unknown), never 0; known types are kept (#260)."""
+    payload = _production_payload(
+        {
+            "Solar": {"dayAheadPrognosis": None},
+            "WindOffshore": {"dayAheadPrognosis": 0},
+            "WindOnshore": {"dayAheadPrognosis": 715},
+        },
+        {
+            "Solar": {"dayAheadPrognosis": None},
+            "WindOffshore": {"dayAheadPrognosis": None},
+            "WindOnshore": {"dayAheadPrognosis": None},
+        },
+    )
+
+    result, _ = await _fetch_production(payload)
+
+    assert result is not None
+    assert len(result) == 1
+    entry = result[0]
+    assert entry["deliveryStart"] == "2026-11-11T00:00:00Z"
+    assert entry["solar"] is None
+    assert entry["wind_offshore"] == pytest.approx(0.0)
+    assert entry["wind_onshore"] == pytest.approx(715.0)
+    assert entry["total"] is None
+
+
 @pytest.mark.asyncio
 async def test_invalid_json_returns_none(caplog: pytest.LogCaptureFixture) -> None:
     """A 200 response that is not JSON is logged and yields no data."""

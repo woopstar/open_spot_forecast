@@ -237,7 +237,9 @@ source fetches only what it is missing:
 - A grid point counts as stored when its row has a value in every column
   (and, for a keyed table, every expected key has such a row). Nordpool rows
   without the per-type production breakdown are therefore incomplete until
-  it is published.
+  it is published. Nordpool can publish the breakdown's structure before its
+  values: a `null` per-type prognosis is stored as missing, never as 0 MW,
+  and a day whose breakdown is all `null` counts as not yet published (#260).
 - `upsert_series` writes new values over old ones but never replaces a
   stored value with a missing one, and reports whether anything changed. A
   change moves `last_data_write`, which makes the model retrain.
