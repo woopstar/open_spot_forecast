@@ -88,7 +88,10 @@ class RetrainMixin(PredictorBase):
         """Train the price model on the stored history.
 
         ``last_trained_at`` is the time training *started*: data written while
-        training runs is newer than it and triggers the next retrain.
+        training runs is newer than it and triggers the next retrain. It is
+        also set when the candidate was rejected and the live model kept
+        serving (#275), so the same data is not retrained on every forecast
+        run; only new data triggers the next attempt.
         """
         started = dt_util.utcnow()
         self._train_models()

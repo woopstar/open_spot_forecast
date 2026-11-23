@@ -152,14 +152,16 @@ async def test_a_restart_keeps_the_date_and_a_changed_option_moves_it(
     assert _meta(third)["model_options_since"] == later.isoformat()
 
 
-def test_a_failed_training_clears_the_durations_and_keeps_the_options(
+def test_a_failed_first_training_clears_the_durations_and_keeps_the_options(
     make_predictor: Callable[..., SpotPricePredictor],
 ) -> None:
     predictor = make_predictor()
     predictor._train_models()
     since = predictor.model_options_since
+    # A restart: the options and durations are restored, no model is in use
+    predictor.price_model = NumpyGradientBoosting(n_estimators=3)
 
-    with patch.object(predictor.price_model, "fit", side_effect=RuntimeError("no fit")):
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
         predictor._train_models()
 
     assert predictor.training_seconds is None
@@ -168,6 +170,24 @@ def test_a_failed_training_clears_the_durations_and_keeps_the_options(
     meta = _meta(predictor)
     assert not any(key in meta for key in TRAINING_TIME_META_KEYS)
     assert "model_options" in meta
+
+
+def test_a_failed_retrain_keeps_the_live_models_durations(
+    make_predictor: Callable[..., SpotPricePredictor],
+) -> None:
+    """The live model keeps serving, so its duration stays shown (#275)."""
+    predictor = make_predictor()
+    predictor._train_models()
+    seconds = predictor.training_seconds
+    assert seconds is not None
+
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
+        predictor._train_models()
+
+    assert predictor.training_seconds == pytest.approx(seconds)
+    assert float(_meta(predictor)["training_seconds"]) == pytest.approx(
+        round(seconds, 2)
+    )
 
 
 def test_unreadable_stored_values_are_treated_as_missing(

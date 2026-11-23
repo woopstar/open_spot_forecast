@@ -15,6 +15,7 @@ import pytest
 
 from homeassistant.util import dt as dt_util
 
+from custom_components.open_spot_forecast.ml.gbm import NumpyGradientBoosting
 from custom_components.open_spot_forecast.ml.models import HOLDOUT_META_KEYS
 from custom_components.open_spot_forecast.ml.predictor import SpotPricePredictor
 from custom_components.open_spot_forecast.sensor import LearningMetricsSensor
@@ -150,20 +151,46 @@ def test_holdout_metrics_join_the_self_learning_metrics(
     assert metrics["holdout_mae"] == pytest.approx(predictor.holdout_mae)
 
 
-def test_a_failed_training_clears_the_holdout_metrics(
+def test_a_failed_first_training_clears_the_holdout_metrics(
     make_predictor: Callable[[], SpotPricePredictor],
 ) -> None:
     predictor = make_predictor()
     _with_history(predictor)
-    predictor._train_models()
-    assert predictor.holdout_mae is not None
+    # Restored from meta, but no model is in use after a restart
+    predictor._restore_holdout_metrics(
+        {
+            "holdout_mae": "0.1",
+            "holdout_rmse": "0.2",
+            "holdout_trained_at": "2026-09-24T10:00:00+00:00",
+        }
+    )
+    predictor.storage.save_meta_dict({"holdout_mae": 0.1})
 
-    with patch.object(predictor.price_model, "fit", side_effect=RuntimeError("no fit")):
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
         predictor._train_models()
 
     assert predictor.is_trained is False
     assert predictor.holdout_metrics() == dict.fromkeys(HOLDOUT_META_KEYS)
     assert not set(HOLDOUT_META_KEYS) & set(predictor.storage.load_all() or {})
+
+
+def test_a_failed_retrain_keeps_the_holdout_metrics(
+    make_predictor: Callable[[], SpotPricePredictor],
+) -> None:
+    """The live model keeps serving, so its holdout error stays shown (#275)."""
+    predictor = make_predictor()
+    _with_history(predictor)
+    predictor._train_models()
+    kept = predictor.holdout_metrics()
+    assert kept["holdout_mae"] is not None
+
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
+        predictor._train_models()
+
+    assert predictor.is_trained is True
+    assert predictor.holdout_metrics() == kept
+    meta = predictor.storage.load_all() or {}
+    assert float(meta["holdout_mae"]) == pytest.approx(kept["holdout_mae"])
 
 
 def test_a_storage_error_does_not_fail_the_training(

@@ -41,6 +41,7 @@ from .const import (
 from .day_ahead_sensor import DayAheadPredictionSensor
 from .evaluation_sensor import ForecastEvaluationSensor
 from .forecast_attributes import compact_forecast, detailed_forecast, fit_compact
+from .ml.training_info import REJECTION_META_KEYS
 from .predbat_sensor import build_predbat_sensors
 from .price_output import HOUR_MINUTES, PriceOutput
 from .price_series import known_prices
@@ -735,4 +736,7 @@ class LearningMetricsSensor(ModelAttributionMixin, SensorEntity):
             attrs["stage1_seconds"] = metrics.get("stage1_seconds")
             attrs["model_options"] = metrics.get("model_options")
             attrs["model_options_since"] = metrics.get("model_options_since")
+            # The latest retrain that kept the live model (#275)
+            for key in REJECTION_META_KEYS:
+                attrs[key] = metrics.get(key)
         return attrs

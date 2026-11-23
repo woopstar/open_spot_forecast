@@ -153,7 +153,8 @@ class CrossBorderModels:
     Neighbour prices come from ``neighbour_prices``, their weather from
     ``openmeteo_weather`` (archived forecasts for past days, the live
     forecast ahead), as for the region itself. Models are kept in memory
-    only; every stage-2 training refits them.
+    only; every stage-2 training refits them, and a rejected one restores
+    the previous ones (``snapshot`` / ``restore``, #275).
     """
 
     def __init__(self, region: str, tz: tzinfo, storage: LearningStorage) -> None:
@@ -195,6 +196,21 @@ class CrossBorderModels:
             self.fit_seconds,
         )
         return columns
+
+    def snapshot(self) -> dict[str, Stage1Model]:
+        """Return the current stage-1 models, for a rollback (#275).
+
+        ``fit`` replaces each zone's ``Stage1Model`` instead of refitting it,
+        so a copy of the mapping keeps the current models intact.
+        """
+        return dict(self._models)
+
+    def restore(
+        self, models: dict[str, Stage1Model], fit_seconds: float | None
+    ) -> None:
+        """Serve the stage-1 models of a ``snapshot`` again (#275)."""
+        self._models = dict(models)
+        self.fit_seconds = fit_seconds
 
     def predict(self, starts: Sequence[datetime]) -> np.ndarray:
         """Return each neighbour's stage-1 price forecast for ``starts``.

@@ -37,18 +37,29 @@ an invalid day never overwrites prices already stored for that date.
 
 `meta` holds the latest successful training's holdout error: `holdout_mae`
 and `holdout_rmse` (raw spot price excl. VAT, currency/kWh) and
-`holdout_trained_at` (UTC ISO). They are written after every successful
-training, deleted after a failed one, and restored at startup. `meta` is a
+`holdout_trained_at` (UTC ISO). They are written after every promoted
+training, kept after a rejected or failed retrain (the live model keeps
+serving, #275), deleted after a failed training without a live model, and
+restored at startup. `meta` is a
 key/value table, so this needs no schema change.
 
 Next to them (#178, `ml/training_info.py`): `training_seconds`, the
 duration of that training, and `stage1_seconds`, the part the cross-border
 stage-1 fits took (only with that model), both deleted after a failed
-training; `model_options`, a JSON object of what shapes the model
+training without a live model; `model_options`, a JSON object of what shapes the model
 (`cross_border`, `training_days`, `near_term`, `outages`); and
 `model_options_since`, the UTC time of the first training with those
 options. A restart keeps it and a changed option moves it, so an export
 says by itself which model made the predictions it scores and from when.
+
+The latest retrain whose candidate was not promoted (#275, see
+[Promotion Gate](ml_documentation.md#promotion-gate-275)):
+`last_retrain_rejected_at` (UTC ISO), `last_retrain_rejected_reason`
+(`non_finite`, `near_constant`, `worse_mae` or `error`) and
+`last_retrain_rejected_mae`, the candidate's holdout MAE (deleted for an
+`error`, which has none). A promoted training leaves them, the next
+rejection replaces them, and they are restored at startup. The trained
+models themselves are not persisted.
 
 `lead_time_accuracy`, `evaluation`, `external_forecasts`, `external_accuracy`, `external_slot_errors`, `entsoe_load`, `gas_prices`,
 `neighbour_prices`, `umm_messages` and `umm_periods` are created with `CREATE TABLE IF NOT EXISTS` on every startup, so existing databases gain them without

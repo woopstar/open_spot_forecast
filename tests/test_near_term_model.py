@@ -193,13 +193,25 @@ def test_a_failed_near_fit_leaves_every_day_to_the_price_model(
     assert [p["price"] for p in predictor.predictions] == pytest.approx(expected)
 
 
-def test_a_failed_training_clears_the_near_model(
+def test_a_failed_retrain_keeps_the_near_model(
     predictor: SpotPricePredictor,
 ) -> None:
+    """The near-term model follows the price model's rollback (#275)."""
     predictor._train_models()
-    assert predictor.near_model.trees
+    near_model = predictor.near_model
+    assert near_model.trees
 
-    with patch.object(predictor.price_model, "fit", side_effect=RuntimeError("no fit")):
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
+        predictor._train_models()
+
+    assert predictor.is_trained is True
+    assert predictor.near_model is near_model
+
+
+def test_a_failed_first_training_leaves_no_near_model(
+    predictor: SpotPricePredictor,
+) -> None:
+    with patch.object(NumpyGradientBoosting, "fit", side_effect=RuntimeError("no fit")):
         predictor._train_models()
 
     assert predictor.is_trained is False

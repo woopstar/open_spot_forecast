@@ -29,6 +29,12 @@ from .price_lags import (
     near_term_inputs,
     slot_start,
 )
+from .promotion import (
+    REJECTED_ERROR,
+    ModelSnapshot,
+    previous_mae_to_beat,
+    rejection_reason,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -123,18 +129,21 @@ class ModelMixin(PredictorBase):
             lags.near_term(starts, NEAR_TERM_DAYS),
         )
 
-    def _train_near_model(
+    def _candidate_model(self) -> NumpyGradientBoosting:
+        """Return an untrained model with the live price model's parameters."""
+        return NumpyGradientBoosting(**self.price_model.get_params())
+
+    def _fit_near_model(
         self, features: list[dict], X: np.ndarray, y: np.ndarray
-    ) -> None:
-        """Fit the near-term model on the price model's rows plus the lagged price.
+    ) -> NumpyGradientBoosting:
+        """Return a near-term model fitted on the price model's rows plus the lag.
 
         Only in ``NEAR_TERM_REGIONS``. Elsewhere, and after a failed fit, it
-        stays untrained: the price model then serves every forecast day.
+        is untrained: the price model then serves every forecast day.
         """
-        model = NumpyGradientBoosting(**self.price_model.get_params())
+        model = self._candidate_model()
         if self.region not in NEAR_TERM_REGIONS:
-            self.near_model = model
-            return
+            return model
         try:
             model.fit(*with_masked_nordpool(self._near_term(features, X)[0], y))
         except Exception as err:
@@ -144,18 +153,45 @@ class ModelMixin(PredictorBase):
                 err,
             )
             model = create_price_model()
-        self.near_model = model
+        return model
+
+    def _snapshot_models(self) -> ModelSnapshot:
+        """Return the live models and their training state, for a rollback."""
+        cross = self.cross_border
+        return ModelSnapshot(
+            price_model=self.price_model,
+            near_model=self.near_model,
+            gas_edges=self.gas_edges,
+            training_samples=self.training_samples,
+            stage1=cross.snapshot() if cross is not None else None,
+            stage1_fit_seconds=cross.fit_seconds if cross is not None else None,
+        )
+
+    def _restore_models(self, snapshot: ModelSnapshot) -> None:
+        """Serve the models of a snapshot again (a rejected or failed retrain)."""
+        self.price_model = snapshot.price_model
+        self.near_model = snapshot.near_model
+        self.gas_edges = snapshot.gas_edges
+        self.training_samples = snapshot.training_samples
+        if self.cross_border is not None and snapshot.stage1 is not None:
+            self.cross_border.restore(snapshot.stage1, snapshot.stage1_fit_seconds)
 
     def _train_models(self) -> None:
-        """Train the price model on all stored price history.
+        """Train a candidate on all stored price history and promote it if good.
 
         Training rows come from ``get_all_historical_prices`` (stored
         actuals and prognoses), never from the current forecast's features.
         Today's prices must already be in price_history (see
-        RetrainMixin.record_training_prices). The near-term model (#135) is
-        fitted on the same rows plus the lagged price.
+        RetrainMixin.record_training_prices). The candidate price model and
+        near-term model (#135) are fitted into new objects. They replace the
+        live models only if the candidate passes ``rejection_reason`` (#275);
+        a rejected or failed candidate leaves the live models, their holdout
+        metrics and the stage-1 models serving.
         """
         began = time.monotonic()
+        snapshot = self._snapshot_models()
+        # The live model to keep; none after a restart or a failed first fit
+        had_model = self.is_trained and bool(self.price_model.trees)
         try:
             # Get ALL historical prices and features (multi-day training)
             all_prices, all_features = self.get_all_historical_prices()
@@ -184,7 +220,7 @@ class ModelMixin(PredictorBase):
             X_train, y_train = with_masked_nordpool(X[:split_idx], y[:split_idx])
             X_test, y_test = with_masked_nordpool(X[split_idx:], y[split_idx:])
 
-            holdout_model = NumpyGradientBoosting(**self.price_model.get_params())
+            holdout_model = self._candidate_model()
             holdout_model.fit(X_train, y_train)
 
             # Evaluate
@@ -192,10 +228,20 @@ class ModelMixin(PredictorBase):
             mae = float(np.mean(np.abs(y_test - y_pred)))
             rmse = float(np.sqrt(np.mean((y_test - y_pred) ** 2)))
 
+            previous_mae = previous_mae_to_beat(
+                had_model, self.holdout_mae, len(all_prices)
+            )
+            reason = rejection_reason(y_test, y_pred, mae, previous_mae)
+            if reason is not None:
+                self._reject_candidate(snapshot, had_model, reason, mae)
+                return
+
             # The live model trains on all rows, so the most recent days
             # (closest to what is being predicted) are part of it
-            self.price_model.fit(*with_masked_nordpool(X, y))
-            self._train_near_model(all_features, X, y)
+            price_model = self._candidate_model()
+            price_model.fit(*with_masked_nordpool(X, y))
+            near_model = self._fit_near_model(all_features, X, y)
+            self.price_model, self.near_model = price_model, near_model
 
             seconds = time.monotonic() - began
             _LOGGER.info(
@@ -215,10 +261,42 @@ class ModelMixin(PredictorBase):
 
         except Exception as err:
             _LOGGER.error("Error training ML models: %s", err, exc_info=True)
-            self.is_trained = False
-            self.near_model = create_price_model()
-            self._store_holdout_metrics(None, None)
-            self._store_training_info(None)
+            self._reject_candidate(snapshot, had_model, REJECTED_ERROR, None)
+
+    def _reject_candidate(
+        self,
+        snapshot: ModelSnapshot,
+        had_model: bool,
+        reason: str,
+        mae: float | None,
+    ) -> None:
+        """Keep the live models after a rejected or failed retrain (#275).
+
+        With a live model it keeps serving with its holdout metrics and
+        durations. Without one the predictor stays untrained (heuristic
+        forecast) and the holdout metrics and durations are cleared.
+        """
+        self._restore_models(snapshot)
+        self._store_rejection(reason, mae)
+        if had_model:
+            _LOGGER.warning(
+                "Retrained price model rejected (%s): candidate holdout MAE=%s, "
+                "live model's holdout MAE=%s; keeping the live model",
+                reason,
+                "n/a" if mae is None else f"{mae:.4f}",
+                "n/a" if self.holdout_mae is None else f"{self.holdout_mae:.4f}",
+            )
+            return
+        _LOGGER.warning(
+            "Price model not trained (%s, holdout MAE=%s); using the heuristic "
+            "forecast",
+            reason,
+            "n/a" if mae is None else f"{mae:.4f}",
+        )
+        self.is_trained = False
+        self.near_model = create_price_model()
+        self._store_holdout_metrics(None, None)
+        self._store_training_info(None)
 
     def _store_holdout_metrics(self, mae: float | None, rmse: float | None) -> None:
         """Keep the latest training's holdout MAE/RMSE and persist them in meta.
