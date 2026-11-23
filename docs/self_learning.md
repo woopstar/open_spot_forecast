@@ -251,6 +251,19 @@ in the unit the model learns: raw spot price excl. VAT (currency/kWh).
 Attributes: `samples`, `bias` (mean signed error; positive = overpredicting)
 and `window_days`.
 
+### Prediction intervals (#280)
+
+The same scoring keeps every matched prediction's raw error (`price +
+bias_offset - actual`, as the [bias windows](#bias-correction)) with its
+bucket and the slot's local hour, one row each in `interval_errors` (see
+[persistence](persistence.md)). Before every forecast run the rows older than
+30 days are pruned, and each (bucket, local hour) with at least 50 errors from
+at least 7 days gives the band of its predictions: `price_low` and
+`price_high` (see
+[Prediction Intervals](ml_documentation.md#prediction-intervals-280)). The
+startup catch-up replay feeds it too, and `reset_learning()` clears it. A
+prediction stored before #203 has no `bias_offset` and adds no error.
+
 ## Predicted vs Actual (#36)
 
 Once a slot is scored its predictions are deleted, so the forecast sensor

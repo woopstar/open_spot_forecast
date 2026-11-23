@@ -63,9 +63,10 @@ and retrains on them, and measures its accuracy per lead time.
 ### Sensors
 
 - Current price, today/tomorrow min/max/mean
-- ML prediction (7-day forecast) with per-slot confidence; the forecast
-  attribute can use a compact layout (parallel arrays) that fits up to 168
-  hours in Home Assistant's attribute limit
+- ML prediction (7-day forecast) with per-slot confidence and a p10/p90
+  band (`price_low`/`price_high`) once enough errors are measured; the
+  forecast attribute can use a compact layout (parallel arrays) that fits up
+  to 168 hours in Home Assistant's attribute limit
 - Prediction confidence and learning metrics
 - Diagnostic forecast MAE/RMSE sensors per lead time (day 1/2/3/4+)
 - Diagnostic forecast evaluation sensor: the day-ahead prediction next to
@@ -109,6 +110,10 @@ response_variable: forecast
 The response has `known_until` (end of the confirmed prices), `unit`,
 `interval_minutes` and `forecast`, a list of `start`, `end`, `price` and
 `confidence` (and `source`, `actual` or `predicted`, with `include_known`).
+A predicted interval also has `price_low` and `price_high`, its p10/p90 band:
+about 1 in 10 actual prices is below `price_low` and 1 in 10 above
+`price_high`. The band comes from the forecast's own errors of the last 30
+days per lead time and hour, so it appears after about a week.
 The forecast sensor can show the same continuous series (option "Include
 confirmed prices in the forecast attribute"). With `raw: true` the prices are
 the raw spot price per kWh without tariffs, surcharge or VAT (the same as the

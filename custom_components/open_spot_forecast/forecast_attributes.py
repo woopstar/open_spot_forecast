@@ -12,6 +12,12 @@ The recorder does not store the attributes of a state whose JSON exceeds
 ``RECORDER_MAX_ATTRIBUTES_BYTES``. ``fit_compact()`` trims whole hours from
 the end of a compact forecast until the attributes fit, whatever the unit,
 precision or prices.
+
+The p10/p90 bounds of a slot (#280) are ``price_low``/``price_high`` in a
+detailed entry, and the ``l``/``h`` arrays of a compact forecast. Those add
+about 12 bytes per slot, so a compact week no longer fits with them:
+``fit_compact()`` drops both arrays before it trims any hour, and the
+compact forecast keeps its length.
 """
 
 from __future__ import annotations
@@ -25,6 +31,8 @@ from homeassistant.helpers.json import json_bytes
 
 from .const import (
     FORECAST_STALE_AFTER_HOURS,
+    PRICE_HIGH,
+    PRICE_LOW,
     RECORDER_MAX_ATTRIBUTES_BYTES,
     SOURCE_ACTUAL,
 )
@@ -37,13 +45,16 @@ ATTRIBUTE_BUDGET_BYTES = RECORDER_MAX_ATTRIBUTES_BYTES - 1024
 
 # The arrays of a compact forecast
 COMPACT_ARRAYS = ("s", "t", "c")
+# Its p10/p90 bounds (#280), when any entry has them
+COMPACT_BOUND_ARRAYS = {"l": PRICE_LOW, "h": PRICE_HIGH}
 
 
 def detailed_forecast(entries: Sequence[dict[str, Any]], unit: str) -> list[dict]:
     """Return forecast entries as the detailed attribute: one dict each.
 
     Args:
-        entries: ``{"start", "end", "price", "confidence"}`` per interval.
+        entries: ``{"start", "end", "price", "confidence"}`` per interval,
+            with ``price_low``/``price_high`` where known (#280).
         unit: Unit of the prices, repeated in every entry.
     """
     return [{**entry, "unit": unit} for entry in entries]
@@ -64,7 +75,8 @@ def compact_forecast(
         ``interval_minutes``, ``unit``, ``s`` (unix start seconds), ``t``
         (prices) and ``c`` (confidence in percent, None if unknown); with
         confirmed prices (#40) also ``known_count``, the number of leading
-        entries that are confirmed prices.
+        entries that are confirmed prices; with p10/p90 bounds (#280) also
+        ``l`` and ``h`` (None where a slot has none).
     """
     rows = [
         (start, entry)
@@ -83,6 +95,9 @@ def compact_forecast(
             for _, entry in rows
         ],
     }
+    for name, key in COMPACT_BOUND_ARRAYS.items():
+        if any(entry.get(key) is not None for _, entry in rows):
+            compact[name] = [entry.get(key) for _, entry in rows]
     if any("source" in entry for _, entry in rows):
         # Confirmed prices first (#40): the first known_count entries
         compact["known_count"] = next(
@@ -108,6 +123,9 @@ def fit_compact(
 ) -> None:
     """Trim whole hours from the end of a compact forecast until attributes fit.
 
+    The ``l``/``h`` bound arrays (#280) are dropped first, whole, if the
+    attributes do not fit with them: the forecast's length comes first.
+
     Args:
         attributes: The entity's attributes; ``attributes[key]`` is a
             ``compact_forecast()`` and is trimmed in place.
@@ -115,6 +133,9 @@ def fit_compact(
         budget: The largest allowed JSON size of ``attributes``.
     """
     compact = attributes[key]
+    if attributes_size(attributes) > budget:
+        for name in COMPACT_BOUND_ARRAYS:
+            compact.pop(name, None)
     per_hour = max(1, HOUR_MINUTES // compact["interval_minutes"])
     while (size := attributes_size(attributes)) > budget and compact["s"]:
         count = len(compact["s"])

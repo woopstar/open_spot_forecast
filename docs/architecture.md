@@ -158,7 +158,8 @@ The `Price Forecast (ML)` sensor's `predictions` attribute holds the next
 `attribute_format`, `forecast_attributes.py`, #38):
 
 - **`detailed`** (default): a list of `{start, end, price, unit, confidence}`,
-  about 125 bytes per 15-min slot; the window is capped at 72 hours.
+  about 125 bytes per 15-min slot; the window is capped at 72 hours. A
+  predicted slot with a band also has `price_low` and `price_high` (#280).
 - **`compact`**: parallel arrays, like EpexPredictor's short format:
 
   ```json
@@ -173,7 +174,26 @@ The `Price Forecast (ML)` sensor's `predictions` attribute holds the next
 
   `s` is each interval's start in unix seconds, `t` its price, `c` its
   confidence in percent (like the Prediction Confidence sensor). About 20
-  bytes per slot, so up to 168 hours fit.
+  bytes per slot, so up to 168 hours fit. With bands (#280) it also has `l`
+  and `h`, each interval's `price_low` and `price_high` (null without a
+  band). They add about 12 bytes per slot, so `fit_compact()` drops both
+  arrays first when the attributes would not fit, before it trims any hour:
+  a compact week of 15-min slots keeps its length and loses the bounds, an
+  hourly week or 72 hours keep them.
+
+### Prediction intervals (#280)
+
+Every ML prediction whose lead-time bucket and local hour have enough
+measured errors carries `price_low` and `price_high`, a p10/p90 band around
+`price` from the forecast's past errors (`ml/intervals.py`, see
+[Prediction Intervals](ml_documentation.md#prediction-intervals-280)). The
+bounds take the price's path through `PriceOutput`: `with_tariffs()` adds the
+slot's tariff (dated national charges included, #278), `hourly_forecast()`
+averages them per hour (only when every slot of the hour has them),
+`convert_entry()` applies unit, surcharge and VAT. The conversion is
+increasing, so `price_low <= price <= price_high` holds in every output.
+Confirmed prices (`source: actual`), heuristic predictions and slots of a
+group with too few errors have no bounds; the keys are then absent.
 
 Home Assistant's recorder does not store any of a state's attributes when
 their JSON exceeds 16 KB (`RECORDER_MAX_ATTRIBUTES_BYTES`), and logs a
@@ -228,12 +248,12 @@ even while no entry is loaded. It finds the entry with Home Assistant's
 one entry exists; unknown or unloaded entries raise a translated
 `ServiceValidationError`) and returns `forecast_response()`:
 
-| Field              | Content                                                                 |
-| ------------------ | ----------------------------------------------------------------------- |
-| `known_until`      | End of the last confirmed spot price slot (local ISO), or null          |
-| `unit`             | e.g. `DKK/kWh`                                                          |
-| `interval_minutes` | 15, or 60 with `hourly`                                                 |
-| `forecast`         | `start`, `end`, `price`, `confidence` per interval, from `start` onward |
+| Field              | Content                                                                                                                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `known_until`      | End of the last confirmed spot price slot (local ISO), or null                                                                     |
+| `unit`             | e.g. `DKK/kWh`                                                                                                                     |
+| `interval_minutes` | 15, or 60 with `hourly`                                                                                                            |
+| `forecast`         | `start`, `end`, `price`, `confidence` per interval, from `start` onward; `price_low`/`price_high` where the slot has a band (#280) |
 
 Fields: `start` (default now: the interval containing it), `hours` (default:
 the whole forecast), `hourly` (default: the entry's `hourly_average`) and

@@ -1056,8 +1056,8 @@ VAT. See [Architecture → Price Output](architecture.md#price-output).
 
 DK1 and DK2 regularly clear below zero on windy or sunny days. Nothing in the
 pipeline clamps a price at 0 (#15): the model's output, the heuristic
-fallback, the additive bias correction, the stored predictions and the sensor
-attributes all keep negative values.
+fallback, the additive bias correction, the stored predictions, the p10/p90
+bounds (#280) and the sensor attributes all keep negative values.
 
 ## Prediction Window
 
@@ -1153,6 +1153,94 @@ The price scale is the slot's mean _absolute_ actual price (#15), so slots
 that clear at or below zero still get a learned confidence; with only positive
 prices it equals the mean price. Only a slot whose actual prices are all
 exactly zero falls back to the heuristic.
+
+## Prediction Intervals (#280)
+
+Every ML prediction gets a p10/p90 band, `price_low` and `price_high`, next
+to `price` and the heuristic confidence, once its group has enough measured
+errors (`ml/intervals.py`). The band says how far the forecast tends to be
+off at that lead time and hour: about 1 in 10 actual prices is below
+`price_low` and 1 in 10 above `price_high`.
+
+**Method: empirical quantiles of the forecast's own errors.** When a slot is
+scored, every matched prediction's raw error (`price + bias_offset -
+actual`, the error the [bias windows](self_learning.md#bias-correction) use)
+is stored with its lead-time bucket and the slot's local hour
+(`interval_errors`, see [persistence](persistence.md)). Before every
+forecast run the errors of the last 30 days (`INTERVAL_WINDOW_DAYS`) are
+read, grouped per (bucket, local hour), and each group with at least 50
+errors (`MIN_INTERVAL_SAMPLES`) from at least 7 days (`MIN_INTERVAL_DAYS`)
+gives its quantiles `q_low`, `q_high` (`INTERVAL_QUANTILES`). With `error =
+predicted - actual`:
+
+```
+raw_price  = price + bias_offset          # the model's output before the offset
+price_low  = min(raw_price - q_high, price)
+price_high = max(raw_price - q_low, price)
+```
+
+So `price_low <= price <= price_high` always holds, and neither bound is
+clamped at 0. A group without enough errors, a heuristic prediction and a
+confirmed price have no bounds (the keys are absent). The bounds take the
+price's path through `PriceOutput` (tariff, hourly mean, unit, surcharge,
+VAT; see [architecture](architecture.md#prediction-intervals-280)).
+
+**Why not a quantile GBM.** #268 proposed a pinball-loss objective on the
+same GBM and two more models per training. That would roughly triple the
+training time (DK1 already takes ~3.3 s with the holdout copy and the
+Nordpool-masked rows, more with the near-term model), and quantile GBMs fit
+on a short window are often miscalibrated. The empirical band needs no
+training, no feature (the vector stays 26 features) and no change to the
+model; it reads one table per forecast run. A quantile model can still be
+tried later, measured against these numbers.
+
+**Why per local hour and the 6th-94th percentile.** The backtest below
+compared groups and quantiles on DK1 and DK2 (origins 2026-06-01 to
+2026-11-18, `--horizon-days 7`). Per bucket alone, the band covered 78-87 %
+of all prices but 61-88 % depending on the hour (too wide at night, too
+narrow at the evening peak). Per (bucket, local hour) the coverage is even
+across hours, but the errors' own 10th-90th percentile covered only 70-77 %:
+the errors drift from one month to the next, and the errors of one hour on
+one day move together, so a group's 30 days are fewer independent samples
+than they look. The 6th-94th percentile corrects that; it costs 1-2 % on
+the interval (Winkler) score, which rewards a narrow band, but the band is
+meant to hold 80 %. Per 4-hour block and 60-day windows were measured too:
+their Winkler scores were within 5 % of these, with the same uneven or low
+coverage.
+
+### Backtest coverage
+
+`python -m scripts.backtest --region DK1 --models current --window-days 60
+--horizon-days 7 --start 2026-04-01 --end 2026-11-18 --intervals`, recorded
+2026-11-23 (`scripts/backtest_intervals.py`). Each origin's band comes from
+the errors of the target days before it, with the integration's
+`group_quantiles()` and `interval_bounds()`; forecast day _d_ counts as the
+`day_d` bucket (days 4-7: `day_4_plus`). Width in EUR ct/kWh; "With band" is
+the share of slots that had one (the first 30 origins have too few errors).
+
+| Region | Day | Inside |  Below |  Above | Width | With band |
+| ------ | --: | -----: | -----: | -----: | ----: | --------: |
+| DK1    |   1 | 84.0 % |  7.6 % |  8.3 % |  9.86 |      94 % |
+| DK1    |   2 | 82.8 % |  8.2 % |  9.0 % | 11.03 |      94 % |
+| DK1    |   3 | 79.6 % |  9.5 % | 10.8 % | 11.13 |      94 % |
+| DK1    |   7 | 78.9 % |  8.6 % | 12.5 % | 11.25 |      96 % |
+| DK2    |   1 | 83.6 % |  8.3 % |  8.1 % | 10.72 |      94 % |
+| DK2    |   2 | 82.3 % |  9.0 % |  8.7 % | 11.69 |      94 % |
+| DK2    |   3 | 79.0 % | 10.3 % | 10.7 % | 11.63 |      94 % |
+| DK2    |   7 | 77.8 % |  9.7 % | 12.6 % | 11.72 |      96 % |
+
+Days 4-6 lie between days 3 and 7 (DK1 79.0-79.5 %, DK2 78.2-79.0 %). The
+same run with the 10th-90th percentile: DK1 76.8 / 75.0 / 72.0 / 70.9 %,
+DK2 75.7 / 74.8 / 71.5 / 69.7 % (days 1/2/3/7). The model's MAE is unchanged
+(the band does not touch the prediction).
+
+The backtest scores one forecast per origin at midnight; live, a slot is
+predicted by every run of the days before it, and the live errors include
+the weather forecast's own error, which the backtest's archived weather
+hides from day 2 on. The band is learned from those live errors, so it
+widens by itself where the live forecast is worse. Measuring the live
+coverage from an export's `interval_errors` is #288; until then the backtest
+is the measure.
 
 ## Self-Learning Loop
 
@@ -1300,6 +1388,7 @@ python -m scripts.backtest --region DK1 --window-days 30 --start 2026-08-06 --en
 ENTSOE_API_KEY=… python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --load entsoe
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --lags price_same_slot_last_known_day [--lag-ages]
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --near-term-days 0
+python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --intervals
 python -m scripts.backtest --region DK1 --window-days 60 --horizon-days 7 --outages umm
 ENTSOE_API_KEY=… python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --outages entsoe
 python -m scripts.backtest --region DE --window-days 60 --horizon-days 7 --start 2026-12-10 --end 2027-01-10 --outages-db .cache/live/de_live.db [--outages-plants-only]
@@ -1318,6 +1407,10 @@ target days that are public holidays and not Sundays (and only runs the
 origins that forecast one), to measure a change on the days the `holiday`
 feature is for. Run the backtest before and after every
 model or feature change, and put both tables in the PR.
+
+`--intervals` adds a table of the p10/p90 bands per forecast day: the share
+of actual prices inside, below and above, the mean width and the share of
+slots with a band (see [Prediction Intervals](#prediction-intervals-280)).
 
 `--daily FILE` writes every scored day to a CSV file (`model`, `origin`,
 `day`, `horizon`, `mae`, `bias`; EUR ct/kWh, bias = mean of predicted −

@@ -350,6 +350,10 @@ CONF_INCLUDE_KNOWN_PRICES = "include_known_prices"
 DEFAULT_INCLUDE_KNOWN_PRICES = False
 SOURCE_ACTUAL = "actual"
 SOURCE_PREDICTED = "predicted"
+# A prediction's p10/p90 bounds (#280): next to ``price``, in the same terms
+PRICE_LOW = "price_low"
+PRICE_HIGH = "price_high"
+PRICE_BOUNDS = (PRICE_LOW, PRICE_HIGH)
 SLOTS_PER_HOUR = 4  # 96 slots per day / 24 hours
 
 # Predbat rate entities (#124): four sensors in the shape of Stromligning's

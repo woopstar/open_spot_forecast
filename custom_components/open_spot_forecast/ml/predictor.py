@@ -20,6 +20,7 @@ from .cross_border import CrossBorderModels
 from .external_forecasts import ExternalForecastMixin
 from .features import FeatureMixin, optional_float
 from .gas_price import GasPriceIndex
+from .intervals import IntervalMixin
 from .lead_time import LeadTimeMixin
 from .learning import LearningMixin
 from .models import ModelMixin, create_price_model
@@ -40,6 +41,7 @@ class SpotPricePredictor(
     LearningMixin,
     CatchUpMixin,
     LeadTimeMixin,
+    IntervalMixin,
     ExternalForecastMixin,
     RetrainMixin,
     TrainingInfoMixin,
@@ -136,6 +138,8 @@ class SpotPricePredictor(
         self.day_ahead_predictions: dict[str, float] = {}
         # Live accuracy of the external forecasts per source and bucket (#120)
         self.external_accuracy: dict[str, dict[str, dict[str, float | int]]] = {}
+        # The p10/p90 bands' error quantiles per (bucket, local hour) (#280)
+        self.interval_quantiles: dict[tuple[str, int], tuple[float, float]] = {}
 
         # Storage for persistence
         self.storage = LearningStorage(hass, region)

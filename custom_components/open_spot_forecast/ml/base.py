@@ -10,7 +10,7 @@ mixins inherit a consistent, fully-typed ``self``.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import date, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
@@ -83,6 +83,8 @@ class PredictorBase:
     day_ahead_predictions: dict[str, float]
     # Live accuracy of the external forecasts per source and bucket (#120)
     external_accuracy: dict[str, dict[str, dict[str, float | int]]]
+    # The p10/p90 bands' error quantiles per (bucket, local hour) (#280)
+    interval_quantiles: dict[tuple[str, int], tuple[float, float]]
     _prediction_insert_counter: int = 0
 
     # --- Cross-mixin methods, implemented in the sibling mixins ---
@@ -126,6 +128,19 @@ class PredictorBase:
     def record_lead_time_accuracy(
         self, predictions: list[dict[str, Any]], actual_price: float
     ) -> None:
+        raise NotImplementedError
+
+    def record_interval_errors(
+        self, slot_date: str, slot: int, errors: Mapping[str, Sequence[float]]
+    ) -> None:
+        raise NotImplementedError
+
+    def refresh_interval_quantiles(self, today: date) -> None:
+        raise NotImplementedError
+
+    def prediction_interval(
+        self, price: float, offset: float, slot: int, bucket: str
+    ) -> tuple[float, float] | None:
         raise NotImplementedError
 
     def record_evaluation(
