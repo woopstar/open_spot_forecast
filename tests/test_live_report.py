@@ -5,15 +5,17 @@ import math
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from custom_components.open_spot_forecast.ml.intervals import group_quantiles
 from custom_components.open_spot_forecast.ml.storage import LearningStorage
 from scripts import live_report
+from scripts.live_intervals import IntervalRow, interval_coverage
 from scripts.live_report import (
     Units,
     bucket_stats,
@@ -418,3 +420,97 @@ def test_an_export_without_stored_offsets_has_no_correction_table(
     older = load_live_data(export)
     assert older.correction == {}
     assert bucket_stats(older)["day_1"].samples == 7
+
+
+# Ten errors per day for slot 0 (hour 0 of day_1), spread over -1..1
+_SPREAD = [-1.0 + 2.0 * i / 9 for i in range(10)]
+_BAND_DAYS = [date(2026, 11, 1) + timedelta(days=offset) for offset in range(7)]
+_PROBE_DAY = date(2026, 11, 8)
+
+
+def _band_rows() -> list[IntervalRow]:
+    """Return seven days of spread errors: the first band is on day eight."""
+    return [
+        (day.isoformat(), "day_1", 0, error) for day in _BAND_DAYS for error in _SPREAD
+    ]
+
+
+def test_interval_coverage_replays_the_band_of_the_days_before() -> None:
+    q_low, q_high = group_quantiles(_band_rows())[("day_1", 0)]
+    probe = _PROBE_DAY.isoformat()
+    rows = [
+        *_band_rows(),
+        (probe, "day_1", 1, 0.0),
+        (probe, "day_1", 2, q_high),
+        (probe, "day_1", 3, q_high + 0.01),
+        (probe, "day_1", 3, q_low - 0.01),
+        # Another bucket's group has no errors before: no band
+        (probe, "day_2", 0, 0.0),
+    ]
+
+    coverage = interval_coverage(rows)
+
+    assert coverage.days == [*_BAND_DAYS, _PROBE_DAY]
+    day_1 = coverage.buckets["day_1"]
+    # The first seven days have fewer than MIN_INTERVAL_DAYS days before them
+    assert (day_1.rows, day_1.inside, day_1.below, day_1.above) == (74, 2, 1, 1)
+    assert day_1.share(day_1.inside) == pytest.approx(0.5)
+    assert coverage.buckets["day_2"].banded == 0
+    assert coverage.buckets["day_2"].share(0) is None
+    assert coverage.hours[("day_1", 0)].inside == 2
+
+
+def test_interval_coverage_has_no_look_ahead() -> None:
+    """A later day's errors never widen an earlier day's band."""
+    probe = _PROBE_DAY.isoformat()
+    later = (_PROBE_DAY + timedelta(days=1)).isoformat()
+    rows = [
+        *_band_rows(),
+        (probe, "day_1", 0, 5.0),
+        *((later, "day_1", 0, error * 100) for error in _SPREAD),
+    ]
+
+    coverage = interval_coverage(rows, since=_PROBE_DAY)
+
+    assert coverage.days == [_PROBE_DAY, _PROBE_DAY + timedelta(days=1)]
+    day_1 = coverage.buckets["day_1"]
+    # The probe is below its band; the band of the day after spans ±1 only
+    assert (day_1.rows, day_1.inside, day_1.below, day_1.above) == (11, 0, 6, 5)
+
+
+def test_report_shows_interval_coverage(tmp_path: Path) -> None:
+    hass = Mock()
+    hass.config.path.return_value = str(tmp_path / ".storage")
+    storage = LearningStorage(hass, "DK1")
+    try:
+        for day in _BAND_DAYS:
+            storage.add_interval_errors(day.isoformat(), 0, {"day_1": _SPREAD})
+        storage.add_interval_errors(_PROBE_DAY.isoformat(), 2, {"day_1": [0.0]})
+        path = storage.db_path
+    finally:
+        storage.close()
+
+    data = load_live_data(path, since=_PROBE_DAY)
+    assert data.intervals is not None
+    assert len(data.intervals) == 71
+    report = format_report(data, Units(), since=_PROBE_DAY)
+
+    section = report.split("## Prediction intervals (p10/p90)")[1]
+    assert "| day_1 | 1 | 100 % | 100.0 % | 0.0 % | 0.0 % |" in section
+    assert "| 00 | 100.0 % |" in section
+    assert "2026-11-08 to 2026-11-08 (local slot dates), 1 scored day(s)" in section
+    assert "**Only 1 day(s)**" in section
+
+
+def test_an_export_without_interval_errors_skips_the_section(export: Path) -> None:
+    """An export from before #280 has no interval_errors table."""
+    data = load_live_data(export)
+    assert data.intervals == []
+    assert "No `interval_errors` rows." in format_report(data, Units())
+
+    with closing(sqlite3.connect(export)) as conn:
+        conn.execute("DROP TABLE interval_errors")
+        conn.commit()
+    older = load_live_data(export)
+    assert older.intervals is None
+    assert "Prediction intervals" not in format_report(older, Units())
