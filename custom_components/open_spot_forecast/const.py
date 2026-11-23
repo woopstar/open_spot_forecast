@@ -57,6 +57,12 @@ DEFAULT_SPOT_PRICE_TOMORROW_SENSOR = (
     "binary_sensor.stromligning_tomorrow_spotprice_ex_vat"
 )
 
+# Another integration's spot price sensor, read only when the day-ahead APIs
+# have no prices for today or tomorrow (#270): Nordpool's raw_today and
+# raw_tomorrow (start, value), or a list of prices (start, price)
+CONF_FALLBACK_PRICE_SENSOR = "fallback_price_sensor"
+FALLBACK_PRICE_ATTRIBUTES = (("raw_today", "raw_tomorrow"), ("prices",))
+
 # Defaults
 DEFAULT_NAME = "Open Spot Forecast"
 DEFAULT_REGION = "DK1"

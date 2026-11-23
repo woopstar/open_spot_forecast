@@ -11,6 +11,7 @@ from .const import (
     CONF_CONSUMER_PRICE_SENSOR,
     CONF_CONSUMER_PRICE_TOMORROW_SENSOR,
     CONF_EXTERNAL_FORECAST_SENSORS,
+    CONF_FALLBACK_PRICE_SENSOR,
     CONF_SOLAR_FORECAST_SENSOR,
     CONF_SOLAR_POWER_SENSOR,
     CONF_SPOT_PRICE_SENSOR,
@@ -65,6 +66,8 @@ class SensorEntities:
     temperature: str | None
     # Sensors whose forecast is recorded next to the model's and scored (#120)
     external_forecasts: tuple[str, ...] = field(default=(), kw_only=True)
+    # Spot prices when the day-ahead APIs have none for a day (#270)
+    fallback_price: str | None = field(default=None, kw_only=True)
 
     @classmethod
     def from_entry(cls, entry: ConfigEntry) -> SensorEntities:
@@ -92,6 +95,7 @@ class SensorEntities:
             solar_forecast=option(CONF_SOLAR_FORECAST_SENSOR),
             temperature=option(CONF_TEMPERATURE_SENSOR),
             external_forecasts=external_forecast_sensors(entry),
+            fallback_price=option(CONF_FALLBACK_PRICE_SENSOR),
         )
 
     def sensor_config(self) -> dict[str, str | None]:

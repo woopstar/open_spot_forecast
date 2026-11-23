@@ -46,7 +46,7 @@ from .price_series import carry_over_day_prices
 from .price_source import DayAheadPrices, PriceSettings
 from .sensor_entities import SensorEntities
 from .sensor_reader import SensorReader, async_read_weather_forecast
-from .spot_prices import ml_price_inputs
+from .spot_prices import dayahead_spot_data, fill_missing_days, ml_price_inputs
 from .tariffs import TariffSchedule
 from .time_slots import (
     floor_to_slot,
@@ -148,6 +148,8 @@ class ForecastUpdater(HistoryUpdaterMixin):
             self.history_prices and self.settings.entsoe_api_key
         )
         api_data["history_prices"] = self.history_prices is not None
+        # The last fallback-sensor message (#270), so it is logged once
+        self._fallback_note = ""
         api_data["zone_weather"] = self.weather is not None
         api_data["entsoe_load"] = self.load is not None
         api_data["cross_border"] = bool(self.neighbour_prices)
@@ -247,11 +249,13 @@ class ForecastUpdater(HistoryUpdaterMixin):
         """
         if self.dayahead is None:
             return self.read_prices()
+        today = dt_util.now().date()
         try:
-            spot_data = await self.dayahead.async_read(dt_util.now().date())
+            spot_data = await self.dayahead.async_read(today)
         except Exception as err:
             _LOGGER.warning("Could not read the day-ahead prices: %s", err)
-            return False
+            spot_data = dayahead_spot_data((), lambda _day: None, today)
+        self._fill_from_price_sensor(spot_data)
         if not spot_data["today"]:
             return False
         self.api_data["spot_data"] = spot_data
@@ -262,6 +266,29 @@ class ForecastUpdater(HistoryUpdaterMixin):
         self.api_data["price_license"] = self.dayahead.license_info
         self.api_data["last_update"] = dt_util.now()
         return True
+
+    def _fill_from_price_sensor(self, spot_data: dict[str, Any]) -> None:
+        """Take the days the day-ahead APIs lack from the fallback sensor (#270).
+
+        Its prices are used only in the configured currency (they must be
+        the spot price excl. VAT); each change in its use is logged once.
+        """
+        entity_id = self.sensors.fallback_price
+        if not entity_id or (spot_data["today"] and spot_data["tomorrow"]):
+            return
+        fallback = self.sensor_reader.read_price_sensor(entity_id)
+        currency = fallback.get("currency")
+        level, note = logging.INFO, ""
+        if currency and currency != self.settings.currency:
+            level = logging.WARNING
+            note = (
+                f"ignored: its prices are in {currency}, not {self.settings.currency}"
+            )
+        elif filled := fill_missing_days(spot_data, fallback):
+            note = f"used for {' and '.join(filled)}: the day-ahead APIs have none"
+        if note and note != self._fallback_note:
+            _LOGGER.log(level, "Fallback price sensor %s %s", entity_id, note)
+        self._fallback_note = note
 
     def update_tomorrow_available(self) -> bool:
         """Recompute tomorrow_available; return True if tomorrow just became complete."""

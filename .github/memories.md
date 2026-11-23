@@ -24,7 +24,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `accuracy_sensor.py`     | Diagnostic forecast MAE/RMSE sensors per lead-time bucket (day 1/2/3/4+)                                                                                    |
 | `predbat_sensor.py`      | Optional Predbat rate entities (#124): import/export × today/tomorrow, Stromligning's `prices_today` / `prices_tomorrow` shape, `kr/kWh`, budget-trimmed    |
 | `binary_sensor.py`       | `TomorrowAvailableSensor`, `MLModelTrainedSensor`                                                                                                           |
-| `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, weather, Solcast, Met.no)                                                                         |
+| `sensor_reader.py`       | `SensorReader` — all external entity reads (Stromligning, fallback price, weather, Solcast)                                                                 |
 | `price_series.py`        | `align_to_grid()` (prices by timestamp onto a day's 15-min grid), `is_invalid_price_series()`                                                               |
 | `spot_prices.py`         | `ml_price_inputs()` (the model's raw spot prices + where they end), `known_until()`, `with_known_prices()` (confirmed, then predicted; #40)                 |
 | `time_slots.py`          | 15-min slot arithmetic (floor/ceil, first predicted slot, DST-aware day slots), component + ML                                                              |
@@ -127,7 +127,9 @@ tariffs or VAT in `ml/`.
 With the `dayahead` price source (#27) the model's prices are the stored day-ahead auction
 prices (`dayahead_prices`, EUR/MWh) converted by `dayahead_spot_data()` / `dayahead_prices_by_day()`
 (`spot_prices.py`) with the day's ECB rate: the same currency/kWh excl. VAT series. The displayed
-prices are these via `PriceOutput` (`api_data["prices_today"]` holds the raw spot); Stromligning is not read. Every HTTP client uses
+prices are these via `PriceOutput` (`api_data["prices_today"]` holds the raw spot); Stromligning is not read. A day
+the APIs lack is filled from the optional fallback price sensor (`SensorReader.read_price_sensor()` +
+`fill_missing_days()`, #270, never stored). Every HTTP client uses
 `api/http.py` `async_get`; never add another retry loop.
 
 A day's prices are one value per 15-min slot from local midnight (92/96/100), `None` for a

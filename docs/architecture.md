@@ -22,6 +22,7 @@ per-slot, per-lead-time bias correction exists but corrects no bucket since
 | `sensor.power_inverter_input_total`         | Current solar production         | Solar scaling factor (not a model input)                      |
 | `sensor.metroair_330_outdoor_temperature`   | Actual outdoor temperature       | Historical temperature for training                           |
 | energy-charts.info / ENTSO-E (`dayahead`)   | Day-ahead auction prices (#27)   | All prices, instead of the Stromligning sensors               |
+| Fallback price sensor (optional, Nordpool)  | Today's/tomorrow's spot prices   | A day the day-ahead APIs lack (#270)                          |
 | ECB reference rates                         | EUR exchange rates               | Day-ahead prices in DKK/SEK/NOK                               |
 | Open-Meteo (`WEATHER_POINTS` per region)    | 15-min zone weather, 8 days      | Zone features, training and prediction (#22)                  |
 | ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)                      |

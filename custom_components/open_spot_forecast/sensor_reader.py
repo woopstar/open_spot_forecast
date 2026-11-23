@@ -11,7 +11,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.util.unit_conversion import SpeedConverter
 
-from .const import EXTERNAL_FORECAST_ATTRIBUTES
+from .const import EXTERNAL_FORECAST_ATTRIBUTES, FALLBACK_PRICE_ATTRIBUTES, PRICE_IN
 from .price_series import (
     PriceSample,
     align_to_grid,
@@ -134,6 +134,22 @@ def _positional_day(values: Any, day: date) -> list[float | None]:
                 )
             )
     return align_to_grid(samples, day)
+
+
+def _per_kwh_factor(attributes: Any) -> float | None:
+    """Return what turns a price sensor's prices into currency/kWh, or None.
+
+    Nordpool's sensor names its unit in ``unit`` (kWh/MWh/Wh, else the
+    ``unit_of_measurement`` after the slash) and may show cents.
+    """
+    unit = (
+        attributes.get("unit")
+        or str(attributes.get("unit_of_measurement") or "/kWh").rpartition("/")[2]
+    )
+    if unit not in PRICE_IN:
+        return None
+    cents = 100 if attributes.get("price_in_cents") else 1
+    return PRICE_IN[unit] / PRICE_IN["kWh"] / cents
 
 
 class SensorReader:
@@ -411,6 +427,62 @@ class SensorReader:
             len(known_prices(result["tomorrow"])),
         )
 
+        return result
+
+    def read_price_sensor(self, entity_id: str) -> dict:
+        """Read another integration's spot prices, the day-ahead fallback (#270).
+
+        The first of ``FALLBACK_PRICE_ATTRIBUTES`` that holds a list is read
+        (Nordpool's ``raw_today``/``raw_tomorrow``, else ``prices``), placed
+        by the items' own timestamps and converted to currency/kWh.
+
+        Returns:
+            ``read_spot_prices()``-shaped data (``raw_*``: the ``start`` of
+            each priced slot) plus the sensor's ``currency`` (None if not
+            given); days without valid prices are empty.
+        """
+        today = dt_util.now().date()
+        result: dict[str, Any] = {
+            "today": [],
+            "tomorrow": [],
+            "raw_today": [],
+            "raw_tomorrow": [],
+            "day": today,
+            "currency": None,
+        }
+        state = self.hass.states.get(entity_id) if entity_id else None
+        if state is None:
+            _LOGGER.debug("Fallback price sensor %s not found", entity_id)
+            return result
+        attributes = state.attributes
+        result["currency"] = attributes.get("currency")
+        factor = _per_kwh_factor(attributes)
+        if factor is None:
+            _LOGGER.warning("Unknown price unit of %s", entity_id)
+            return result
+        items = next(
+            (
+                [item for name in names for item in attributes.get(name) or []]
+                for names in FALLBACK_PRICE_ATTRIBUTES
+                if any(isinstance(attributes.get(name), list) for name in names)
+            ),
+            [],
+        )
+        samples = [
+            (start, end, price * factor)
+            for item in items
+            if (sample := _item_sample(item)) is not None
+            for start, end, price in (sample,)
+        ]
+        for offset, key in enumerate(("today", "tomorrow")):
+            day = today + timedelta(days=offset)
+            result[key] = align_to_grid(samples, day)
+            self._reject_invalid_day(result, key, entity_id)
+            result[f"raw_{key}"] = [
+                {"start": slot_start_in_day(day, index).isoformat()}
+                for index, price in enumerate(result[key])
+                if price is not None
+            ]
         return result
 
     def read_spot_prices(
