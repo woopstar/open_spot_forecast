@@ -740,7 +740,10 @@ are therefore never built as `date + n × 15 min` in local wall-clock time:
   zone), never the naive `datetime.now()`.
 
 The bias-correction and error-metric slots stay keyed by local time of day
-(0-95), so both passes of the repeated hour share their wall-clock slots.
+(0-95), so both passes of the repeated hour share their wall-clock slots: their
+raw errors go into one window, on one local date. On the spring-forward day
+slots 8-11 (02:00-02:59) get no errors. `tests/test_bias_lead_time.py` pins
+both (#279).
 
 ## Training and Validation Split
 

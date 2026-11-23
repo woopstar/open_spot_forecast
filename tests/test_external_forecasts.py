@@ -8,7 +8,7 @@ slot. The model's own metrics and bias correction never see them.
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -719,6 +719,99 @@ async def test_reset_learning_clears_the_external_accuracy() -> None:
     await predictor.reset_learning()
 
     assert predictor.external_accuracy == {}
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _read_at(
+    predictor: SpotPricePredictor,
+    source: str,
+    slot: datetime,
+    stored_at: datetime,
+    price: float,
+) -> None:
+    """Store one reading of ``source`` made at ``stored_at`` for ``slot``."""
+    predictor.storage.insert_external_forecasts(
+        source, stored_at.isoformat(), [(utc_slot_key(slot), price)]
+    )
+
+
+def _own_at(predictor: SpotPricePredictor, slot: datetime, stored_at: datetime) -> None:
+    predictor.storage.insert_prediction(
+        start=slot.isoformat(),
+        price=2.0,
+        confidence=0.8,
+        hour=slot.hour,
+        minute=slot.minute,
+        stored_at=stored_at.isoformat(),
+    )
+
+
+def _learn_at(
+    predictor: SpotPricePredictor, now: datetime, slot: datetime, actual: float
+) -> bool:
+    """Learn from ``slot`` with Home Assistant's clock at ``now``."""
+    with (
+        patch("homeassistant.util.dt.utcnow", return_value=now.astimezone(UTC)),
+        patch(
+            "homeassistant.util.dt.now",
+            side_effect=lambda time_zone=None: now.astimezone(time_zone or CPH),
+        ),
+    ):
+        return predictor.learn_from_actual_price(slot.isoformat(), actual)
+
+
+def test_a_dst_day_scores_by_real_lead_time(
+    predictor: SpotPricePredictor, dst_day: tuple[date, int]
+) -> None:
+    """Read at 12:00 the day before: 23 hours ahead in spring, 25 in autumn."""
+    day, slots = dst_day
+    slot = datetime(day.year, day.month, day.day, 12, 0, tzinfo=CPH)
+    day_before = slot - timedelta(days=1)  # same wall-clock time, other offset
+    _own_at(predictor, slot, day_before)
+    _read_at(predictor, EDS, slot, day_before, 3.0)
+
+    assert _learn_at(predictor, slot + timedelta(hours=1), slot, 2.5) is True
+
+    bucket = "day_1" if slots == 92 else "day_2"
+    assert list(predictor.external_accuracy[EDS]) == [bucket]
+    assert predictor.external_accuracy[EDS][bucket]["bias"] == pytest.approx(0.5)
+    sums = predictor.storage.get_external_error_sums(day.isoformat())
+    assert sums[EDS][bucket][0] == 1
+
+
+def test_each_pass_of_the_repeated_hour_scores_its_own_forecasts(
+    predictor: SpotPricePredictor, fall_back_day: date
+) -> None:
+    first_utc = datetime(2026, 10, 25, 0, 15, tzinfo=UTC)
+    first = first_utc.astimezone(CPH)
+    second = (first_utc + timedelta(hours=1)).astimezone(CPH)
+    assert (first.hour, first.minute) == (second.hour, second.minute)
+    read_at = first_utc - timedelta(hours=20)
+    for slot, price in ((first, 3.0), (second, 1.0)):
+        _own_at(predictor, slot, read_at)
+        _read_at(predictor, EDS, slot, read_at, price)
+    now = datetime(2026, 10, 25, 12, 0, tzinfo=UTC)
+
+    assert _learn_at(predictor, now, first, 2.5) is True
+
+    # The first pass only: the second pass's reading waits for its own price
+    assert predictor.external_accuracy[EDS]["day_1"]["bias"] == pytest.approx(0.5)
+    assert predictor.storage.find_external_forecasts(utc_slot_key(first)) == []
+    assert len(predictor.storage.find_external_forecasts(utc_slot_key(second))) == 1
+
+    assert _learn_at(predictor, now, second, 2.5) is True
+
+    day_1 = predictor.external_accuracy[EDS]["day_1"]
+    assert day_1["samples"] == 2
+    assert day_1["bias"] == pytest.approx(-0.5)  # (0.5 + -1.5) / 2
+    assert predictor.storage.count_external_forecasts() == 0
+    # Both passes are one local date, and two slots in the per-slot errors
+    sums = predictor.storage.get_external_error_sums(fall_back_day.isoformat())
+    assert sums[EDS]["day_1"][0] == 2
+    starts = {row["start"] for row in predictor.storage.get_external_slot_errors("")}
+    assert starts == {utc_slot_key(first), utc_slot_key(second)}
 
 
 # --- The accuracy sensors ------------------------------------------------------------

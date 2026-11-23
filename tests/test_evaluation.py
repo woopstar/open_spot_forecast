@@ -9,7 +9,7 @@ when a prediction was made close enough to them.
 
 import sqlite3
 from collections.abc import Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -536,6 +536,115 @@ def test_without_data_the_sensor_is_unknown() -> None:
         assert attributes["bias"] is None
         assert attributes["s"] == []
         assert attributes["t12"] == attributes["t48"] == []
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _stored(slot: datetime, stored_at: datetime, price: float) -> dict[str, Any]:
+    return {
+        "start": slot.isoformat(),
+        "stored_at": stored_at.isoformat(),
+        "price": price,
+    }
+
+
+def _repeated_quarter() -> tuple[datetime, datetime]:
+    """Return 02:15 CEST and 02:15 CET on the fall-back day, an hour apart."""
+    first = datetime(2026, 10, 25, 0, 15, tzinfo=UTC)
+    # Add in UTC: aware datetimes of one zone add by wall clock
+    return first.astimezone(CPH), (first + timedelta(hours=1)).astimezone(CPH)
+
+
+def test_snapshots_count_real_hours_across_a_dst_change(
+    dst_day: tuple[date, int],
+) -> None:
+    """A prediction made at the same wall-clock time a day before is 23 or 25 h ahead."""
+    day, slots = dst_day
+    slot = datetime(day.year, day.month, day.day, 12, 0, tzinfo=CPH)
+    wall_clock_day_before = slot - timedelta(days=1)  # same local time, other offset
+    real_day_before = slot.astimezone(UTC) - timedelta(hours=24)
+    real_half_day_before = slot.astimezone(UTC) - timedelta(hours=12)
+    # 12:00 local two days before: 47 or 49 real hours
+    wall_clock_two_days_before = slot - timedelta(days=2)
+
+    snapshots = evaluation_snapshots(
+        [
+            _stored(slot, wall_clock_two_days_before, 1.0),
+            _stored(slot, wall_clock_day_before, 2.0),
+            _stored(slot, real_day_before, 3.0),
+            _stored(slot, real_half_day_before, 4.0),
+        ]
+    )
+
+    shift = (slots - 96) / 4  # -1 h in spring, +1 h in autumn
+    assert snapshots[24.0][0]["price"] == pytest.approx(3.0)
+    assert snapshots[24.0][1] == pytest.approx(24.0)
+    assert snapshots[12.0][1] == pytest.approx(12.0)
+    assert snapshots[48.0][0]["price"] == pytest.approx(1.0)
+    assert snapshots[48.0][1] == pytest.approx(48.0 + shift)
+    # Without the exact one, the wall-clock day before is chosen, at its real lead
+    fallback = evaluation_snapshots([_stored(slot, wall_clock_day_before, 2.0)])
+    assert fallback[24.0][1] == pytest.approx(24.0 + shift)
+
+
+def test_the_two_passes_of_the_repeated_hour_have_their_own_lead_times(
+    fall_back_day: date,
+) -> None:
+    """02:15 CEST and 02:15 CET are an hour apart: one reading, two lead times."""
+    first, second = _repeated_quarter()
+    assert first.date() == second.date() == fall_back_day
+    assert (first.hour, first.minute) == (second.hour, second.minute)
+    read_at = first.astimezone(UTC) - timedelta(hours=24)
+
+    first_snapshot = evaluation_snapshots([_stored(first, read_at, 1.0)])
+    second_snapshot = evaluation_snapshots([_stored(second, read_at, 1.0)])
+
+    assert first_snapshot[24.0][1] == pytest.approx(24.0)
+    assert second_snapshot[24.0][1] == pytest.approx(25.0)
+
+
+def test_learning_keeps_both_passes_of_the_repeated_hour(
+    predictor: SpotPricePredictor,
+) -> None:
+    first, second = _repeated_quarter()
+    _insert(predictor.storage, first, 24, 1.0)
+    _insert(predictor.storage, second, 24, 2.0)
+
+    with patch(
+        "homeassistant.util.dt.utcnow",
+        return_value=datetime(2026, 10, 25, 12, 0, tzinfo=UTC),
+    ):
+        assert predictor.learn_from_actual_price(first.isoformat(), 1.5) is True
+        assert predictor.learn_from_actual_price(second.isoformat(), 2.5) is True
+
+    assert [
+        (row["start"], row["predicted"], row["actual"]) for row in predictor.evaluation
+    ] == [
+        ("2026-10-25T02:15:00+02:00", pytest.approx(1.0), pytest.approx(1.5)),
+        ("2026-10-25T02:15:00+01:00", pytest.approx(2.0), pytest.approx(2.5)),
+    ]
+    assert predictor.evaluation[1]["end"] == "2026-10-25T02:30:00+01:00"
+
+
+def test_the_sensor_window_is_48_real_hours_across_a_dst_change(
+    dst_day: tuple[date, int],
+) -> None:
+    day, _slots = dst_day
+    now = datetime(day.year, day.month, day.day, 23, 0, tzinfo=UTC)
+    rows = _rows(3 * 96, now - timedelta(days=3))
+    # A 12 h snapshot of one slot of the DST hour's day only
+    twelve = [{**rows[-60], "predicted": 2.0}]
+    sensor = _sensor(rows, {12.0: twelve, 48.0: []})
+
+    with patch("homeassistant.util.dt.utcnow", return_value=now):
+        attributes = sensor.extra_state_attributes
+
+    assert attributes["samples"] == 48 * 4
+    assert {b - a for a, b in zip(attributes["s"], attributes["s"][1:])} == {900}
+    # Aligned by the slot's local start (its offset tells the passes apart)
+    assert attributes["t12"].count(None) == 48 * 4 - 1
+    assert attributes["t12"][-60] == pytest.approx(2.5)
 
 
 # --- The action ----------------------------------------------------------------------

@@ -1,6 +1,6 @@
 """The ``open_spot_forecast.get_forecast`` (#37) and ``reset_learning`` (#132) actions."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
@@ -205,6 +205,117 @@ def test_known_until_is_local_and_timezone_aware() -> None:
 
     assert response["known_until"] == "2026-09-25T00:00:00+02:00"
     assert response["forecast"] == []
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _dst_day_predictions(day: date) -> list[dict[str, Any]]:
+    """Return a prediction for every slot of a local day: price = slot index."""
+    return [
+        {
+            "start": slot_start_in_day(day, index).isoformat(),
+            "end": slot_start_in_day(day, index + 1).isoformat(),
+            "price": float(index),
+            "confidence": 0.8,
+        }
+        for index in range(slots_in_local_day(day))
+    ]
+
+
+def _local_midnight(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, tzinfo=CPH)
+
+
+def test_hourly_response_has_23_or_25_hours_on_a_dst_day(
+    dst_day: tuple[date, int],
+) -> None:
+    day, slots = dst_day
+    output = PriceOutput(vat=0.0, hourly_average=True)
+
+    response = forecast_response(
+        _dst_day_predictions(day), output, "DKK", None, _local_midnight(day)
+    )
+
+    forecast = response["forecast"]
+    assert response["interval_minutes"] == 60
+    assert len(forecast) == slots // 4
+    starts = [datetime.fromisoformat(entry["start"]) for entry in forecast]
+    assert all((b - a).total_seconds() == 3600 for a, b in zip(starts, starts[1:]))
+    assert forecast[0]["start"] == _local_midnight(day).isoformat()
+    assert forecast[-1]["end"] == _local_midnight(day + timedelta(days=1)).isoformat()
+    # Each hour is the mean of its own four slots
+    assert [entry["price"] for entry in forecast] == pytest.approx(
+        [4 * hour + 1.5 for hour in range(slots // 4)]
+    )
+
+
+def test_hourly_response_keeps_both_passes_of_the_repeated_hour(
+    fall_back_day: date,
+) -> None:
+    output = PriceOutput(vat=0.0, hourly_average=True)
+
+    forecast = forecast_response(
+        _dst_day_predictions(fall_back_day),
+        output,
+        "DKK",
+        None,
+        _local_midnight(fall_back_day),
+    )["forecast"]
+
+    assert [entry["start"] for entry in forecast[2:4]] == [
+        "2026-10-25T02:00:00+02:00",
+        "2026-10-25T02:00:00+01:00",
+    ]
+    assert [entry["price"] for entry in forecast[2:4]] == pytest.approx([9.5, 13.5])
+
+
+def test_hours_count_real_hours_across_a_dst_change(
+    dst_day: tuple[date, int],
+) -> None:
+    """``hours`` is elapsed time: 24 hours from midnight end at 23:00 or 01:00."""
+    day, slots = dst_day
+    output = PriceOutput(vat=0.0, hourly_average=True)
+    predictions = _dst_day_predictions(day) + _dst_day_predictions(
+        day + timedelta(days=1)
+    )
+
+    forecast = forecast_response(
+        predictions, output, "DKK", None, _local_midnight(day), hours=24
+    )["forecast"]
+
+    assert len(forecast) == 24
+    last_end = _local_midnight(day).astimezone(UTC) + timedelta(hours=24)
+    assert datetime.fromisoformat(forecast[-1]["end"]) == last_end
+    assert forecast[-1]["end"].split("T")[1][:5] == (
+        "01:00" if slots == 92 else "23:00"
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_action_returns_23_or_25_hours_for_a_dst_day(
+    dst_day: tuple[date, int],
+) -> None:
+    day, slots = dst_day
+    hass = _hass(
+        ml_predictor=_predictor(_dst_day_predictions(day)), options={"vat": 0.0}
+    )
+
+    response = await _call(
+        hass, hourly=True, start=f"{day.isoformat()} 00:00", include_known=False
+    )
+
+    assert len(response["forecast"]) == slots // 4
+    assert response["forecast"][0]["start"] == _local_midnight(day).isoformat()
+    # A 24-hour window is 24 hourly entries, a day of 23 or 25 hours or not
+    window = await _call(
+        hass,
+        hourly=True,
+        start=f"{day.isoformat()} 00:00",
+        hours=24,
+        include_known=False,
+    )
+    assert len(window["forecast"]) == min(24, slots // 4)
 
 
 # --- The action ----------------------------------------------------------------------

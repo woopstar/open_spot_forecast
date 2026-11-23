@@ -493,3 +493,122 @@ def test_price_output_per_kwh_and_raw_spot() -> None:
     assert raw.vat == pytest.approx(0.0)
     assert raw.surcharge == pytest.approx(0.0)
     assert raw.convert(1.234) == pytest.approx(1.23)
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _dst_spot_data(day: date) -> dict[str, Any]:
+    """Confirmed spot prices of a whole local ``day``: price = slot index."""
+    count = slots_in_local_day(day)
+    return {
+        "day": day,
+        "today": [float(index) for index in range(count)],
+        "raw_today": [
+            {"start": slot_start_in_day(day, index).isoformat()}
+            for index in range(count)
+        ],
+        "tomorrow": [],
+    }
+
+
+def _noon_on(day: date) -> datetime:
+    return datetime(day.year, day.month, day.day, 12, 0, tzinfo=CPH)
+
+
+def _midnight(day: date) -> str:
+    """Return local midnight of ``day`` as Predbat sees it (ISO, local offset)."""
+    return datetime(day.year, day.month, day.day, tzinfo=CPH).isoformat()
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_today_has_every_slot_of_a_dst_day(dst_day: tuple[date, int]) -> None:
+    day, slots = dst_day
+    api_data = _api_data([], _dst_spot_data(day))
+
+    entries = _attrs(_sensor(api_data, "export", "today"), _noon_on(day))[
+        "prices_today"
+    ]
+
+    assert len(entries) == slots
+    assert [entry["price"] for entry in entries] == pytest.approx(
+        [float(index) for index in range(slots)]
+    )
+    # Contiguous, distinct instants from local midnight to the next one
+    assert all(a["end"] == b["start"] for a, b in zip(entries, entries[1:]))
+    assert entries[0]["start"] == _midnight(day)
+    assert entries[-1]["end"] == _midnight(day + timedelta(days=1))
+
+
+# Local start times around 02:00: skipped (92 slots) or twice (100 slots)
+DST_HOUR_STARTS = {
+    92: ["01:45:00+01:00", "03:00:00+02:00"],
+    100: ["02:45:00+02:00", "02:00:00+01:00", "02:15:00+01:00"],
+}
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_the_dst_hour_is_skipped_or_kept_twice(dst_day: tuple[date, int]) -> None:
+    day, slots = dst_day
+    api_data = _api_data([], _dst_spot_data(day))
+
+    entries = _attrs(_sensor(api_data, "export", "today"), _noon_on(day))[
+        "prices_today"
+    ]
+
+    local = [entry["start"].split("T")[1] for entry in entries]
+    starts = DST_HOUR_STARTS[slots]
+    first = local.index(starts[0])
+    assert local[first : first + len(starts)] == starts
+    # 02:00-02:59 has no slot on the spring-forward day, eight on the fall-back day
+    assert sum(time.startswith("02:") for time in local) == slots - 92
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_hourly_predbat_rates_have_one_entry_per_local_hour_on_a_dst_day(
+    dst_day: tuple[date, int],
+) -> None:
+    day, slots = dst_day
+    output = PriceOutput(vat=VAT, precision=4, hourly_average=True)
+    api_data = _api_data([], _dst_spot_data(day))
+
+    attrs = _attrs(_sensor(api_data, "export", "today", output=output), _noon_on(day))
+
+    entries = attrs["prices_today"]
+    assert attrs["interval_minutes"] == 60
+    assert len(entries) == slots // 4
+    # The mean of the hour's four slots: 0-3, then 4-7, ...
+    assert entries[0]["price"] == pytest.approx(1.5)
+    assert entries[-1]["price"] == pytest.approx(slots - 2.5)
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_tomorrow_holds_the_whole_dst_day(dst_day: tuple[date, int]) -> None:
+    """The day before a change: the tomorrow entity starts with its 92/100 slots."""
+    day, slots = dst_day
+    eve = day - timedelta(days=1)
+    api_data = _api_data(_predictions(eve, 3), None)
+
+    entries = _attrs(_sensor(api_data, "export", "tomorrow"), _noon_on(eve))[
+        "prices_tomorrow"
+    ]
+
+    on_day = [entry for entry in entries if entry["start"].startswith(day.isoformat())]
+    assert len(on_day) == slots
+    assert entries[0]["start"] == _midnight(day)
+    starts = [entry["start"] for entry in entries]
+    assert len(starts) == len(set(starts))
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_the_state_picks_the_right_pass_of_the_repeated_hour(
+    fall_back_day: date,
+) -> None:
+    sensor = _sensor(_api_data([], _dst_spot_data(fall_back_day)), "export", "today")
+
+    # 02:20 CEST is slot 9, 02:20 CET (an hour later) slot 13
+    first = datetime(2026, 10, 25, 0, 20, tzinfo=UTC)
+    second = datetime(2026, 10, 25, 1, 20, tzinfo=UTC)
+
+    assert _state(sensor, first) == pytest.approx(9.0)
+    assert _state(sensor, second) == pytest.approx(13.0)
