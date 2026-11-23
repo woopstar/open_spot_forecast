@@ -2,6 +2,7 @@
 
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import ExitStack
+from datetime import date
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
@@ -10,6 +11,13 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from homeassistant.util import dt as dt_util
+
+# The Europe/Copenhagen DST change days of 2026: 2026-03-29 lasts 23 hours
+# (92 slots, 02:00-02:59 is skipped) and 2026-10-25 lasts 25 hours (100
+# slots, 02:00-02:59 happens twice: first at +02:00, then at +01:00)
+SPRING_FORWARD = date(2026, 3, 29)
+FALL_BACK = date(2026, 10, 25)
+DST_DAYS = {SPRING_FORWARD: 92, FALL_BACK: 100}
 
 
 @pytest.fixture
@@ -20,6 +28,25 @@ def copenhagen_time_zone() -> Iterator[ZoneInfo]:
     dt_util.set_default_time_zone(zone)
     yield zone
     dt_util.set_default_time_zone(previous)
+
+
+@pytest.fixture(params=list(DST_DAYS), ids=["spring_forward", "fall_back"])
+def dst_day(request: pytest.FixtureRequest) -> tuple[date, int]:
+    """Return a DST change day and its number of 15-minute slots (92 or 100)."""
+    day: date = request.param
+    return day, DST_DAYS[day]
+
+
+@pytest.fixture
+def spring_forward_day() -> date:
+    """Return the spring-forward day, whose 02:00-02:59 is skipped (92 slots)."""
+    return SPRING_FORWARD
+
+
+@pytest.fixture
+def fall_back_day() -> date:
+    """Return the fall-back day, whose 02:00-02:59 happens twice (100 slots)."""
+    return FALL_BACK
 
 
 @pytest.fixture

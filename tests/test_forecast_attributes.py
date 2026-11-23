@@ -5,7 +5,7 @@ format plus confidence), so up to 168 hours fit the recorder's 16 KB limit.
 ``detailed`` stays the default.
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
@@ -27,6 +27,10 @@ from custom_components.open_spot_forecast.forecast_attributes import (
 )
 from custom_components.open_spot_forecast.price_output import PriceOutput
 from custom_components.open_spot_forecast.sensor import MLPredictionSensor
+from custom_components.open_spot_forecast.time_slots import (
+    slot_start_in_day,
+    slots_in_local_day,
+)
 
 pytestmark = pytest.mark.usefixtures("copenhagen_time_zone")
 
@@ -226,6 +230,94 @@ def test_the_state_is_the_same_in_both_formats() -> None:
     assert _attributes(compact)["predictions"]["t"] == [
         entry["price"] for entry in _attributes(detailed)["predictions"]
     ]
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _day_predictions(day: date) -> list[dict[str, Any]]:
+    """Return a prediction for every slot of a local day: price = slot index."""
+    return [
+        {
+            "start": slot_start_in_day(day, index).isoformat(),
+            "end": slot_start_in_day(day, index + 1).isoformat(),
+            "price": float(index),
+            "confidence": 0.5,
+        }
+        for index in range(slots_in_local_day(day))
+    ]
+
+
+def _local_times(entries: list[dict[str, Any]]) -> list[str]:
+    return [entry["start"].split("T")[1] for entry in entries]
+
+
+def test_compact_has_every_slot_of_a_dst_day(dst_day: tuple[date, int]) -> None:
+    day, slots = dst_day
+    entries = PriceOutput(vat=0.0).forecast(_day_predictions(day))
+
+    compact = compact_forecast(entries, "DKK/kWh", 15)
+
+    assert len(compact["s"]) == len(compact["t"]) == len(compact["c"]) == slots
+    # Unix seconds, so no gap at the skipped hour and no overlap at the repeated one
+    assert {b - a for a, b in zip(compact["s"], compact["s"][1:])} == {900}
+    assert compact["t"] == pytest.approx([float(index) for index in range(slots)])
+
+
+def test_detailed_keeps_both_passes_and_skips_the_missing_hour(
+    dst_day: tuple[date, int],
+) -> None:
+    day, slots = dst_day
+    detailed = detailed_forecast(
+        PriceOutput(vat=0.0).forecast(_day_predictions(day)), "DKK/kWh"
+    )
+
+    assert len(detailed) == slots
+    starts = [entry["start"] for entry in detailed]
+    assert len(set(starts)) == slots
+    times = _local_times(detailed)
+    # None of 02:00-02:59 in spring; in autumn each of its slots twice
+    assert sum(time.startswith("02:") for time in times) == slots - 92
+    if slots == 100:
+        assert times.count("02:15:00+02:00") == times.count("02:15:00+01:00") == 1
+
+
+def test_compact_hourly_has_23_or_25_hours(dst_day: tuple[date, int]) -> None:
+    day, slots = dst_day
+    output = PriceOutput(vat=0.0, hourly_average=True)
+
+    compact = compact_forecast(output.forecast(_day_predictions(day)), "DKK/kWh", 60)
+
+    assert len(compact["s"]) == slots // 4
+    assert {b - a for a, b in zip(compact["s"], compact["s"][1:])} == {3600}
+    assert compact["t"][0] == pytest.approx(1.5)
+
+
+def test_fit_compact_trims_whole_hours_of_a_dst_day(
+    dst_day: tuple[date, int],
+) -> None:
+    day, slots = dst_day
+    entries = PriceOutput(vat=0.0).forecast(_day_predictions(day))
+    attributes = {"predictions": compact_forecast(entries, "DKK/kWh", 15)}
+    untrimmed = attributes_size(attributes)
+
+    # Room for the whole day: nothing is trimmed
+    fit_compact(attributes, "predictions", budget=untrimmed)
+    assert len(attributes["predictions"]["s"]) == slots
+
+    # Room for about half the day: whole local hours are kept from the start
+    fit_compact(attributes, "predictions", budget=untrimmed // 2)
+    kept = attributes["predictions"]["s"]
+    assert 0 < len(kept) < slots
+    assert len(kept) % 4 == 0
+    assert kept == compact_forecast(entries, "DKK/kWh", 15)["s"][: len(kept)]
+    # Every kept hour starts on a local full hour
+    hour_starts = [datetime.fromtimestamp(s, CPH) for s in kept[::4]]
+    assert all(start.minute == 0 for start in hour_starts)
+    # The trim is at the end of the day: the DST hour is kept as it was
+    kept_times = [datetime.fromtimestamp(s, CPH) for s in kept]
+    assert sum(start.hour == 2 for start in kept_times) == slots - 92
+    assert attributes_size(attributes) <= untrimmed // 2
 
 
 # --- The options flow ----------------------------------------------------------------

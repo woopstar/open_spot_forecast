@@ -16,7 +16,7 @@ self-learning starts over without a restart or a manual file deletion.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -105,7 +105,8 @@ def forecast_response(
         currency: Currency of the prices.
         known_until: End of the last confirmed price slot, if any.
         start: First interval to return: the one containing this moment.
-        hours: Length of the window in hours from that interval; all if None.
+        hours: Length of the window in elapsed hours from that interval,
+            across a DST change too; all if None.
         tariffs: Each slot's tariff, added to its price (#107).
 
     Returns:
@@ -113,7 +114,9 @@ def forecast_response(
         ``interval_minutes`` and ``forecast``: ``{"start", "end", "price",
         "confidence"}`` entries in time order.
     """
-    first = floor_to_slot(start, output.interval_minutes)
+    # In UTC: an aware local datetime adds by wall clock, so ``hours`` would
+    # be 23 or 25 elapsed hours across a DST change
+    first = floor_to_slot(start.astimezone(UTC), output.interval_minutes)
     last = first + timedelta(hours=hours) if hours is not None else None
     forecast = []
     for entry in output.forecast(predictions, tariffs):

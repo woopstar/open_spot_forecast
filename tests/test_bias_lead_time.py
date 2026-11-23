@@ -12,7 +12,7 @@ import math
 import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -654,6 +654,79 @@ async def test_reset_learning_clears_the_offsets(predictor: SpotPricePredictor) 
         assert await predictor.reset_learning() is True
 
     assert predictor.bias_correction == {}
+
+
+# --- DST change days (#279) ----------------------------------------------------------
+
+
+def _store_at(
+    predictor: SpotPricePredictor, slot: datetime, lead_hours: float, price: float
+) -> None:
+    """Store a prediction for ``slot`` made ``lead_hours`` real hours before it."""
+    stored_at = (slot.astimezone(UTC) - timedelta(hours=lead_hours)).astimezone(
+        slot.tzinfo
+    )
+    predictor.storage.insert_prediction(
+        start=slot.isoformat(),
+        price=price,
+        confidence=0.8,
+        hour=slot.hour,
+        minute=slot.minute,
+        stored_at=stored_at.isoformat(),
+        bias_offset=0.0,
+    )
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_both_passes_of_the_repeated_hour_share_their_wall_clock_slot(
+    predictor: SpotPricePredictor, fall_back_day: date
+) -> None:
+    """Slots are keyed by local time of day (``hour * 4 + minute // 15``).
+
+    02:15 CEST and 02:15 CET are slot 9 both: their errors go into one
+    window, on one local date (``docs/ml_documentation.md`` "Slot Timestamps
+    and DST"). Each pass is still matched to its own predictions.
+    """
+    first_utc = datetime(2026, 10, 25, 0, 15, tzinfo=UTC)
+    first = first_utc.astimezone(dt_util.get_default_time_zone())
+    second = (first_utc + timedelta(hours=1)).astimezone(first.tzinfo)
+    _store_at(predictor, first, 20, 1.2)
+    _store_at(predictor, first, 21, 1.2)
+    _store_at(predictor, second, 20, 1.5)
+
+    assert predictor.learn_from_actual_price(first.isoformat(), 1.0)
+    # Two raw errors in the window: fewer than MIN_BIAS_SAMPLES, no offset yet
+    assert 9 not in predictor.bias_correction
+
+    assert predictor.learn_from_actual_price(second.isoformat(), 1.0)
+
+    assert set(predictor.error_metrics) == {9}
+    assert predictor.error_metrics[9]["count"] == 3
+    assert predictor.error_metrics[9][RAW_ERRORS_KEY] == {
+        "day_1": {fall_back_day.isoformat(): [3, pytest.approx(0.9)]}
+    }
+    # The mean of both passes' raw errors: (0.2 + 0.2 + 0.5) / 3
+    assert predictor.bias_correction == {9: {"day_1": pytest.approx(0.3)}}
+    assert predictor.storage.count_predictions() == 0
+
+
+@pytest.mark.usefixtures("copenhagen_time_zone")
+def test_the_skipped_hour_has_no_errors_on_the_spring_forward_day(
+    predictor: SpotPricePredictor, spring_forward_day: date
+) -> None:
+    """The slot after the change is 03:00 local, slot 12; 8-11 learn nothing."""
+    after_gap = datetime(2026, 3, 29, 1, 0, tzinfo=UTC).astimezone(
+        dt_util.get_default_time_zone()
+    )
+    assert after_gap.date() == spring_forward_day
+    assert (after_gap.hour, after_gap.minute) == (3, 0)
+    for lead in (20, 21, 22):
+        _store_at(predictor, after_gap, lead, 1.1)
+
+    assert predictor.learn_from_actual_price(after_gap.isoformat(), 1.0)
+
+    assert set(predictor.error_metrics) == {12}
+    assert predictor.bias_correction == {12: {"day_1": pytest.approx(0.1)}}
 
 
 # --- Storage and migration ---------------------------------------------------------

@@ -476,6 +476,10 @@ Always check `docs/using_existing_sensors.md` first for the verified entity list
 - Float comparisons: `pytest.approx()` in tests, epsilon guard in production.
 - ML tests: feature extraction, model output shape, bias-correction convergence, storage
   round-trip, schema migration.
+- DST days: use the `dst_day` fixture (parametrized over 2026-03-29, 92 slots, and
+  2026-10-25, 100 slots), `spring_forward_day` or `fall_back_day` from `tests/conftest.py`
+  (#279); never copy the dates. Do time arithmetic in UTC: an aware local datetime adds by
+  wall clock.
 
 ## Logging
 
