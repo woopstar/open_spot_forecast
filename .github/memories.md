@@ -247,7 +247,9 @@ export read-only (`?immutable=1`) and prints per-bucket MAE/RMSE/bias from
 (`--currency DKK` / `--eur-per-unit` → EUR ct/kWh, `--since`, `--log` for
 `ML model trained in … s`, an INFO line HA does not log by default). Since #178 the export
 carries `training_seconds`, `model_options` and `model_options_since` in `meta`
-(`ml/training_info.py`): take the training time and the `--since` date from there. Exports go to the git-ignored `.cache/live/`, never the
+(`ml/training_info.py`): take the training time and the `--since` date from there. Since #288 it also replays the p10/p90 bands on `interval_errors`
+(`scripts/live_intervals.py`, through `group_quantiles()` / `interval_key()`) and prints the
+live coverage per bucket and local hour. Exports go to the git-ignored `.cache/live/`, never the
 repository root (location-revealing weather; `.gitignore` blocks root learning DBs and
 `-shm`/`-wal`, see `docs/persistence.md` → Live Exports for Analysis). Procedure: `docs/ml_documentation.md` →
 Live accuracy.

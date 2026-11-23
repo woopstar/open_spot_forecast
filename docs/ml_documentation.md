@@ -1238,9 +1238,32 @@ The backtest scores one forecast per origin at midnight; live, a slot is
 predicted by every run of the days before it, and the live errors include
 the weather forecast's own error, which the backtest's archived weather
 hides from day 2 on. The band is learned from those live errors, so it
-widens by itself where the live forecast is worse. Measuring the live
-coverage from an export's `interval_errors` is #288; until then the backtest
-is the measure.
+widens by itself where the live forecast is worse.
+
+### Live coverage (#288)
+
+`scripts/live_report.py` measures the live coverage from an export's
+`interval_errors` (`scripts/live_intervals.py`; see
+[Live accuracy](#live-accuracy-94)). For every scored local day _D_ it
+computes `group_quantiles()` from the rows of the 30 days before _D_ (never
+_D_ itself or later) and counts a row of _D_ as inside when `q_low <= error
+<= q_high` of its `interval_key(bucket, slot)`, which is `price_low <=
+actual <= price_high` before the band is widened to the served price.
+`error > q_high` is an actual price below the band, `error < q_low` one
+above it. Per bucket it prints the rows, the share with a band and the
+shares inside, below and above, and the share inside per local hour.
+
+Two limits of the replay. It scores a slot against the band of the 30 days
+before the slot's day, while live each prediction got the band of its own
+forecast run, hours to days earlier. The instance keeps only 30 days of
+errors, so an export's oldest days replay from fewer errors than the live
+band had, and its first 7 days (`MIN_INTERVAL_DAYS`) have no band.
+
+**First live DK1 result: not recorded yet.** #280 merged 2026-11-23, and no
+export with `interval_errors` exists yet. Record it here from an export
+with 14 or more scored days (#289; see the procedure under
+[Live accuracy](#live-accuracy-94)); if the inside share is far from 80 %,
+revisit `INTERVAL_QUANTILES`. Until then the backtest above is the measure.
 
 ## Self-Learning Loop
 
@@ -1458,6 +1481,14 @@ learning-database export:
   lower than the per-forecast ones above. **No blend is shipped**: on the
   first evaluation (2026-10-28, below) a blend won in every bucket, and it
   waits for the source's terms.
+- **Prediction intervals** (`interval_errors`, the last 30 days, #288;
+  `scripts/live_intervals.py`): the p10/p90 band replayed per scored day
+  from the errors of the days before it, per bucket the rows, the share
+  with a band and the shares of actual prices inside, below and above it,
+  and the share inside per local hour (see
+  [Live coverage](#live-coverage-288)). `--since` limits the scored days;
+  their bands still come from the earlier rows, as the live bands did. An
+  export from before #280 has no table and no section.
 - **Training** (`meta`): the latest holdout MAE/RMSE and training sample
   count, how long the latest training took (`training_seconds`, and
   `stage1_seconds` with the cross-border model), the model options and

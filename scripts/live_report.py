@@ -17,6 +17,9 @@ in the learning database of a running instance, which this script reads:
 - ``external_slot_errors``: per scored slot, the mean error of the model and of
   every external forecast, from which ``scripts/live_blend.py`` scores what a
   blend of them would have (#157);
+- ``interval_errors``: the raw error of every scored prediction, on which
+  ``scripts/live_intervals.py`` replays the p10/p90 bands and measures how
+  many actual prices fell inside them (#280, #288);
 - ``meta``: the latest training's holdout MAE/RMSE (and the ``hpo_*`` keys of
   exports from before #92).
 
@@ -52,11 +55,16 @@ from custom_components.open_spot_forecast.const import (
     LEAD_TIME_WINDOW_DAYS,
     REGIONS,
 )
+from custom_components.open_spot_forecast.ml.intervals import (
+    INTERVAL_QUANTILES,
+    INTERVAL_WINDOW_DAYS,
+)
 from custom_components.open_spot_forecast.ml.lead_time import summarize_error_sums
 from custom_components.open_spot_forecast.ml.models import OBSOLETE_HPO_META_KEYS
 from custom_components.open_spot_forecast.time_slots import UTC_KEY_FORMAT
 
 from .live_blend import MIN_BLEND_SLOTS, SlotErrors, blend_stats
+from .live_intervals import CoverageCounts, IntervalRow, interval_coverage
 
 # (samples, sum_error, sum_abs_error, sum_sq_error), as in lead_time_accuracy
 ErrorSums = tuple[int, float, float, float]
@@ -118,6 +126,9 @@ class LiveData:
     correction: dict[tuple[date, str], tuple[ErrorSums, ErrorSums]] = field(
         default_factory=dict
     )
+    # The interval_errors rows (#280), every date (the bands of the days after
+    # --since come from the days before it); None without the table
+    intervals: list[IntervalRow] | None = None
 
 
 @dataclass(frozen=True)
@@ -240,6 +251,14 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                     (count, float(sums[0]), float(sums[1]), float(sums[2])),
                     (count, float(sums[3]), float(sums[4]), float(sums[5])),
                 )
+        intervals: list[IntervalRow] | None = None
+        if "interval_errors" in tables:
+            intervals = [
+                (str(day), str(bucket), int(slot), float(error))
+                for day, bucket, slot, error in conn.execute(
+                    "SELECT date, bucket, slot, error FROM interval_errors"
+                )
+            ]
         meta: dict[str, str] = {}
         if "meta" in tables:
             meta = {
@@ -247,7 +266,15 @@ def load_live_data(path: Path, since: date | None = None, tz: tzinfo = UTC) -> L
                 for key, value in conn.execute("SELECT key, value FROM meta")
             }
     return LiveData(
-        path, lead_time, evaluation, meta, snapshots, external, slot_errors, correction
+        path,
+        lead_time,
+        evaluation,
+        meta,
+        snapshots,
+        external,
+        slot_errors,
+        correction,
+        intervals,
     )
 
 
@@ -672,6 +699,74 @@ def _blend_lines(data: LiveData, units: Units, tz: tzinfo) -> list[str]:
     return [*lines, ""]
 
 
+def _share(counts: CoverageCounts, count: int) -> str:
+    """Render ``count`` as a percentage of a group's banded rows."""
+    share = counts.share(count)
+    return "–" if share is None else f"{share * 100:.1f} %"
+
+
+def _interval_lines(data: LiveData, since: date | None) -> list[str]:
+    """Render the replayed p10/p90 coverage per bucket and local hour (#288)."""
+    if data.intervals is None:
+        return []
+    lines = ["## Prediction intervals (p10/p90)", ""]
+    coverage = interval_coverage(data.intervals, since)
+    if not coverage.days:
+        return [*lines, "No `interval_errors` rows.", ""]
+    buckets = _in_lead_time_order(set(coverage.buckets))
+    lines += _table(
+        ["Bucket", "Rows", "With band", "Inside", "Below", "Above"],
+        [
+            [
+                bucket,
+                str(counts.rows),
+                f"{counts.banded / counts.rows * 100:.0f} %",
+                _share(counts, counts.inside),
+                _share(counts, counts.below),
+                _share(counts, counts.above),
+            ]
+            for bucket in buckets
+            if (counts := coverage.buckets[bucket]).rows
+        ],
+    )
+    hours = sorted({hour for _, hour in coverage.hours})
+    lines += ["", "### Inside per local hour", ""]
+    lines += _table(
+        ["Hour", *buckets],
+        [
+            [
+                f"{hour:02d}",
+                *(
+                    _share(hourly, hourly.inside)
+                    if (hourly := coverage.hours.get((bucket, hour)))
+                    else "–"
+                    for bucket in buckets
+                ),
+            ]
+            for hour in hours
+        ],
+    )
+    lines += [
+        "",
+        f"{coverage.days[0]} to {coverage.days[-1]} (local slot dates), "
+        f"{len(coverage.days)} scored day(s). Each day's band is replayed from "
+        f"the errors of the {INTERVAL_WINDOW_DAYS} days before it (quantiles "
+        f"{INTERVAL_QUANTILES[0]:g}-{INTERVAL_QUANTILES[1]:g} per bucket and "
+        "local hour, the integration's `group_quantiles()`). Inside, below and "
+        "above are shares of the rows with a band, before the band is widened "
+        "to the served price; the target is about 80 % inside. The instance "
+        f"keeps {INTERVAL_WINDOW_DAYS} days, so the oldest days replay from "
+        "fewer errors than the live band had.",
+    ]
+    if len(coverage.days) < MIN_REPORT_DAYS:
+        lines += [
+            "",
+            f"- **Only {len(coverage.days)} day(s)**: record live coverage from "
+            f"{MIN_REPORT_DAYS}+ days.",
+        ]
+    return [*lines, ""]
+
+
 def _training_lines(
     data: LiveData, units: Units, times: list[float] | None
 ) -> list[str]:
@@ -748,6 +843,7 @@ def format_report(
         *_correction_lines(data, units),
         *_source_lines(data, units),
         *_blend_lines(data, units, tz),
+        *_interval_lines(data, since),
         *_training_lines(data, units, times),
     ]
     return "\n".join(lines) + "\n"
