@@ -28,6 +28,7 @@ per-slot, per-lead-time bias correction exists but corrects no bucket since
 | ENTSO-E week-ahead load (API key)           | Daily min/max load, next week    | `load_forecast` curve, both phases (#30)                      |
 | energy-charts + Open-Meteo, neighbours      | Neighbours' prices and weather   | Stage-1 models, cross-border option (#29)                     |
 | Instrat (TGE gas day-ahead index)           | Daily gas price                  | `gas_price`, both phases, some regions (#28)                  |
+| Energi Data Service `DatahubPricelist`      | Dated national charges (DK)      | Tariff changes in the forecast past tomorrow (#278)           |
 | Nord Pool UMM API (no key)                  | Outage messages, every version   | `unavailable_*`, both phases, `UMM_REGIONS` (SE3, NO2, #137)  |
 | ENTSO-E outage documents (API key)          | Outage documents, DE/NL/BE/FR    | `unavailable_*`, both phases, `ENTSOE_OUTAGE_REGIONS` (none)  |
 | External forecast sensors (optional)        | Other integrations' forecasts    | Recorded and scored per lead time, never a model input (#120) |
@@ -134,6 +135,13 @@ consumer and spot prices already read:
   the same local time of day (tariffs follow a fixed daily schedule, and the
   latest day already has e.g. the winter tariffs from 1 October); a time of
   day never seen (a skipped DST hour) takes the latest earlier one.
+- Known dated changes of the national charges (Energinet's net and system
+  tariffs and the electricity tax, e.g. on 1 January) are added to such a
+  slot: its charges minus those of the known slot its tariff came from
+  (`NationalCharges`, `TariffChangeSource` in `api/tariff_changes.py`, from
+  Energi Data Service's `DatahubPricelist`, fetched once a day by
+  `run_forecast`, #278). Only with Stromligning's prices in DK1/DK2 (DKK);
+  without the data nothing changes.
 - Without consumer prices (no sensor, or the `dayahead` source) the schedule
   is empty: the tariff is 0 and `includes_tariffs` is false.
 

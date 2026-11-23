@@ -49,6 +49,22 @@ def fall_back_day() -> date:
     return FALL_BACK
 
 
+@pytest.fixture(autouse=True)
+def no_tariff_change_fetch() -> Iterator[None]:
+    """Keep every ``ForecastUpdater`` off Energi Data Service (#278).
+
+    The dated national charges have their own tests
+    (``test_tariff_changes.py``, ``test_tariffs.py``).
+    """
+    source = Mock(charges=None)
+    source.async_update = AsyncMock(return_value=False)
+    with patch(
+        "custom_components.open_spot_forecast.updater.TariffChangeSource",
+        return_value=source,
+    ):
+        yield
+
+
 @pytest.fixture
 def umm_in_dk1() -> Iterator[None]:
     """Give DK1's model the UMM outage features for one test.

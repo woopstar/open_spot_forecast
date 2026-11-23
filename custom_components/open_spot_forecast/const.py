@@ -460,6 +460,16 @@ INSTRAT_USER_AGENT = (
     "OpenSpotForecast (+https://github.com/woopstar/open_spot_forecast)"
 )
 
+# Energi Data Service's DataHub price list (#278): dated tariffs, no key. The
+# national charges, all owned by Energinet (GLN 5790000432752), ChargeType D03:
+# 40000 Transmissions nettarif, 41000 Systemtarif, EA-001 Elafgift. DKK/kWh
+# excl. VAT; ValidFrom/ValidTo and Price1..Price24 (hour 00-01 first, only
+# Price1 for a flat rate) are Danish local time (verified 2026-11-23)
+DATAHUB_PRICELIST_API = "https://api.energidataservice.dk/dataset/DatahubPricelist"
+ENERGINET_GLN = "5790000432752"
+NATIONAL_CHARGE_CODES = ("40000", "41000", "EA-001")
+DATAHUB_TZ = "Europe/Copenhagen"
+
 # Nordpool dataportal API (consumption and production prognoses)
 NORDPOOL_API = "https://dataportal-api.nordpoolgroup.com/api"
 # Nord Pool's UMM (urgent market messages) public API (#123): outages of

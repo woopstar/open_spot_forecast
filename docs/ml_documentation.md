@@ -1043,7 +1043,9 @@ Tariffs and VAT are applied once, at output (#39, #107): `PriceOutput`
 (`price_output.py`) turns every exposed forecast price into
 `(spot + tariff + surcharge) × (1 + VAT)` in the configured unit, optionally
 averaged per local hour. The slot's tariff is Stromligning's consumer minus
-spot price (`TariffSchedule`, `tariffs.py`); 0 without consumer prices. The
+spot price (`TariffSchedule`, `tariffs.py`; past tomorrow, the latest day's
+plus Energinet's dated national charge changes, #278); 0 without consumer
+prices. The
 `Price Forecast (ML)` sensor applies it to its state and to every price
 attribute, and says so with `includes_vat: true`, `includes_tariffs`, `vat`,
 `surcharge` and `hourly_average`. The model, the stored predictions, the

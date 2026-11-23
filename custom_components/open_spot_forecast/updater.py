@@ -29,11 +29,13 @@ from .api import NordpoolPrognosisSource, forecast_prognoses
 from .api.entsoe_load import EntsoeLoadSource
 from .api.gas_prices import GasPriceSource
 from .api.openmeteo_weather import OpenMeteoWeatherSource
+from .api.tariff_changes import TariffChangeSource
 from .api.time_series_source import HistorySource, TimeSeriesSource
 from .const import (
     ENTSOE_LOAD_REGIONS,
     GAS_PRICE_REGIONS,
     PRICE_SOURCE_DAYAHEAD,
+    STROMLIGNING_REGIONS,
     UPDATE_SIGNAL,
     UPDATE_SIGNAL_FORECAST,
     WEATHER_POINTS,
@@ -135,6 +137,16 @@ class ForecastUpdater(HistoryUpdaterMixin):
             if self.settings.dayahead and storage is not None
             else None
         )
+        # Dated national charges for the forecast's tariffs (#278): only
+        # where Stromligning's consumer prices give the tariffs (DKK)
+        self.tariff_changes = (
+            TariffChangeSource(hass)
+            if ml_predictor
+            and not self.settings.dayahead
+            and self.region in STROMLIGNING_REGIONS
+            and self.settings.currency == "DKK"
+            else None
+        )
         # The training window's price history comes from the day-ahead APIs
         # whatever the displayed source: their spot price is the same series
         # as Stromligning's spot sensor, so a new install trains at once (#24)
@@ -174,10 +186,23 @@ class ForecastUpdater(HistoryUpdaterMixin):
             self.api_data["spot_data"] = self.sensor_reader.read_spot_prices(
                 self.sensors.spot_price, self.sensors.spot_price_tomorrow
             )
-            # Consumer − spot per slot: the forecast's tariffs (#107)
-            self.api_data["tariffs"] = TariffSchedule.from_prices(
-                self.api_data.get("stromligning_data"), self.api_data["spot_data"]
-            )
+            self._build_tariffs()
+
+    def _build_tariffs(self) -> None:
+        """Consumer − spot per slot: the forecast's tariffs (#107, #278)."""
+        changes = self.tariff_changes.charges if self.tariff_changes else None
+        self.api_data["tariffs"] = TariffSchedule.from_prices(
+            self.api_data.get("stromligning_data"),
+            self.api_data.get("spot_data"),
+            changes,
+        )
+
+    async def _update_tariff_changes(self) -> None:
+        """Fetch the dated national charges (once a day) into the tariffs."""
+        if self.tariff_changes and await self.tariff_changes.async_update(
+            dt_util.now().date()
+        ):
+            self._build_tariffs()
 
     def read_consumer_prices(self) -> bool:
         """Read Stromligning's consumer prices (displayed) into api_data.
@@ -342,6 +367,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         weather_data = await self._read_weather()
         self.api_data["weather_data"] = weather_data
         await self._update_prognoses(weather_data)
+        await self._update_tariff_changes()
         await self._update_ahead(
             self.weather, weather_data, "zone_weather", "Open-Meteo weather"
         )

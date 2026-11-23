@@ -46,7 +46,34 @@ attribute (`predictions[].price`, `forecast_min/max/mean`), with
 `includes_tariffs: true`. Days past tomorrow repeat the latest known day's
 tariff at the same local time of day (`TariffSchedule`, `tariffs.py`), so a
 new tariff season (e.g. the winter tariffs from 1 October) is picked up as
-soon as its first day is published. The separate tariff sensors are not
+soon as its first day is published.
+
+Known dated changes of the national charges are added on top (#278):
+Energinet's transmission net tariff (`40000`), system tariff (`41000`) and
+the electricity tax (`EA-001`), all owned by Energinet (GLN
+`5790000432752`). They come from Energi Data Service's
+[`DatahubPricelist`](https://www.energidataservice.dk/tso-electricity/DatahubPricelist)
+(public, no key; `api/tariff_changes.py`), fetched at most once a day with the
+forecast. Its `ValidFrom`/`ValidTo` and `Price1`..`Price24` are Danish local
+time (`Price1` is 00-01, a flat rate only has `Price1`; on a DST day the
+repeated hour takes the preceding hour's price). A predicted slot gets the
+latest known day's tariff at the same time of day plus (charges at the slot −
+charges at that known slot). Example (DKK/kWh excl. VAT, published 31
+December 2026):
+
+| Charge                  | 2026  | 2027  |
+| ----------------------- | ----- | ----- |
+| Transmission net tariff | 0.043 | 0.056 |
+| System tariff           | 0.072 | 0.049 |
+| Electricity tax         | 0.008 | 0.008 |
+| **Sum**                 | 0.123 | 0.113 |
+
+So every slot from 00:00 local on 1 January takes the 31 December tariff at
+the same time of day minus 0.010. Published slots keep their exact tariff.
+Without the data (API down, a charge missing for a date, a region other than
+DK1/DK2, a currency other than DKK, the `dayahead` source) the schedule is
+unchanged. The grid company's time-of-use tariff is not fetched: its new
+season still shows from its first published day. The separate tariff sensors are not
 read: they only report the current value (and the distribution sensor has no
 tomorrow).
 

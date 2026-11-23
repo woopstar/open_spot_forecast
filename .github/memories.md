@@ -38,7 +38,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `services.py`            | `get_forecast` (#37) and `reset_learning` (#132) actions, registered in `async_setup`; forecast as response data via `PriceOutput`                          |
 | `forecast_attributes.py` | Forecast attribute layouts (#38): `detailed_forecast()`, `compact_forecast()` (s/t/c arrays), `fit_compact()` (16 KB limit)                                 |
 | `price_output.py`        | `PriceOutput` — the one transformation of exposed prices: unit, `(price + surcharge) × (1 + VAT)`, rounding, hourly averages (#39), forecast tariffs (#107) |
-| `tariffs.py`             | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days repeat the latest day's time of day (#107)                        |
+| `tariffs.py`             | `TariffSchedule` — per-slot tariff = Stromligning consumer − spot (excl. VAT); later days: latest day's time of day + national charge changes (#107, #278)  |
 | `attribution.py`         | `price_attribution()` / `model_attribution()` and their entity mixins: every entity credits its data sources (#41)                                          |
 | `validation.py`          | `vol` — the schema library Home Assistant validates with (probatio, voluptuous before it); never import either directly (#195)                              |
 
@@ -93,6 +93,7 @@ and compresses command output, saving 60-90% of tokens. Meta commands (`rtk gain
 | `openmeteo_weather.py`  | `OpenMeteoWeatherSource` — Open-Meteo 15-min weather at the region's `WEATHER_POINTS` as `openmeteo_weather` rows (#22) |
 | `exchange_rates.py`     | `ExchangeRates` — ECB EUR reference rates by day (DKK peg fallback)                                                     |
 | `http.py`               | `async_get` — the one GET with retries/backoff/`Retry-After` for every API client; never logs URLs or params            |
+| `tariff_changes.py`     | `TariffChangeSource` / `NationalCharges` — Energinet's dated national charges, Energi Data Service, daily (#278)        |
 
 ## Canonical Patterns — Use These, Never Re-Invent
 
@@ -121,7 +122,8 @@ Every exposed price is excl. VAT until `PriceOutput` (`price_output.py`, #39) co
 (`convert()`, `day_prices()`, `forecast()`), read by `PriceSettings.from_entry()`; there is no
 all-in path. The forecast adds each slot's tariff, `TariffSchedule` (`tariffs.py`,
 `api_data["tariffs"]`, built in `ForecastUpdater.read_spot_prices()`): consumer − spot per slot,
-later days the latest day's same local time. Pass it to `forecast()`/`forecast_series()`/
+later days the latest day's same local time plus the change in Energinet's dated national charges
+(`NationalCharges`, `api/tariff_changes.py`, #278; DK1/DK2 with Stromligning only). Pass it to `forecast()`/`forecast_series()`/
 `evaluation()`; never add a tariff inline. Never multiply by `(1 + vat)` inline, and never add
 tariffs or VAT in `ml/`.
 
