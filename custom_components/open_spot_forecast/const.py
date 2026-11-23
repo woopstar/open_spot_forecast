@@ -412,6 +412,9 @@ EVALUATION_LEAD_TIMES: tuple[float, ...] = (12.0, EVALUATION_LEAD_HOURS, 48.0)
 # How far ahead the day-ahead prediction of each coming slot is cached for the
 # day-ahead prediction sensor (#113); every forecast run reloads it
 DAY_AHEAD_PREDICTION_HOURS = 48
+# A forecast kept without new prices is flagged stale (#277), and so is one
+# older than two of the 6-hourly forecast runs
+FORECAST_STALE_AFTER_HOURS = 12
 
 # Open-Meteo weather (#22): no key, 15-minute data, 16 days ahead. Each region
 # is sampled at a few fixed points across its bidding zone (wind and demand

@@ -181,6 +181,16 @@ tomorrow sensor's list merged in) as `api_data["stromligning_data"]`:
   yesterday's `tomorrow` list becomes today's, whether or not Stromligning's
   sensor already holds the new day. A price in the new read always wins, and
   nothing is kept of a day the read does not cover.
+- The raw spot prices (the model's) are carried over the same way, with
+  either price source (`ForecastUpdater._carry_over_spot()`, #277): a spot
+  sensor that is unavailable for one read, or a day-ahead read without
+  today's prices, keeps today's spot prices, so the forecast and its tariffs
+  stay. After midnight the previous day's list is dropped, so the model
+  never gets another day's prices as today's. The tariff schedule is rebuilt
+  only from today's spot prices; without them the last schedule is kept.
+  When no price of today is known at all, the forecast sensor keeps the last
+  good forecast, flagged `stale` (see
+  [Missing prices](ml_documentation.md#missing-prices-the-last-good-forecast-277)).
 
 ### Invalid Price Data
 

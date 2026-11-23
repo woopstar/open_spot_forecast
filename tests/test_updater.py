@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -1027,7 +1027,7 @@ async def test_dayahead_prices_are_the_models_raw_spot_prices(
     assert await harness.updater.async_read_prices() is True
 
     api_data = harness.api_data
-    assert api_data["spot_data"] == _dayahead_spot()
+    assert api_data["spot_data"] == {**_dayahead_spot(), "day": ANY}
     # Raw spot prices: the sensors add the surcharge and VAT (#39)
     assert api_data["prices_today"] == [pytest.approx(0.4)] * 96
     assert api_data["prices_tomorrow"] == []
@@ -1512,3 +1512,102 @@ async def test_stromligning_installs_backfill_day_ahead_history(
     )
     refresh.assert_awaited_once()
     assert make(ml=False).api_data["history_prices"] is False
+
+
+# --- Missing spot prices keep the last good forecast (#277) -------------------------
+
+
+def _spot_read(today: list[float], tomorrow: list[float], day: date | None) -> dict:
+    return {**_stromligning(today, tomorrow), "day": day}
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_spot_sensor_keeps_todays_prices_and_tariffs(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    api_data = harness.api_data
+    api_data["stromligning_data"] = _spot_read([1.0] * 96, [], NOW.date())
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW):
+        harness.updater.read_spot_prices()
+        assert api_data["tariffs"].at(NOW) == pytest.approx(0.5)
+
+        # The sensor is unavailable for one read (an HA restart, an outage)
+        harness.reader.read_spot_prices.return_value = _spot_read([], [], NOW.date())
+        harness.updater.read_spot_prices()
+        assert api_data["spot_data"]["today"] == SPOT_TODAY
+        assert api_data["tariffs"].at(NOW) == pytest.approx(0.5)
+
+        # Back: the new read wins
+        harness.reader.read_spot_prices.return_value = _spot_read(
+            [0.7] * 96, [], NOW.date()
+        )
+        harness.updater.read_spot_prices()
+    assert api_data["spot_data"]["today"] == [pytest.approx(0.7)] * 96
+    assert api_data["tariffs"].at(NOW) == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_carried_spot_prices_are_dropped_when_no_longer_todays(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    yesterday = NOW.date() - timedelta(days=1)
+    harness.api_data["spot_data"] = _spot_read([0.1] * 96, [0.2] * 96, yesterday)
+    harness.reader.read_spot_prices.return_value = _spot_read([], [], NOW.date())
+
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW):
+        harness.updater.read_spot_prices()
+    # Yesterday's tomorrow is today's; yesterday's today is gone
+    assert harness.api_data["spot_data"]["today"] == [pytest.approx(0.2)] * 96
+    assert harness.api_data["spot_data"]["tomorrow"] == []
+
+    tariffs = harness.api_data["tariffs"]
+    harness.reader.read_spot_prices.return_value = _spot_read([], [], None)
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW + timedelta(days=1)):
+        harness.updater.read_spot_prices()
+    assert harness.api_data["spot_data"]["today"] == []
+    # Not rebuilt from no spot prices: the last schedule is kept
+    assert harness.api_data["tariffs"] is tariffs
+
+
+@pytest.mark.asyncio
+async def test_dayahead_without_today_keeps_the_prices_of_the_same_day(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make(price_source="dayahead")
+    empty = {**_dayahead_spot(), "today": [], "raw_today": []}
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW):
+        assert await harness.updater.async_read_prices() is True
+        harness.dayahead.async_read.return_value = dict(empty)
+        assert await harness.updater.async_read_prices() is True
+    assert harness.api_data["spot_data"]["today"] == [pytest.approx(0.4)] * 96
+
+    # The next day without prices: yesterday's are not given to the model
+    with patch(f"{MODULE}.dt_util.now", return_value=NOW + timedelta(days=1)):
+        assert await harness.updater.async_read_prices() is False
+    assert harness.api_data["spot_data"]["today"] == []
+    assert harness.api_data["prices_today"] == [pytest.approx(0.4)] * 96
+
+
+@pytest.mark.asyncio
+async def test_a_kept_forecast_is_flagged_stale_until_the_next_good_run(
+    make: Callable[..., Harness],
+) -> None:
+    harness = make()
+    api_data = harness.api_data
+    with patch("homeassistant.util.dt.now", return_value=NOW):
+        harness.predictor.predict.return_value = True
+        await harness.updater.run_forecast()
+        assert api_data["forecast_generated_at"] == NOW
+        assert api_data["forecast_stale"] is False
+
+        harness.predictor.predict.return_value = False
+        await harness.updater.run_forecast()
+        assert api_data["forecast_generated_at"] == NOW
+        assert api_data["forecast_stale"] is True
+        assert api_data["ml_predictions"] == [{"price": 0.5}]
+
+        harness.predictor.predict.return_value = True
+        await harness.updater.run_forecast()
+    assert api_data["forecast_stale"] is False

@@ -106,14 +106,15 @@ def test_predict_on_all_zero_prices_keeps_previous_predictions(
 ) -> None:
     """All-zero known prices are neither stored, trained on nor predicted from."""
     predictor = _predictor(tmp_path)
-    previous = [{"start": "2026-09-24T10:00:00+00:00", "price": 1.1}]
+    start = dt_util.utcnow() + timedelta(hours=1)
+    previous = [{"start": start.isoformat(), "price": 1.1}]
     predictor.predictions = list(previous)
 
     with (
         patch.object(predictor, "record_training_prices") as record,
         patch.object(predictor, "_train_models") as train,
     ):
-        predictor.predict({}, [0.0] * 96, 1, 15)
+        assert predictor.predict({}, [0.0] * 96, 1, 15) is False
 
     record.assert_not_called()
     train.assert_not_called()
@@ -207,4 +208,7 @@ async def test_all_zero_sensor_is_not_learned_from(tmp_path: Path) -> None:
         states["sensor.spot"] = strom_state([0.0] * 96)
         await callbacks["new_quarter"](datetime.now())
         assert api_data["prices_today"] == pytest.approx(good)
-        assert ml_predictor.learn_from_actual_price.call_count == 1
+        # The good spot prices are carried over (#277), never the zeros
+        learned = ml_predictor.learn_from_actual_price.call_args_list
+        assert learned
+        assert all(abs(call.args[1]) > 1e-9 for call in learned)
