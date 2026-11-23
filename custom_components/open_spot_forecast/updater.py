@@ -191,12 +191,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
             self._build_tariffs()
 
     def _carry_over_spot(self, read: dict[str, Any]) -> dict[str, Any]:
-        """Store a spot price read, with the prices of the last one it lacks.
-
-        An unavailable source for one read keeps today's prices (#277):
-        ``carry_over_day_prices``, so a day that is no longer today's is
-        dropped after midnight and the model gets no prices of another day.
-        """
+        """Store a spot read with today's prices of the last one it lacks (#277)."""
         spot_data = carry_over_day_prices(
             self.api_data.get("spot_data"), read, dt_util.now().date()
         )
@@ -204,10 +199,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         return spot_data
 
     def _build_tariffs(self) -> None:
-        """Consumer − spot per slot: the forecast's tariffs (#107, #278).
-
-        Without today's spot prices the last schedule is kept (#277).
-        """
+        """Consumer − spot per slot (#107, #278); kept without today's spot (#277)."""
         spot_data = self.api_data.get("spot_data") or {}
         if not spot_data.get("today") and "tariffs" in self.api_data:
             return
