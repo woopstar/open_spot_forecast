@@ -211,12 +211,17 @@ class ForecastUpdater(HistoryUpdaterMixin):
             self.api_data.get("stromligning_data"), spot_data, changes
         )
 
-    async def _update_tariff_changes(self) -> None:
-        """Fetch the dated national charges (once a day) into the tariffs."""
-        if self.tariff_changes and await self.tariff_changes.async_update(
-            dt_util.now().date()
-        ):
-            self._build_tariffs()
+    def _update_tariff_changes(self) -> None:
+        """Fetch the dated national charges (daily) in the background (#291)."""
+        if self.tariff_changes:
+            self.tariff_changes.start_update(
+                self.entry, dt_util.now().date(), self._tariffs_changed
+            )
+
+    def _tariffs_changed(self) -> None:
+        """Rebuild the tariffs with new national charges; update the forecast."""
+        self._build_tariffs()
+        self._notify(UPDATE_SIGNAL_FORECAST)
 
     def read_consumer_prices(self) -> bool:
         """Read Stromligning's consumer prices (displayed) into api_data.
@@ -386,7 +391,7 @@ class ForecastUpdater(HistoryUpdaterMixin):
         weather_data = await self._read_weather()
         self.api_data["weather_data"] = weather_data
         await self._update_prognoses(weather_data)
-        await self._update_tariff_changes()
+        self._update_tariff_changes()
         await self._update_ahead(
             self.weather, weather_data, "zone_weather", "Open-Meteo weather"
         )

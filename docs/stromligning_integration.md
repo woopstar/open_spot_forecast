@@ -54,7 +54,9 @@ the electricity tax (`EA-001`), all owned by Energinet (GLN
 `5790000432752`). They come from Energi Data Service's
 [`DatahubPricelist`](https://www.energidataservice.dk/tso-electricity/DatahubPricelist)
 (public, no key; `api/tariff_changes.py`), fetched at most once a day with the
-forecast. Its `ValidFrom`/`ValidTo` and `Price1`..`Price24` are Danish local
+forecast, in the background (#291): neither the setup nor the forecast waits
+for it, and until it arrives (or when it fails) the latest known day's tariff
+is repeated as before. Its `ValidFrom`/`ValidTo` and `Price1`..`Price24` are Danish local
 time (`Price1` is 00-01, a flat rate only has `Price1`; on a DST day the
 repeated hour takes the preceding hour's price). A predicted slot gets the
 latest known day's tariff at the same time of day plus (charges at the slot −

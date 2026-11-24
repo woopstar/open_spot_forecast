@@ -139,8 +139,11 @@ consumer and spot prices already read:
   tariffs and the electricity tax, e.g. on 1 January) are added to such a
   slot: its charges minus those of the known slot its tariff came from
   (`NationalCharges`, `TariffChangeSource` in `api/tariff_changes.py`, from
-  Energi Data Service's `DatahubPricelist`, fetched once a day by
-  `run_forecast`, #278). Only with Stromligning's prices in DK1/DK2 (DKK);
+  Energi Data Service's `DatahubPricelist`, fetched once a day, #278).
+  `run_forecast` starts the fetch as a config-entry background task and does
+  not wait for it (#291): a 429's `Retry-After` must not hold up the
+  integration setup. New charges rebuild the tariffs and send
+  `UPDATE_SIGNAL_FORECAST`. Only with Stromligning's prices in DK1/DK2 (DKK);
   without the data nothing changes.
 - Without consumer prices (no sensor, or the `dayahead` source) the schedule
   is empty: the tariff is 0 and `includes_tariffs` is false.

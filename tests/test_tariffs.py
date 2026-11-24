@@ -21,7 +21,10 @@ from custom_components.open_spot_forecast.api.tariff_changes import (
     NationalCharges,
     TariffChangeSource,
 )
-from custom_components.open_spot_forecast.const import NATIONAL_CHARGE_CODES
+from custom_components.open_spot_forecast.const import (
+    NATIONAL_CHARGE_CODES,
+    UPDATE_SIGNAL_FORECAST,
+)
 from custom_components.open_spot_forecast.evaluation_sensor import (
     ForecastEvaluationSensor,
 )
@@ -283,11 +286,23 @@ async def test_the_updater_adds_the_fetched_charges_to_the_tariffs() -> None:
         source.charges = charges
         return True
 
-    with patch.object(source, "async_update", side_effect=fetch):
-        await updater._update_tariff_changes()
+    tasks: list[Any] = []
+    updater.entry = Mock()
+    updater.entry.async_create_background_task.side_effect = lambda _hass, coro, _name: (
+        tasks.append(coro)
+    )
+    with (
+        patch.object(source, "async_update", side_effect=fetch),
+        patch.object(updater, "_notify") as notify,
+    ):
+        # Started in the background (#291): nothing is fetched yet
+        updater._update_tariff_changes()
+        assert "tariffs" not in updater.api_data
+        await tasks[0]
 
     tariffs = updater.api_data["tariffs"]
     assert tariffs.at(datetime(2027, 1, 1, 0, 0, tzinfo=CPH)) == pytest.approx(0.09)
+    notify.assert_called_once_with(UPDATE_SIGNAL_FORECAST)
 
 
 @pytest.mark.parametrize(
