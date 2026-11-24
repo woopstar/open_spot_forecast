@@ -233,6 +233,16 @@ Nordpool prognoses → known-data end → `predict` → `save_learning_data`) ex
 `ForecastUpdater.run_forecast()`, used by the initial fetch, the tomorrow-price refresh and the
 6-hourly update. Never copy it into another callback.
 
+### Entity state writes
+
+`native_value` and `extra_state_attributes` run in the event loop, and Home Assistant warns
+above 0.4 s. An entity that exposes a converted series builds it once per data update, cached on
+the identity of its inputs (`ml_predictor.predictions` and its length, `api_data["spot_data"]`,
+`api_data["tariffs"]`, the evaluation lists): the forecast sensor (#179), the Predbat sensors
+(`PredbatSeries`, one per kind, shared by today and tomorrow) and the evaluation sensor (#295).
+The Predbat and evaluation sensors build in the executor on their signal, then write the state.
+Never convert a whole forecast inside a property.
+
 ### Model backtest
 
 `scripts/backtest.py` (dev-only, never shipped) is the rolling 1/2/3-day-ahead MAE/RMSE

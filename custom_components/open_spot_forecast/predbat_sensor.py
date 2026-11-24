@@ -20,7 +20,9 @@ holds tomorrow and the following days, trimmed to the attribute budget.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+import asyncio
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity
@@ -71,17 +73,6 @@ def predbat_unit(currency: str) -> tuple[str, float]:
     return PREDBAT_UNIT_CENT, 100.0
 
 
-def current_entry(
-    entries: list[dict[str, Any]], now: datetime
-) -> dict[str, Any] | None:
-    """Return the entry whose interval contains ``now``, or None."""
-    for entry in entries:
-        start, end = parse_utc(entry["start"]), parse_utc(entry["end"])
-        if start is not None and end is not None and start <= now < end:
-            return entry
-    return None
-
-
 def build_predbat_sensors(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -89,15 +80,187 @@ def build_predbat_sensors(
     currency: str,
     output: PriceOutput,
 ) -> list[PredbatRateSensor]:
-    """Return the four Predbat rate sensors of a config entry."""
+    """Return the four Predbat rate sensors of a config entry.
+
+    The today and tomorrow sensor of a kind share one ``PredbatSeries``,
+    so a price or forecast update builds each kind's series once (#295).
+    """
     fixed_tariff = float(entry.options.get(CONF_PREDBAT_TARIFF, DEFAULT_PREDBAT_TARIFF))
-    return [
-        PredbatRateSensor(
-            hass, entry, api_data, currency, output, kind, day, fixed_tariff
+    sensors: list[PredbatRateSensor] = []
+    for kind in (KIND_IMPORT, KIND_EXPORT):
+        series = PredbatSeries(api_data, currency, output, kind, fixed_tariff)
+        sensors.extend(
+            PredbatRateSensor(
+                hass, entry, api_data, currency, output, kind, day, fixed_tariff, series
+            )
+            for day in (DAY_TODAY, DAY_TOMORROW)
         )
-        for kind in (KIND_IMPORT, KIND_EXPORT)
-        for day in (DAY_TODAY, DAY_TOMORROW)
-    ]
+    return sensors
+
+
+# One exposed interval: its UTC start and end, and the ``{"start", "end",
+# "price"}`` entry Predbat reads
+type Rate = tuple[datetime, datetime | None, dict[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class RateDays:
+    """One build of a kind's series: today's rates and the following days'."""
+
+    key: tuple[Any, ...]
+    today: list[Rate]
+    tomorrow: list[Rate]
+    known_until: str | None
+    includes_tariffs: bool
+
+
+class PredbatSeries:
+    """The confirmed prices, then the forecast, of one Predbat rate kind.
+
+    Building the series converts the confirmed prices and the whole 7-day
+    forecast; doing it in every read of every sensor blocked the event loop
+    for over half a second on a Raspberry Pi (#295, like #179). It is built
+    once per forecast (the ``predictions`` list and its length), spot price
+    read (``spot_data``), tariff schedule and local day: the updater
+    replaces each of them with a new object, so a new one gives new values.
+    The today and tomorrow sensor of a kind share one instance.
+    """
+
+    def __init__(
+        self,
+        api_data: dict[str, Any],
+        currency: str,
+        output: PriceOutput,
+        kind: str,
+        fixed_tariff: float = DEFAULT_PREDBAT_TARIFF,
+    ) -> None:
+        """Initialize the series.
+
+        Args:
+            api_data: The entry's integration data.
+            currency: The entry's currency code.
+            output: How the entry exposes prices (unit, surcharge, VAT, ...).
+            kind: ``import`` (consumer price) or ``export`` (raw spot price).
+            fixed_tariff: Tariff per kWh excl. VAT added to the import
+                price when no slot tariff is known.
+        """
+        self.api_data = api_data
+        self.kind = kind
+        # Import: per kWh with the surcharge and VAT; export: the raw spot price
+        self.output = output.per_kwh() if kind == KIND_IMPORT else output.raw_spot()
+        self.factor = predbat_unit(currency)[1]
+        self._fixed = (
+            TariffSchedule.fixed(fixed_tariff)
+            if kind == KIND_IMPORT and abs(fixed_tariff) > 1e-9
+            else None
+        )
+        self._days: RateDays | None = None
+        # One build at a time: the other day's sensor then finds it built
+        self._lock = asyncio.Lock()
+
+    def tariffs(self) -> TariffSchedule | None:
+        """Return the import price's tariffs: the slot schedule, else the fixed one."""
+        if self.kind != KIND_IMPORT:
+            return None
+        tariffs: TariffSchedule | None = self.api_data.get("tariffs")
+        if tariffs:
+            return tariffs
+        return self._fixed
+
+    async def async_build(self, hass: HomeAssistant) -> None:
+        """Build the series in the executor, so the state write finds it built.
+
+        Args:
+            hass: Home Assistant.
+        """
+        async with self._lock:
+            await hass.async_add_executor_job(self.days, dt_util.utcnow())
+
+    def days(self, now: datetime) -> RateDays:
+        """Return the series split at local midnight, built once per input.
+
+        Args:
+            now: The current time, timezone-aware.
+
+        Returns:
+            Today's rates from local midnight and the rates from tomorrow's
+            local midnight on (open-ended), prices in the entity's unit,
+            with ``known_until`` and whether the prices include tariffs.
+        """
+        ml_predictor = self.api_data.get("ml_predictor")
+        predictions = ml_predictor.predictions if ml_predictor else None
+        spot_data = self.api_data.get("spot_data")
+        tariffs = self.tariffs()
+        today = dt_util.as_local(now).date()
+        key = (
+            predictions,
+            len(predictions or ()),
+            spot_data,
+            tariffs,
+            today,
+        )
+        cached = self._days
+        if cached is not None and _same_key(cached.key, key):
+            return cached
+        self._days = self._build(key, predictions or [], spot_data, tariffs, today)
+        return self._days
+
+    def _build(
+        self,
+        key: tuple[Any, ...],
+        predictions: list[dict[str, Any]],
+        spot_data: dict[str, Any] | None,
+        tariffs: TariffSchedule | None,
+        today: date,
+    ) -> RateDays:
+        """Convert the confirmed prices and the forecast from local midnight."""
+        midnight = local_midnight(today)
+        tomorrow = local_midnight(today + timedelta(days=1))
+        series = with_known_prices(spot_data, predictions, midnight)
+        days: dict[bool, list[Rate]] = {True: [], False: []}
+        for entry in self.output.forecast(series, tariffs):
+            start = parse_utc(entry["start"])
+            if start is None:
+                continue
+            is_today = start < tomorrow
+            days[is_today].append(
+                (
+                    start,
+                    # Only today's state looks for the interval containing now
+                    parse_utc(entry["end"]) if is_today else None,
+                    {
+                        "start": entry["start"],
+                        "end": entry["end"],
+                        "price": float(
+                            round(entry["price"] * self.factor, self.output.precision)
+                        ),
+                    },
+                )
+            )
+        known_end = known_until(spot_data)
+        return RateDays(
+            key=key,
+            today=days[True],
+            tomorrow=days[False],
+            known_until=dt_util.as_local(known_end).isoformat() if known_end else None,
+            includes_tariffs=bool(tariffs),
+        )
+
+
+def _same_key(cached: tuple[Any, ...], key: tuple[Any, ...]) -> bool:
+    """Return whether two series keys name the same inputs.
+
+    The objects are compared by identity (a new forecast, read or schedule
+    is a new object, and an equal one is not worth comparing slot by slot);
+    the predictions' length and the day by value.
+    """
+    return (
+        cached[0] is key[0]
+        and cached[1] == key[1]
+        and cached[2] is key[2]
+        and cached[3] is key[3]
+        and cached[4] == key[4]
+    )
 
 
 class PredbatRateSensor(ModelAttributionMixin, SensorEntity):
@@ -117,6 +280,7 @@ class PredbatRateSensor(ModelAttributionMixin, SensorEntity):
         kind: str,
         day: str,
         fixed_tariff: float = DEFAULT_PREDBAT_TARIFF,
+        series: PredbatSeries | None = None,
     ) -> None:
         """Initialize the sensor.
 
@@ -130,15 +294,21 @@ class PredbatRateSensor(ModelAttributionMixin, SensorEntity):
             day: ``today`` or ``tomorrow`` (and the following days).
             fixed_tariff: Tariff per kWh excl. VAT added to the import
                 price when no slot tariff is known.
+            series: The kind's series, shared with the other day's sensor;
+                a new one if None.
         """
         self.hass = hass
         self.api_data = api_data
         self.kind = kind
         self.day = day
         self._fixed_tariff = fixed_tariff
-        # Import: per kWh with the surcharge and VAT; export: the raw spot price
-        self._output = output.per_kwh() if kind == KIND_IMPORT else output.raw_spot()
-        self._attr_native_unit_of_measurement, self._factor = predbat_unit(currency)
+        self._series = series or PredbatSeries(
+            api_data, currency, output, kind, fixed_tariff
+        )
+        self._output = self._series.output
+        # The attributes of the last build of the series (see _attributes)
+        self._attrs_cache: tuple[RateDays, dict[str, Any]] | None = None
+        self._attr_native_unit_of_measurement = predbat_unit(currency)[0]
         self._attr_translation_key = f"predbat_{kind}_{day}"
         self._attr_unique_id = util_slugify(
             f"{DOMAIN}_{entry.entry_id}_predbat_{kind}_{day}"
@@ -156,81 +326,55 @@ class PredbatRateSensor(ModelAttributionMixin, SensorEntity):
         for signal in (UPDATE_SIGNAL, UPDATE_SIGNAL_FORECAST):
             self.async_on_remove(
                 async_dispatcher_connect(
-                    self.hass, util_slugify(signal), self.async_write_ha_state
+                    self.hass, util_slugify(signal), self._async_refresh
                 )
             )
 
-    def _tariffs(self) -> TariffSchedule | None:
-        """Return the import price's tariffs: the slot schedule, else the fixed one."""
-        if self.kind != KIND_IMPORT:
-            return None
-        tariffs: TariffSchedule | None = self.api_data.get("tariffs")
-        if tariffs:
-            return tariffs
-        if abs(self._fixed_tariff) > 1e-9:
-            return TariffSchedule.fixed(self._fixed_tariff)
-        return None
+    async def _async_refresh(self) -> None:
+        """Build the series off the event loop, then write the state (#295)."""
+        await self._series.async_build(self.hass)
+        self.async_write_ha_state()
 
-    def _series(self, now: datetime) -> list[dict[str, Any]]:
-        """Return this sensor's days: confirmed prices, then the forecast.
-
-        Args:
-            now: The current time, timezone-aware.
-
-        Returns:
-            ``{"start", "end", "price"}`` per interval in local ISO time,
-            from today's local midnight (``today``) or from tomorrow's
-            (``tomorrow``, open-ended), prices in the entity's unit.
-        """
-        ml_predictor = self.api_data.get("ml_predictor")
-        predictions = ml_predictor.predictions if ml_predictor else None
-        today = dt_util.as_local(now).date()
-        midnight = local_midnight(today)
-        tomorrow = local_midnight(today + timedelta(days=1))
-        series = with_known_prices(
-            self.api_data.get("spot_data"), predictions or [], midnight
-        )
-        entries = []
-        for entry in self._output.forecast(series, self._tariffs()):
-            start = parse_utc(entry["start"])
-            if start is None:
-                continue
-            if (start < tomorrow) != (self.day == DAY_TODAY):
-                continue
-            entries.append(
-                {
-                    "start": entry["start"],
-                    "end": entry["end"],
-                    "price": float(
-                        round(entry["price"] * self._factor, self._output.precision)
-                    ),
-                }
-            )
-        return entries
+    def _rates(self, days: RateDays) -> list[Rate]:
+        """Return this sensor's day of ``days``."""
+        return days.today if self.day == DAY_TODAY else days.tomorrow
 
     @property
     def native_value(self) -> float | None:
         """Return the current interval's price (today), or tomorrow's first."""
         now = dt_util.utcnow()
-        entries = self._series(now)
+        rates = self._rates(self._series.days(now))
         if self.day == DAY_TODAY:
-            entry = current_entry(entries, now)
-            return entry["price"] if entry else None
-        return entries[0]["price"] if entries else None
+            return next(
+                (
+                    entry["price"]
+                    for start, end, entry in rates
+                    if end is not None and start <= now < end
+                ),
+                None,
+            )
+        return rates[0][2]["price"] if rates else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        """Return the series Predbat reads, within the attribute budget."""
+        """Return the series Predbat reads, within the attribute budget.
+
+        Built and trimmed once per build of the series (#295).
+        """
+        days = self._series.days(dt_util.utcnow())
+        cached = self._attrs_cache
+        if cached is None or cached[0] is not days:
+            key = f"prices_{self.day}"
+            attrs: dict[str, Any] = {
+                key: [entry for _, _, entry in self._rates(days)],
+                "interval_minutes": self._output.interval_minutes,
+                "known_until": days.known_until,
+                "includes_vat": self.kind == KIND_IMPORT,
+                "includes_tariffs": days.includes_tariffs,
+            }
+            fit_entries(attrs, key, self._output.interval_minutes)
+            cached = self._attrs_cache = (days, attrs)
+        attrs = cached[1]
         key = f"prices_{self.day}"
-        known_end = known_until(self.api_data.get("spot_data"))
-        attrs: dict[str, Any] = {
-            key: self._series(dt_util.utcnow()),
-            "interval_minutes": self._output.interval_minutes,
-            "known_until": (
-                dt_util.as_local(known_end).isoformat() if known_end else None
-            ),
-            "includes_vat": self.kind == KIND_IMPORT,
-            "includes_tariffs": bool(self._tariffs()),
-        }
-        fit_entries(attrs, key, self._output.interval_minutes)
-        return attrs
+        # A copy, so a caller changing it cannot change the cache
+        return {**attrs, key: list(attrs[key])}
