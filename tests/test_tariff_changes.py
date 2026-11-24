@@ -1,9 +1,11 @@
 """Dated national charges from Energi Data Service's price list (#278)."""
 
+import asyncio
 import json
-from collections.abc import Iterator
+from collections.abc import Coroutine, Iterator
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
@@ -145,3 +147,72 @@ async def test_a_failed_fetch_keeps_the_charges_and_retries(
     assert not await source.async_update(date(2026, 11, 24))
     assert get.await_count == 3
     assert "energidataservice" not in caplog.text
+
+
+def _entry() -> tuple[Mock, list[asyncio.Task[None]]]:
+    """Return a config entry whose background tasks run on the event loop."""
+    tasks: list[asyncio.Task[None]] = []
+
+    def create(
+        _hass: object, coro: Coroutine[Any, Any, None], _name: str
+    ) -> asyncio.Task[None]:
+        task = asyncio.ensure_future(coro)
+        tasks.append(task)
+        return task
+
+    entry = Mock()
+    entry.async_create_background_task.side_effect = create
+    return entry, tasks
+
+
+@pytest.mark.asyncio
+async def test_start_update_fetches_in_the_background(get: AsyncMock) -> None:
+    """A slow fetch (a 429's Retry-After) never holds up the caller (#291)."""
+    release = asyncio.Event()
+
+    async def slow(*_args: object, **_kwargs: object) -> HttpResponse:
+        await release.wait()
+        return HttpResponse(200, TEXT)
+
+    get.side_effect = slow
+    source = TariffChangeSource(Mock())
+    entry, tasks = _entry()
+    on_update = Mock()
+
+    source.start_update(entry, TODAY, on_update)
+    # A fetch runs: no second one starts
+    source.start_update(entry, TODAY, on_update)
+    await asyncio.sleep(0)
+    assert len(tasks) == 1
+    on_update.assert_not_called()
+
+    release.set()
+    await tasks[0]
+    on_update.assert_called_once_with()
+    assert source.charges
+
+    # Fetched today: nothing starts until tomorrow
+    source.start_update(entry, TODAY, on_update)
+    assert len(tasks) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_failed_background_fetch_keeps_the_charges(get: AsyncMock) -> None:
+    source = TariffChangeSource(Mock())
+    entry, tasks = _entry()
+    on_update = Mock()
+    source.start_update(entry, TODAY, on_update)
+    await tasks[0]
+    charges = source.charges
+    get.return_value = HttpResponse(429, "")
+
+    tomorrow = date(2026, 11, 24)
+    source.start_update(entry, tomorrow, on_update)
+    await tasks[1]
+
+    assert source.charges is charges
+    on_update.assert_called_once_with()
+    # The failed day is tried again by the next forecast run
+    source.start_update(entry, tomorrow, on_update)
+    await tasks[2]
+    assert get.await_count == 3

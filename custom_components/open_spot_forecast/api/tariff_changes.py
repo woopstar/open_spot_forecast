@@ -11,19 +11,24 @@ Service's ``DatahubPricelist`` dataset (public, no key) lists them with
 ``Price1``. On a DST day the repeated hour takes the preceding hour's
 price, which a lookup by local wall-clock hour gives.
 
-``TariffChangeSource`` fetches them at most once a day. A failed or
-unusable response keeps what was fetched before and logs no URL or query.
+``TariffChangeSource`` fetches them at most once a day, in a background
+task (#291): a 429's ``Retry-After`` can hold a request for minutes, and
+neither the integration setup nor the forecast waits for an enrichment.
+A failed or unusable response keeps what was fetched before and logs no
+URL or query.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -157,6 +162,33 @@ class TariffChangeSource:
         self.hass = hass
         self.charges = NationalCharges()
         self._fetched_on: date | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    def start_update(
+        self, entry: ConfigEntry, today: date, on_update: Callable[[], None]
+    ) -> None:
+        """Fetch the charges in a background task of the config entry (#291).
+
+        Nothing starts while a fetch runs or once today's charges are
+        fetched. The task ends with the entry (unload cancels it).
+
+        Args:
+            entry: The config entry that owns the task.
+            today: The local date (one successful fetch per day).
+            on_update: Called when new charges were stored.
+        """
+        if self._fetched_on == today or (self._task and not self._task.done()):
+            return
+        self._task = entry.async_create_background_task(
+            self.hass,
+            self._update(today, on_update),
+            "open_spot_forecast_tariff_changes",
+        )
+
+    async def _update(self, today: date, on_update: Callable[[], None]) -> None:
+        """Fetch the charges; call ``on_update`` when new ones were stored."""
+        if await self.async_update(today):
+            on_update()
 
     async def async_update(self, today: date) -> bool:
         """Fetch the charges unless fetched today already.
